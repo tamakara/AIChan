@@ -12,7 +12,7 @@ from plugins.registry import PluginRegistry
 from plugins.tools.time_tool import CurrentTimeToolPlugin
 
 
-def register_default_plugins() -> None:
+def register_plugins() -> None:
     """
     注册系统启动后的默认插件能力。
 
@@ -34,7 +34,7 @@ def build_agent() -> Agent:
     2) 初始化 LLM 并构建 brain
     3) 构建 nexus（Agent）
     """
-    register_default_plugins()
+    register_plugins()
 
     llm = ChatOpenAI(
         api_key=settings.llm_api_key,
