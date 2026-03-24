@@ -1,4 +1,4 @@
-from typing import Annotated, TypedDict, List
+﻿from typing import Annotated, TypedDict, List
 from langgraph.graph import StateGraph, END
 from langgraph.graph.message import add_messages
 from langgraph.prebuilt import ToolNode
@@ -75,7 +75,7 @@ class Brain(IReasoningEngine):
         执行一次完整推理流程并返回最终文本。
 
         参数：
-        - context_messages: 由 synapse 组装好的上下文消息列表
+        - context_messages: 由 nexus 组装好的上下文消息列表
         """
         config: RunnableConfig = {"configurable": {"thread_id": self._SINGLE_THREAD_ID}}
 
@@ -85,3 +85,4 @@ class Brain(IReasoningEngine):
         # stream 返回状态序列，最后一个状态即本轮推理完成态。
         final_state = list(events)[-1]
         return final_state["messages"][-1].content
+

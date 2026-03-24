@@ -1,17 +1,15 @@
-[project]
+﻿[project]
 name = "aichan"
 version = "0.1.0"
 requires-python = ">=3.10"
 dependencies = [
     "brain",
     "core",
-    "fastapi>=0.115.0",
     "langchain-core>=1.2.20",
     "langchain-openai>=1.1.11",
     "memory",
-    "peripherals",
-    "synapse",
-    "uvicorn>=0.30.0",
+    "nexus",
+    "plugins",
 ]
 
 [tool.uv.workspace]
@@ -21,5 +19,6 @@ members = ["packages/*"]
 brain = { workspace = true }
 core = { workspace = true }
 memory = { workspace = true }
-peripherals = { workspace = true }
-synapse = { workspace = true }
+nexus = { workspace = true }
+plugins = { workspace = true }
+

@@ -1,14 +1,14 @@
 [project]
-name = "peripherals"
+name = "nexus"
 version = "0.1.0"
-description = "Unified peripheral bus for channels and tools"
+description = "Add your description here"
 authors = [
     { name = "tamakara", email = "tamakara@qq.com" }
 ]
 requires-python = ">=3.10"
 dependencies = [
     "core",
-    "langchain-core>=1.2.20",
+    "memory",
 ]
 
 [build-system]
@@ -17,3 +17,4 @@ build-backend = "uv_build"
 
 [tool.uv.sources]
 core = { workspace = true }
+memory = { workspace = true }

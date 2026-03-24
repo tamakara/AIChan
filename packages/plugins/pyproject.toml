@@ -1,14 +1,14 @@
-[project]
-name = "synapse"
+﻿[project]
+name = "plugins"
 version = "0.1.0"
-description = "Add your description here"
+description = "Unified plugin bus for channels and tools"
 authors = [
     { name = "tamakara", email = "tamakara@qq.com" }
 ]
 requires-python = ">=3.10"
 dependencies = [
     "core",
-    "memory",
+    "langchain-core>=1.2.20",
 ]
 
 [build-system]
@@ -17,4 +17,4 @@ build-backend = "uv_build"
 
 [tool.uv.sources]
 core = { workspace = true }
-memory = { workspace = true }
+
