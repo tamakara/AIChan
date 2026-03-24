@@ -1,7 +1,7 @@
 ﻿# AIChan
 
 一个基于 `LangChain + LangGraph` 的模块化 AI 助手示例项目，采用 `uv workspace` 管理多包结构。  
-当前采用 `Nexus` 中央队列的 Pull 架构：所有外部输入先入队，再由 Brain 统一消费。
+当前默认启动模式为单进程交互式 CLI：终端输入由 `main.py` 直接交给 `Agent` 推理并回显结果。
 
 ## 项目文档
 
@@ -30,29 +30,27 @@ uv sync
 
 ### 2. 配置模型参数
 
-服务启动入口在 `main.py`（接口定义在 `cli_server.py`）。请按你的实际环境确认：
+交互式 CLI 入口在 `main.py`。请按你的实际环境确认：
 
 - `LLM_API_KEY`
 - `LLM_BASE_URL`
 - `LLM_MODEL_NAME`
 - `LLM_TEMPERATURE`
 
-### 3. 启动服务端（内置 CLI 输入监听）
+### 3. 启动交互式 CLI
 
 ```bash
-# 启动 AIChan 服务端
+# 启动 AIChan CLI
 uv run python main.py
 ```
 
-服务启动后可直接在当前终端输入消息，输入监听器会将内容推入 `Nexus` 队列。
+启动后可直接在当前终端输入消息，程序会打印模型回复与本轮耗时。
 
 ## 目录结构
 
 ```text
 .
 ├─ main.py
-├─ cli_server.py
-├─ cli_client.py
 ├─ pyproject.toml
 ├─ uv.lock
 ├─ docs

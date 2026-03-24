@@ -1,8 +1,8 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from langchain_core.tools import StructuredTool
 
-from plugins.base import BasePlugin
+from plugins.base import BasePlugin, BaseToolPlugin
 
 
 class PluginRegistry:
@@ -21,21 +21,24 @@ class PluginRegistry:
         return cls._pool.get(name)
 
     @classmethod
+    def all(cls) -> list[BasePlugin]:
+        """返回当前所有已注册插件实例。"""
+        return list(cls._pool.values())
+
+    @classmethod
     def all_tools(cls) -> list[StructuredTool]:
         """
         收集所有可供 LLM 绑定的工具能力。
 
-        约定：插件统一通过 `get_tool()` 暴露工具能力。
+        约定：仅 `BaseToolPlugin` 需要实现 `get_tool()`。
         """
         tools: list[StructuredTool] = []
         for plugin in cls._pool.values():
-            tool_schema = plugin.get_tool()
-            if tool_schema is not None:
-                tools.append(tool_schema)
+            if isinstance(plugin, BaseToolPlugin):
+                tools.append(plugin.get_tool())
         return tools
 
     @classmethod
     def clear(cls) -> None:
         """清空注册表，常用于服务重启或单元测试隔离。"""
         cls._pool.clear()
-

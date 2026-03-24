@@ -15,10 +15,6 @@ class AppSettings(BaseSettings):
     llm_model_name: str
     llm_temperature: float
 
-    # FastAPI 网关服务监听地址
-    chat_server_host: str = "127.0.0.1"
-    chat_server_port: int = 8765
-
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
