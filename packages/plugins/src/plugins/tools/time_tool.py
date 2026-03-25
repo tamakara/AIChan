@@ -1,21 +1,22 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 import datetime
 
-from langchain_core.tools import StructuredTool
+from langchain_core.tools import ArgsSchema, StructuredTool
 
-from plugins.base import BaseToolPlugin
+from plugins.base import ToolPlugin
+from pydantic import BaseModel
 
-
-class CurrentTimeToolPlugin(BaseToolPlugin):
+@dataclass
+class CurrentTimeToolPlugin(ToolPlugin):
     """时间工具插件：对外暴露为可绑定的 LLM 工具。"""
 
-    def __init__(
-        self,
-        name: str = "get_current_time",
-        description: str = "返回当前本地时间。",
-    ) -> None:
-        super().__init__(name=name, description=description)
+    name: str = "get_current_time"
+    description: str = "返回当前本地时间。"
+    class ToolArgs(BaseModel):
+        pass
+    args_schema: ArgsSchema = ToolArgs
 
     def get_current_time(self) -> str:
         """返回当前本地时间。"""
@@ -24,7 +25,8 @@ class CurrentTimeToolPlugin(BaseToolPlugin):
     def get_tool(self) -> StructuredTool:
         """返回给 LLM 的工具 schema。"""
         return StructuredTool.from_function(
-            func=self.get_current_time,
             name=self.name,
             description=self.description,
+            args_schema=self.args_schema,
+            func=self.get_current_time,
         )

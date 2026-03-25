@@ -3,14 +3,14 @@ from __future__ import annotations
 from typing import Literal, cast
 
 from core.entities import ChannelMessage
-from plugins.base import BaseChannelPlugin
+from plugins.base import ChannelPlugin
 
 
-class CLIChannelPlugin(BaseChannelPlugin):
+class CLIChannelPlugin(ChannelPlugin):
     """CLI 通道插件：维护终端会话消息列表。"""
 
     def __init__(self, name: str = "cli") -> None:
-        super().__init__(name=name, description="CLI交互通道")
+        super().__init__(name=name)
         self._messages: list[ChannelMessage] = []
         self._next_message_id = 1
 

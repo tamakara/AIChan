@@ -4,7 +4,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 
 from core.entities import AgentSignal
 from core.interfaces import IReasoningEngine
-from plugins.base import BaseChannelPlugin
+from plugins.base import ChannelPlugin
 from plugins.registry import PluginRegistry
 
 
@@ -20,9 +20,9 @@ class Agent:
         # 每个通道最后处理到的用户消息 ID。
         self._last_processed_user_message_id: dict[str, int] = {}
 
-    def _resolve_channel(self, channel_name: str) -> BaseChannelPlugin:
+    def _resolve_channel(self, channel_name: str) -> ChannelPlugin:
         plugin = PluginRegistry.get(channel_name)
-        if not isinstance(plugin, BaseChannelPlugin):
+        if not isinstance(plugin, ChannelPlugin):
             raise ValueError(f"未知通道或非通道插件: {channel_name}")
         return plugin
 

@@ -5,14 +5,14 @@ import time
 from core.entities import AgentSignal, ChannelMessage
 from core.logger import logger
 from nexus.agent import Agent
-from plugins.base import BaseChannelPlugin
+from plugins.base import ChannelPlugin
 
 
-def list_channel_messages(channel: BaseChannelPlugin, since_id: int) -> list[ChannelMessage]:
+def list_channel_messages(channel: ChannelPlugin, since_id: int) -> list[ChannelMessage]:
     return channel.list_messages(since_id=since_id)
 
 
-def send_channel_message(channel: BaseChannelPlugin, role: str, content: str) -> None:
+def send_channel_message(channel: ChannelPlugin, role: str, content: str) -> None:
     channel.send_message(role=role, content=content)
 
 
@@ -41,7 +41,7 @@ def print_channel_message(message: ChannelMessage) -> None:
             print(f"  {line}")
 
 
-def flush_channel_updates(channel: BaseChannelPlugin, since_id: int, elapsed_seconds: float) -> int:
+def flush_channel_updates(channel: ChannelPlugin, since_id: int, elapsed_seconds: float) -> int:
     updates = list_channel_messages(channel=channel, since_id=since_id)
     if not updates:
         print("AIChan > （无新增消息）")
@@ -61,7 +61,7 @@ def flush_channel_updates(channel: BaseChannelPlugin, since_id: int, elapsed_sec
     return newest_id
 
 
-def run_cli_loop(agent: Agent, channel: BaseChannelPlugin) -> None:
+def run_cli_loop(agent: Agent, channel: ChannelPlugin) -> None:
     print_intro(channel_name=channel.name)
     last_seen_id = 0
 
