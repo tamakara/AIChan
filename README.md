@@ -1,7 +1,13 @@
-﻿# AIChan
+# AIChan
 
 一个基于 `LangChain + LangGraph` 的模块化 AI 助手示例项目，采用 `uv workspace` 管理多包结构。  
-当前默认启动模式为单进程交互式 CLI：终端输入先入通道并发送到 `NexusHub` 队列，再由 heartbeat 调度 `Agent` 推理并回写结果。
+当前默认运行模式为：
+
+- `main.py` 启动 AIChan 核心（`NexusHub + Agent + Brain`）并内嵌启动 `FastAPI cli_server` 子线程。
+- `cli_client.py` 是独立控制台客户端（纯标准库实现），可在其他位置单独运行，通过 HTTP 与 `cli_server` 通信。
+
+消息存储与收发管理由 `cli_server` 负责。  
+AIChan 侧 `CLIChannelPlugin` 每秒轮询一次未读状态（`/v1/status`），发现 AI 侧有未读后再向 `NexusHub` 推送信号。
 
 ## 项目文档
 
@@ -15,11 +21,9 @@
 1. `plugins`：插件层（I/O 总线），统一承载输入渠道与动作工具能力。
 2. `nexus`：中央神经枢纽，维护异步队列并驱动消费心跳。
 3. `brain`：推理层，基于 LangGraph 执行“推理 -> 调用能力 -> 再推理”。
-4. `memory`：记忆扩展层（当前占位），后续承载长期/外部记忆能力扩展。
-5. `core`：共享基础层，提供配置、日志、接口契约与数据模型。
-
-结构细节与关键文件映射见：[docs/2.project-structure.md](docs/2.project-structure.md)。  
-系统设计意图与演进思路见：[docs/1.system-design.md](docs/1.system-design.md)。
+4. `cli_server`：独立双对象消息服务（`ai/user`），负责消息存储、未读状态维护与外部 API。
+5. `cli_client`：独立用户端，负责控制台输入输出，通过 HTTP 与 `cli_server` 通信。
+6. `core` / `memory`：共享能力与记忆扩展层。
 
 ## 快速开始
 
@@ -29,29 +33,46 @@
 uv sync
 ```
 
-### 2. 配置模型参数
+### 2. 配置环境变量
 
-交互式 CLI 入口在 `main.py`。请按你的实际环境确认：
+至少需要配置：
 
 - `LLM_API_KEY`
 - `LLM_BASE_URL`
 - `LLM_MODEL_NAME`
 - `LLM_TEMPERATURE`
 
-### 3. 启动交互式 CLI
+CLI 通道服务固定监听本地地址：
+
+- `http://127.0.0.1:8765`
+
+### 3. 启动 AIChan 核心服务（含 cli_server）
 
 ```bash
-# 启动 AIChan CLI
 uv run python main.py
 ```
 
-启动后可直接在当前终端输入消息；消息会异步入队并由后台心跳处理，CLI 以增量方式刷新回复。
+### 4. 在另一个终端启动独立客户端
+
+```bash
+uv run python cli_client.py
+```
+
+启动后按提示输入要连接的服务地址（例如 `http://127.0.0.1:8765`）。
+
+可选参数：
+
+```bash
+uv run python cli_client.py --poll-interval 0.2 --reply-timeout 8
+```
 
 ## 目录结构
 
 ```text
 .
 ├─ main.py
+├─ cli_server.py
+├─ cli_client.py
 ├─ pyproject.toml
 ├─ uv.lock
 ├─ docs
@@ -72,4 +93,5 @@ uv run python main.py
 - 调整中枢队列与消费循环：`packages/nexus/src/nexus/hub.py`
 - 替换推理流程：`packages/brain/src/brain/brain.py`
 - 扩展记忆存取能力：`packages/memory/src/memory/`
-- 扩展双工插件能力：`packages/plugins/src/plugins/channels/`、`packages/plugins/src/plugins/tools/`
+- 扩展 HTTP 消息服务：`cli_server.py`
+- 扩展外部协议映射与轮询触发策略：`packages/plugins/src/plugins/channels/cli.py`

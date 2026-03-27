@@ -1,14 +1,14 @@
-﻿from typing import Annotated, TypedDict, List
-from langgraph.graph import StateGraph, END
+import time
+from typing import Annotated, List, TypedDict
+
+from langchain_core.messages import AIMessage, BaseMessage
+from langchain_core.runnables import RunnableConfig
+from langgraph.checkpoint.memory import MemorySaver
+from langgraph.graph import END, StateGraph
 from langgraph.graph.message import add_messages
 from langgraph.prebuilt import ToolNode
-from langgraph.checkpoint.memory import MemorySaver
-from langchain_core.messages import BaseMessage, AIMessage
 
 from core.logger import logger
-
-from core.interfaces import IReasoningEngine
-from langchain_core.runnables import RunnableConfig
 
 
 class BrainState(TypedDict):
@@ -18,7 +18,7 @@ class BrainState(TypedDict):
     messages: Annotated[list[BaseMessage], add_messages]
 
 
-class Brain(IReasoningEngine):
+class Brain:
     """基于 LangGraph 的推理引擎实现。"""
 
     _SINGLE_THREAD_ID = "default"
@@ -39,13 +39,22 @@ class Brain(IReasoningEngine):
         def reason_node(state: BrainState):
             # 该节点负责与 LLM 通信，返回一条 AI 消息。
             try:
-                logger.info("🧠 正在向大脑节点发送神经信号...")
+                logger.info(
+                    "🧠 [Brain] reason 节点执行，历史消息数={}",
+                    len(state["messages"]),
+                )
                 response = self.llm.invoke(state["messages"])
-                logger.info("✅ 脑波接收成功！")
+                logger.info(
+                    "✅ [Brain] reason 节点返回，消息类型={}",
+                    response.__class__.__name__,
+                )
                 return {"messages": [response]}
-            except Exception as e:
+            except Exception as exc:
                 # 发生异常时写日志并返回兜底消息，防止系统崩溃中断。
-                logger.error(f"❌ 大脑神经元连接断开 (LLM调用失败): {str(e)}")
+                logger.exception(
+                    "❌ [Brain] reason 节点异常，LLM 调用失败: {}",
+                    exc,
+                )
                 fallback_msg = AIMessage(
                     content="[系统提示] 笨蛋主人！本小姐的大脑节点暂时离线了，快去检查一下 API Key 和模型名称对不对啦！"
                 )
@@ -70,19 +79,67 @@ class Brain(IReasoningEngine):
 
         return workflow.compile(checkpointer=self.memory)
 
-    def think(self, context_messages: List[BaseMessage]) -> str:
+    def think(
+        self,
+        context_messages: List[BaseMessage],
+        trace_id: str | None = None,
+    ) -> str:
         """
         执行一次完整推理流程并返回最终文本。
 
         参数：
         - context_messages: 由 nexus 组装好的上下文消息列表
         """
-        config: RunnableConfig = {"configurable": {"thread_id": self._SINGLE_THREAD_ID}}
-
-        events = self.graph.stream(
-            {"messages": context_messages}, config, stream_mode="values"
+        effective_trace_id = trace_id or "brain#default"
+        started_at = time.perf_counter()
+        logger.info(
+            "🚀 [Brain] trace_id={} 开始推理流程，输入消息数={}",
+            effective_trace_id,
+            len(context_messages),
         )
-        # stream 返回状态序列，最后一个状态即本轮推理完成态。
-        final_state = list(events)[-1]
-        return final_state["messages"][-1].content
 
+        config: RunnableConfig = {"configurable": {"thread_id": self._SINGLE_THREAD_ID}}
+        try:
+            events = self.graph.stream(
+                {"messages": context_messages}, config, stream_mode="values"
+            )
+            # stream 返回状态序列，最后一个状态即本轮推理完成态。
+            step_count = 0
+            final_state: dict[str, list[BaseMessage]] | None = None
+            for state in events:
+                step_count += 1
+                final_state = state
+                last_message = state["messages"][-1]
+                has_tool_calls = isinstance(last_message, AIMessage) and bool(
+                    last_message.tool_calls
+                )
+                logger.info(
+                    "🔄 [Brain] trace_id={} 图状态推进 step={}，last_message_type={}，tool_calls={}",
+                    effective_trace_id,
+                    step_count,
+                    last_message.__class__.__name__,
+                    has_tool_calls,
+                )
+
+            if final_state is None:
+                raise RuntimeError("Brain 推理流程未产出任何状态")
+
+            reply_content = final_state["messages"][-1].content
+            elapsed_ms = int((time.perf_counter() - started_at) * 1000)
+            logger.info(
+                "✅ [Brain] trace_id={} 推理完成，步骤数={}，输出长度={}字符，耗时={}ms",
+                effective_trace_id,
+                step_count,
+                len(reply_content),
+                elapsed_ms,
+            )
+            return reply_content
+        except Exception as exc:
+            elapsed_ms = int((time.perf_counter() - started_at) * 1000)
+            logger.exception(
+                "❌ [Brain] trace_id={} 推理失败，耗时={}ms: {}",
+                effective_trace_id,
+                elapsed_ms,
+                exc,
+            )
+            raise

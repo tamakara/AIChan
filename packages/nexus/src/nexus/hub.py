@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import queue
 import threading
+import time
 from typing import TYPE_CHECKING
 
 from core.entities import AgentSignal
@@ -43,6 +44,7 @@ class NexusHub:
             raise RuntimeError("NexusHub 未绑定 Agent，请先调用 bind_agent().")
 
         logger.info("🟢 [Nexus] 核心生命循环已启动，正在监听神经信号...")
+        signal_seq = 0
 
         while not self._stop_event.is_set():
             try:
@@ -51,11 +53,25 @@ class NexusHub:
                 continue
 
             try:
+                signal_seq += 1
+                signal_id = f"{signal.channel}#{signal_seq}"
+                started_at = time.perf_counter()
                 logger.info(
-                    "🧠 [Nexus -> Agent] 将 {} 的信号交由 Agent 处理...",
+                    "🧠 [Nexus -> Agent] signal_id={} 将 {} 的信号交由 Agent 处理...",
+                    signal_id,
                     signal.channel,
                 )
-                self._agent.process_signal(signal)
+                handled_count = self._agent.process_signal(
+                    signal=signal,
+                    signal_id=signal_id,
+                )
+                elapsed_ms = int((time.perf_counter() - started_at) * 1000)
+                logger.info(
+                    "✅ [Nexus <- Agent] signal_id={} 处理完成，user消息处理数={}，耗时={}ms",
+                    signal_id,
+                    handled_count,
+                    elapsed_ms,
+                )
             except Exception as e:
                 logger.exception("❌ [Nexus 异常] 处理信号时发生错误: {}", e)
             finally:
