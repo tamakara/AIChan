@@ -1,17 +1,16 @@
 from __future__ import annotations
 
-import threading
 import time
 
+from agent.agent import Agent
 from langchain_openai import ChatOpenAI
 
-from brain.brain import Brain
 from cli_server import CLI_SERVER_BASE_URL, CLIServerRuntime
 from core.config import settings
-from core.entities import AgentSignal
 from core.logger import logger
-from nexus.agent import Agent
-from nexus.hub import nexus_hub
+from hub.cli_unread_poller import CLIUnreadPoller
+from hub.signal_hub import SignalHub
+from hub.signal_processor import SignalProcessor
 from plugins.channels.cli import CLIChannelPlugin
 from plugins.registry import PluginRegistry
 from plugins.tools.time_tool import CurrentTimeToolPlugin
@@ -28,8 +27,8 @@ def register_plugins() -> None:
     PluginRegistry.register(CurrentTimeToolPlugin())
 
 
-def build_agent() -> Agent:
-    """组装核心模块并返回 Agent。"""
+def build_signal_processor() -> SignalProcessor:
+    """组装核心模块并返回 SignalProcessor。"""
     register_plugins()
 
     llm = ChatOpenAI(
@@ -39,81 +38,32 @@ def build_agent() -> Agent:
         temperature=settings.llm_temperature,
     )
 
-    brain = Brain(llm_client=llm, tools=PluginRegistry.all_tools())
-    return Agent(brain=brain)
-
-
-def resolve_cli_channel() -> CLIChannelPlugin:
-    plugin = PluginRegistry.get("cli")
-    if not isinstance(plugin, CLIChannelPlugin):
-        raise RuntimeError("CLIChannelPlugin 未注册")
-    return plugin
-
-
-def start_cli_unread_poller(
-    cli_channel: CLIChannelPlugin,
-    interval_seconds: float = 1.0,
-) -> tuple[threading.Event, threading.Thread]:
-    """
-    启动未读轮询线程：
-    - 每 interval_seconds 查询一次 AI 侧是否有未读消息
-    - 有未读时由 plugin 触发新信号入 NexusHub
-    """
-    stop_event = threading.Event()
-
-    def _poll_loop() -> None:
-        while not stop_event.is_set():
-            try:
-                emitted = cli_channel.emit_signal_if_ai_unread(
-                    emit_signal=lambda channel_name: nexus_hub.push_signal(
-                        AgentSignal(channel=channel_name)
-                    )
-                )
-                if emitted:
-                    logger.info("🔔 [Main] 检测到 CLI 未读，已发出 AgentSignal")
-            except Exception as exc:
-                logger.exception("CLI 未读轮询失败：{}", exc)
-            finally:
-                stop_event.wait(interval_seconds)
-
-    worker = threading.Thread(
-        target=_poll_loop,
-        name="cli-unread-poller",
-        daemon=True,
-    )
-    worker.start()
-    return stop_event, worker
-
-
-def stop_cli_unread_poller(
-    stop_event: threading.Event,
-    worker: threading.Thread,
-) -> None:
-    """停止未读轮询线程。"""
-    stop_event.set()
-    if worker.is_alive():
-        worker.join(timeout=3.0)
+    agent_runtime = Agent(llm_client=llm, tools=PluginRegistry.all_tools())
+    return SignalProcessor(agent_runtime=agent_runtime)
 
 
 def main() -> None:
     """
-    本地启动入口：运行 AIChan 核心并内嵌启动 cli_server。
+    本地启动入口：运行 AIChan 核心并内嵌启动 CLI Channel Server。
     """
-    agent = build_agent()
-    cli_channel = resolve_cli_channel()
-    nexus_hub.bind_agent(agent)
-    nexus_hub.start_heartbeat()
+    signal_processor = build_signal_processor()
+    signal_hub = SignalHub(signal_processor=signal_processor)
+    signal_hub.start_heartbeat()
 
     cli_server = CLIServerRuntime()
-    poller_stop_event: threading.Event | None = None
-    poller_thread: threading.Thread | None = None
-
+    cli_unread_poller: CLIUnreadPoller | None = None
     try:
         cli_server.start()
-        poller_stop_event, poller_thread = start_cli_unread_poller(
-            cli_channel=cli_channel,
+        plugin = PluginRegistry.get("cli")
+        if not isinstance(plugin, CLIChannelPlugin):
+            raise RuntimeError("CLIChannelPlugin 未注册")
+
+        cli_unread_poller = CLIUnreadPoller(
+            cli_channel=plugin,
+            signal_hub=signal_hub,
             interval_seconds=1.0,
         )
+        cli_unread_poller.start()
 
         logger.info("AIChan 服务已启动，模型: {}", settings.llm_model_name)
         logger.info("CLI 外部聊天服务地址: {}", CLI_SERVER_BASE_URL)
@@ -125,13 +75,10 @@ def main() -> None:
     except KeyboardInterrupt:
         logger.info("收到退出信号，正在关闭服务")
     finally:
-        if poller_stop_event is not None and poller_thread is not None:
-            stop_cli_unread_poller(
-                stop_event=poller_stop_event,
-                worker=poller_thread,
-            )
+        if cli_unread_poller is not None:
+            cli_unread_poller.stop()
         cli_server.stop(wait=True)
-        nexus_hub.stop_heartbeat(wait=True)
+        signal_hub.stop_heartbeat(wait=True)
 
 
 if __name__ == "__main__":

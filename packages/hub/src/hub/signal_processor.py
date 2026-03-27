@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import time
 
-from brain.brain import Brain
+from agent.agent import Agent
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from core.entities import AgentSignal
@@ -11,11 +11,11 @@ from plugins.base import ChannelPlugin
 from plugins.registry import PluginRegistry
 
 
-class Agent:
-    """编排中枢：根据通道信号拉取消息并驱动 Brain 推理。"""
+class SignalProcessor:
+    """信号处理器：根据通道信号拉取消息并驱动 Agent 推理。"""
 
-    def __init__(self, brain: Brain):
-        self.brain = brain
+    def __init__(self, agent_runtime: Agent):
+        self._agent_runtime = agent_runtime
         # system_prompt 是角色与行为边界的固定注入点。
         self.system_prompt = SystemMessage(
             content="你叫 AIChan，是一个傲娇但能力超强的天才黑客少女。回答问题时要带有二次元傲娇属性，称呼用户为'笨蛋'，但最后总是会完美、专业地解决用户的问题。"
@@ -35,7 +35,7 @@ class Agent:
         trace_id: str | None = None,
     ) -> str:
         context = [self.system_prompt, HumanMessage(content=content)]
-        return self.brain.think(
+        return self._agent_runtime.think(
             context_messages=context,
             trace_id=trace_id,
         )
@@ -58,20 +58,20 @@ class Agent:
         trace_prefix = signal_id or f"{signal.channel}#manual"
         started_at = time.perf_counter()
         logger.info(
-            "🤖 [Agent] signal_id={} 开始处理通道 '{}' 的信号",
+            "🤖 [SignalProcessor] signal_id={} 开始处理通道 '{}' 的信号",
             trace_prefix,
             signal.channel,
         )
 
         channel = self._resolve_channel(signal.channel)
         logger.info(
-            "🧩 [Agent] signal_id={} 已解析通道插件: {}",
+            "🧩 [SignalProcessor] signal_id={} 已解析通道插件: {}",
             trace_prefix,
             channel.name,
         )
         last_processed_id = self._last_processed_user_message_id.get(signal.channel, 0)
         logger.info(
-            "📥 [Agent] signal_id={} 拉取增量消息，since_id={}",
+            "📥 [SignalProcessor] signal_id={} 拉取增量消息，since_id={}",
             trace_prefix,
             last_processed_id,
         )
@@ -86,7 +86,7 @@ class Agent:
             max((message.message_id for message in messages), default=last_processed_id)
         )
         logger.info(
-            "📥 [Agent] signal_id={} 拉取完成，消息总数={}，待处理user消息={}，latest_message_id={}",
+            "📥 [SignalProcessor] signal_id={} 拉取完成，消息总数={}，待处理user消息={}，latest_message_id={}",
             trace_prefix,
             len(messages),
             len(pending_user_messages),
@@ -96,7 +96,7 @@ class Agent:
         if not pending_user_messages:
             elapsed_ms = int((time.perf_counter() - started_at) * 1000)
             logger.info(
-                "✅ [Agent] signal_id={} 无待处理 user 消息，结束本轮信号，耗时={}ms",
+                "✅ [SignalProcessor] signal_id={} 无待处理 user 消息，结束本轮信号，耗时={}ms",
                 trace_prefix,
                 elapsed_ms,
             )
@@ -109,7 +109,7 @@ class Agent:
             )
             think_started_at = time.perf_counter()
             logger.info(
-                "🧠 [Agent] trace_id={} 开始推理，用户消息长度={}字符",
+                "🧠 [SignalProcessor] trace_id={} 开始推理，用户消息长度={}字符",
                 msg_trace_id,
                 len(user_msg.content),
             )
@@ -119,7 +119,7 @@ class Agent:
             )
             think_elapsed_ms = int((time.perf_counter() - think_started_at) * 1000)
             logger.info(
-                "🧠 [Agent] trace_id={} 推理完成，回复长度={}字符，耗时={}ms",
+                "🧠 [SignalProcessor] trace_id={} 推理完成，回复长度={}字符，耗时={}ms",
                 msg_trace_id,
                 len(reply),
                 think_elapsed_ms,
@@ -129,7 +129,7 @@ class Agent:
             sent_message = channel.send_message(role="assistant", content=reply)
             send_elapsed_ms = int((time.perf_counter() - send_started_at) * 1000)
             logger.info(
-                "📤 [Agent] trace_id={} 回复已写回通道 '{}'，assistant_message_id={}，耗时={}ms",
+                "📤 [SignalProcessor] trace_id={} 回复已写回通道 '{}'，assistant_message_id={}，耗时={}ms",
                 msg_trace_id,
                 sent_message.channel,
                 sent_message.message_id,
@@ -137,7 +137,7 @@ class Agent:
             )
             self._last_processed_user_message_id[signal.channel] = user_msg.message_id
             logger.info(
-                "🧷 [Agent] signal_id={} 更新通道 '{}' 的 last_processed_user_message_id={}",
+                "🧷 [SignalProcessor] signal_id={} 更新通道 '{}' 的 last_processed_user_message_id={}",
                 trace_prefix,
                 signal.channel,
                 user_msg.message_id,
@@ -145,7 +145,7 @@ class Agent:
 
         elapsed_ms = int((time.perf_counter() - started_at) * 1000)
         logger.info(
-            "✅ [Agent] signal_id={} 处理结束，已处理user消息={}，总耗时={}ms",
+            "✅ [SignalProcessor] signal_id={} 处理结束，已处理user消息={}，总耗时={}ms",
             trace_prefix,
             total_pending,
             elapsed_ms,
