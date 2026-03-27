@@ -3,22 +3,25 @@ name = "aichan"
 version = "0.1.0"
 requires-python = ">=3.10"
 dependencies = [
-    "brain",
+    "agent",
     "core",
+    "fastapi>=0.118.0",
     "langchain-core>=1.2.20",
     "langchain-openai>=1.1.11",
     "memory",
-    "nexus",
+    "hub",
     "plugins",
+    "prompt-toolkit>=3.0.36",
+    "uvicorn>=0.37.0",
 ]
 
 [tool.uv.workspace]
 members = ["packages/*"]
 
 [tool.uv.sources]
-brain = { workspace = true }
+agent = { workspace = true }
 core = { workspace = true }
 memory = { workspace = true }
-nexus = { workspace = true }
+hub = { workspace = true }
 plugins = { workspace = true }
 

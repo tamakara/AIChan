@@ -1,29 +1,25 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
 
-from langchain_core.tools import StructuredTool
+from langchain_core.tools import ArgsSchema, StructuredTool
 
 from core.entities import ChannelMessage
 
-
+@dataclass
 class BasePlugin(ABC):
     """
     AIChan 插件系统的统一基类。
-
-    说明：
-    - 插件统一拥有 `name` 与 `description` 两个基础元信息。
-    - 具体能力由子类区分为“工具插件”或“通道插件”。
     """
-
-    def __init__(self, name: str, description: str) -> None:
-        # name 作为注册表中的唯一能力标识
-        self.name = name
-        self.description = description
-
-
-class BaseToolPlugin(BasePlugin):
+    name:str
+      
+@dataclass
+class ToolPlugin(BasePlugin):
     """工具插件基类：对外暴露可绑定给 LLM 的工具接口。"""
+
+    description:str
+    args_schema:ArgsSchema
 
     @abstractmethod
     def get_tool(self) -> StructuredTool:
@@ -31,7 +27,7 @@ class BaseToolPlugin(BasePlugin):
         raise NotImplementedError
 
 
-class BaseChannelPlugin(BasePlugin):
+class ChannelPlugin(BasePlugin):
     """通道插件基类：对外暴露消息拉取与消息发送能力。"""
 
     @abstractmethod

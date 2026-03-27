@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from langchain_core.tools import StructuredTool
 
-from plugins.base import BasePlugin, BaseToolPlugin
+from plugins.base import BasePlugin, ToolPlugin
 
 
 class PluginRegistry:
@@ -30,11 +30,11 @@ class PluginRegistry:
         """
         收集所有可供 LLM 绑定的工具能力。
 
-        约定：仅 `BaseToolPlugin` 需要实现 `get_tool()`。
+        约定：仅 `ToolPlugin` 需要实现 `get_tool()`。
         """
         tools: list[StructuredTool] = []
         for plugin in cls._pool.values():
-            if isinstance(plugin, BaseToolPlugin):
+            if isinstance(plugin, ToolPlugin):
                 tools.append(plugin.get_tool())
         return tools
 

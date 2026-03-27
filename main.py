@@ -1,12 +1,16 @@
 from __future__ import annotations
 
-from cli import run_cli_loop
+import time
+
+from agent.agent import Agent
 from langchain_openai import ChatOpenAI
 
-from brain.brain import Brain
+from cli_server import CLI_SERVER_BASE_URL, CLIServerRuntime
 from core.config import settings
 from core.logger import logger
-from nexus.agent import Agent
+from hub.cli_sse_listener import CLIMessageSSEListener
+from hub.signal_hub import SignalHub
+from hub.signal_processor import SignalProcessor
 from plugins.channels.cli import CLIChannelPlugin
 from plugins.registry import PluginRegistry
 from plugins.tools.time_tool import CurrentTimeToolPlugin
@@ -14,25 +18,17 @@ from plugins.tools.time_tool import CurrentTimeToolPlugin
 
 def register_plugins() -> None:
     """
-    注册系统启动后的默认插件能力。
-
-    说明：
-    - cli: 终端会话通道
-    - get_current_time: 时间工具能力
+    注册默认插件：
+    - cli 通道插件（通过 HTTP 访问外部 cli_server）
+    - get_current_time 工具插件
     """
     PluginRegistry.clear()
     PluginRegistry.register(CLIChannelPlugin())
     PluginRegistry.register(CurrentTimeToolPlugin())
 
-
-def build_agent() -> Agent:
+def main() -> None:
     """
-    组装核心模块并返回 Agent（nexus）实例。
-
-    组装顺序：
-    1) 注册默认插件能力
-    2) 初始化 LLM 并构建 brain
-    3) 构建 nexus（Agent）
+    本地启动入口：运行 AIChan 核心并内嵌启动 CLI Channel Server。
     """
     register_plugins()
 
@@ -42,27 +38,41 @@ def build_agent() -> Agent:
         model=settings.llm_model_name,
         temperature=settings.llm_temperature,
     )
+    agent = Agent(llm_client=llm, tools=PluginRegistry.all_tools())
+    signal_processor = SignalProcessor(agent=agent)
+    signal_hub = SignalHub(signal_processor=signal_processor)
+    signal_hub.start_heartbeat()
 
-    # 仅工具插件会绑定到 LLM；通道插件不参与 LLM 工具调用。
-    brain = Brain(llm_client=llm, tools=PluginRegistry.all_tools())
-    return Agent(brain=brain)
-
-
-def resolve_cli_channel() -> CLIChannelPlugin:
+    
     plugin = PluginRegistry.get("cli")
     if not isinstance(plugin, CLIChannelPlugin):
         raise RuntimeError("CLIChannelPlugin 未注册")
-    return plugin
 
+    cli_server = CLIServerRuntime()
+    cli_sse_listener = CLIMessageSSEListener(
+        channel_name=plugin.name,
+        signal_hub=signal_hub,
+        server_base_url=CLI_SERVER_BASE_URL,
+    )
+    
+    try:
+        cli_server.start()
+        cli_sse_listener.start()
 
-def main() -> None:
-    """
-    本地启动入口：组装核心模块并启动交互式 CLI。
-    """
-    agent = build_agent()
-    cli_channel = resolve_cli_channel()
-    logger.info("AIChan CLI 已启动，模型: {}", settings.llm_model_name)
-    run_cli_loop(agent=agent, channel=cli_channel)
+        logger.info("AIChan 服务已启动，模型: {}", settings.llm_model_name)
+        logger.info("CLI 外部聊天服务地址: {}", CLI_SERVER_BASE_URL)
+        logger.info("CLI 消息接入方式: SSE (/v1/events)")
+        logger.info("请在另一个终端启动客户端: uv run python cli_client.py")
+
+        while True:
+            time.sleep(1.0)
+    except KeyboardInterrupt:
+        logger.info("收到退出信号，正在关闭服务")
+    finally:
+        if cli_sse_listener is not None:
+            cli_sse_listener.stop()
+        cli_server.stop(wait=True)
+        signal_hub.stop_heartbeat(wait=True)
 
 
 if __name__ == "__main__":
