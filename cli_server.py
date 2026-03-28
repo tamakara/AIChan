@@ -16,6 +16,11 @@ from pydantic import BaseModel, Field
 CLI_SERVER_HOST = "127.0.0.1"
 CLI_SERVER_PORT = 8765
 CLI_SERVER_BASE_URL = f"http://{CLI_SERVER_HOST}:{CLI_SERVER_PORT}"
+CLI_SERVER_TIMEOUT_KEEP_ALIVE_SECONDS = 1
+CLI_SERVER_TIMEOUT_GRACEFUL_SHUTDOWN_SECONDS = 2
+CLI_SERVER_SSE_WAIT_TIMEOUT_SECONDS = 1.0
+CLI_SERVER_STOP_JOIN_TIMEOUT_SECONDS = 1.0
+CLI_SERVER_FORCE_EXIT_JOIN_TIMEOUT_SECONDS = 0.5
 
 CLIChannelSender = Literal["ai", "user"]
 CLIChannelReader = Literal["ai", "user"]
@@ -173,7 +178,7 @@ def build_cli_server_app() -> FastAPI:
                             store.wait_for_reader_messages,
                             reader,
                             last_id,
-                            15.0,
+                            CLI_SERVER_SSE_WAIT_TIMEOUT_SECONDS,
                         )
                     except asyncio.CancelledError:
                         return
@@ -240,6 +245,8 @@ class CLIServerRuntime:
                 port=self.port,
                 log_level="warning",
                 access_log=False,
+                timeout_keep_alive=CLI_SERVER_TIMEOUT_KEEP_ALIVE_SECONDS,
+                timeout_graceful_shutdown=CLI_SERVER_TIMEOUT_GRACEFUL_SHUTDOWN_SECONDS,
             )
         )
         self._thread: threading.Thread | None = None
@@ -265,4 +272,8 @@ class CLIServerRuntime:
     def stop(self, wait: bool = True) -> None:
         self._server.should_exit = True
         if wait and self._thread and self._thread.is_alive():
-            self._thread.join(timeout=3.0)
+            self._thread.join(timeout=CLI_SERVER_STOP_JOIN_TIMEOUT_SECONDS)
+            if self._thread.is_alive():
+                # 如果优雅停机仍未完成，触发强制退出，避免长时间阻塞主进程退出。
+                self._server.force_exit = True
+                self._thread.join(timeout=CLI_SERVER_FORCE_EXIT_JOIN_TIMEOUT_SECONDS)
