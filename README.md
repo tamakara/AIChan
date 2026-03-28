@@ -88,18 +88,17 @@ uv run python cli/cli_client.py --connect-retry-delay 3 --sse-timeout 30 --http-
 │  ├─ 1.system-design.md
 │  ├─ 2.project-structure.md
 │  └─ 3.message-loop.md
-└─ packages
-   ├─ core
-   ├─ plugins
-   ├─ hub
-   ├─ agent
-   └─ memory
+├─ core
+├─ plugins
+├─ hub
+├─ agent
+└─ memory
 ```
 
 ## 常见自定义点
 
-- 调整中枢队列与消费循环：`packages/hub/src/hub/signal_hub.py`
-- 替换推理流程：`packages/agent/src/agent/agent.py`
-- 扩展记忆存取能力：`packages/memory/src/memory/`
+- 调整中枢队列与消费循环：`hub/src/hub/signal_hub.py`
+- 替换推理流程：`agent/src/agent/agent.py`
+- 扩展记忆存取能力：`memory/src/memory/`
 - 扩展 HTTP 消息服务：`cli/cli_server.py`
-- 扩展外部协议映射与消息推送策略：`packages/plugins/src/plugins/channels/cli/`
+- 扩展外部协议映射与消息推送策略：`plugins/src/plugins/channels/cli/`

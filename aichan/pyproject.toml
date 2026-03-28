@@ -16,7 +16,7 @@ dependencies = [
 ]
 
 [tool.uv.workspace]
-members = ["packages/*"]
+members = ["agent", "core", "hub", "memory", "plugins"]
 
 [tool.uv.sources]
 agent = { workspace = true }

@@ -3,11 +3,8 @@ services:
     build:
       context: .
       dockerfile: cli_channel/Dockerfile
-    environment:
-      CLI_SERVER_HOST: 0.0.0.0
-      CLI_SERVER_PORT: 8765
     ports:
-      - "8765:8765"
+      - "${CLI_SERVER_PORT}:${CLI_SERVER_PORT}"
     restart: unless-stopped
 
   aichan:
@@ -19,5 +16,5 @@ services:
     env_file:
       - ./aichan/.env
     environment:
-      CLI_SERVER_BASE_URL: http://cli_channel:8765
+      CLI_SERVER_BASE_URL: http://cli_channel:${CLI_SERVER_PORT}
     restart: unless-stopped

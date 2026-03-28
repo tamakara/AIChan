@@ -15,7 +15,7 @@ members = [
 [[package]]
 name = "agent"
 version = "0.1.0"
-source = { editable = "packages/agent" }
+source = { editable = "agent" }
 dependencies = [
     { name = "core" },
     { name = "langchain-core" },
@@ -26,7 +26,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "core", editable = "packages/core" },
+    { name = "core", editable = "core" },
     { name = "langchain-core", specifier = ">=1.2.20" },
     { name = "langchain-openai", specifier = ">=1.1.11" },
     { name = "langgraph", specifier = ">=1.1.3" },
@@ -52,14 +52,14 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "agent", editable = "packages/agent" },
-    { name = "core", editable = "packages/core" },
+    { name = "agent", editable = "agent" },
+    { name = "core", editable = "core" },
     { name = "fastapi", specifier = ">=0.118.0" },
-    { name = "hub", editable = "packages/hub" },
+    { name = "hub", editable = "hub" },
     { name = "langchain-core", specifier = ">=1.2.20" },
     { name = "langchain-openai", specifier = ">=1.1.11" },
-    { name = "memory", editable = "packages/memory" },
-    { name = "plugins", editable = "packages/plugins" },
+    { name = "memory", editable = "memory" },
+    { name = "plugins", editable = "plugins" },
     { name = "prompt-toolkit", specifier = ">=3.0.36" },
     { name = "uvicorn", specifier = ">=0.37.0" },
 ]
@@ -234,7 +234,7 @@ wheels = [
 [[package]]
 name = "core"
 version = "0.1.0"
-source = { editable = "packages/core" }
+source = { editable = "core" }
 dependencies = [
     { name = "loguru" },
     { name = "pydantic" },
@@ -327,7 +327,7 @@ wheels = [
 [[package]]
 name = "hub"
 version = "0.1.0"
-source = { editable = "packages/hub" }
+source = { editable = "hub" }
 dependencies = [
     { name = "core" },
     { name = "memory" },
@@ -336,9 +336,9 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "core", editable = "packages/core" },
-    { name = "memory", editable = "packages/memory" },
-    { name = "plugins", editable = "packages/plugins" },
+    { name = "core", editable = "core" },
+    { name = "memory", editable = "memory" },
+    { name = "plugins", editable = "plugins" },
 ]
 
 [[package]]
@@ -614,13 +614,13 @@ wheels = [
 [[package]]
 name = "memory"
 version = "0.1.0"
-source = { editable = "packages/memory" }
+source = { editable = "memory" }
 dependencies = [
     { name = "core" },
 ]
 
 [package.metadata]
-requires-dist = [{ name = "core", editable = "packages/core" }]
+requires-dist = [{ name = "core", editable = "core" }]
 
 [[package]]
 name = "openai"
@@ -790,7 +790,7 @@ wheels = [
 [[package]]
 name = "plugins"
 version = "0.1.0"
-source = { editable = "packages/plugins" }
+source = { editable = "plugins" }
 dependencies = [
     { name = "core" },
     { name = "langchain-core" },
@@ -798,7 +798,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "core", editable = "packages/core" },
+    { name = "core", editable = "core" },
     { name = "langchain-core", specifier = ">=1.2.20" },
 ]
 
@@ -1606,3 +1606,4 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/3a/43/241f9615bcf8ba8903b3f0432da069e857fc4fd1783bd26183db53c4804b/zstandard-0.25.0-cp314-cp314-win_amd64.whl", hash = "sha256:c19bcdd826e95671065f8692b5a4aa95c52dc7a02a4c5a0cac46deb879a017a2", size = 516118, upload-time = "2025-09-14T22:18:17.849Z" },
     { url = "https://files.pythonhosted.org/packages/f0/ef/da163ce2450ed4febf6467d77ccb4cd52c4c30ab45624bad26ca0a27260c/zstandard-0.25.0-cp314-cp314-win_arm64.whl", hash = "sha256:d7541afd73985c630bafcd6338d2518ae96060075f9463d7dc14cfb33514383d", size = 476940, upload-time = "2025-09-14T22:18:19.088Z" },
 ]
+
