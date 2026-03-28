@@ -1,0 +1,23 @@
+services:
+  cli_channel:
+    build:
+      context: .
+      dockerfile: cli_channel/Dockerfile
+    environment:
+      CLI_SERVER_HOST: ${CLI_SERVER_HOST}
+      CLI_SERVER_PORT: ${CLI_SERVER_PORT}
+    ports:
+      - "${CLI_SERVER_PORT}:${CLI_SERVER_PORT}"
+    restart: unless-stopped
+
+  aichan:
+    build:
+      context: .
+      dockerfile: aichan/Dockerfile
+    environment:
+      LLM_API_KEY: ${LLM_API_KEY}
+      LLM_BASE_URL: ${LLM_BASE_URL}
+      LLM_MODEL_NAME: ${LLM_MODEL_NAME}
+      LLM_TEMPERATURE: ${LLM_TEMPERATURE}
+      CLI_SERVER_BASE_URL: http://cli_channel:${CLI_SERVER_PORT}
+    restart: unless-stopped

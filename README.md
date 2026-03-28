@@ -3,8 +3,9 @@
 一个基于 `LangChain + LangGraph` 的模块化 AI 助手示例项目，采用 `uv workspace` 管理多包结构。  
 当前默认运行模式为：
 
-- `main.py` 启动 AIChan 核心（`SignalHub + SignalProcessor + Agent`）并内嵌启动 `FastAPI cli_server` 子线程。
-- `cli_client.py` 是独立控制台客户端（基于 `prompt_toolkit`），可在其他位置单独运行，通过 HTTP 与 `cli_server` 通信。
+- `main.py` 只启动 AIChan 核心（`SignalHub + SignalProcessor + Agent`）。
+- `cli_server.py` 独立进程运行（`FastAPI`），负责消息存储与 SSE 推送。
+- `cli_client.py` 独立控制台客户端（基于 `prompt_toolkit`），通过 HTTP 与 `cli_server` 通信。
 
 消息存储与收发管理由 `cli_server` 负责。  
 AIChan 侧通过 SSE（`/v1/events?reader=ai&after_id=...`）实时接收新消息事件，并向 `SignalHub` 推送信号。
@@ -46,16 +47,22 @@ CLI 通道服务固定监听本地地址：
 
 - `http://127.0.0.1:8765`
 
-### 3. 启动 AIChan 核心服务（含 cli_server）
+### 3. 启动独立 cli_server
+
+```bash
+uv run python cli/cli_server.py
+```
+
+### 4. 启动 AIChan 核心服务
 
 ```bash
 uv run python main.py
 ```
 
-### 4. 在另一个终端启动独立客户端
+### 5. 在另一个终端启动独立客户端
 
 ```bash
-uv run python cli_client.py
+uv run python cli/cli_client.py
 ```
 
 启动后按提示输入要连接的服务地址（例如 `http://127.0.0.1:8765`）。
@@ -63,7 +70,7 @@ uv run python cli_client.py
 可选参数：
 
 ```bash
-uv run python cli_client.py --poll-interval 0.5 --http-timeout 8
+uv run python cli/cli_client.py --connect-retry-delay 3 --sse-timeout 30 --http-timeout 8
 ```
 
 ## 目录结构
@@ -71,8 +78,9 @@ uv run python cli_client.py --poll-interval 0.5 --http-timeout 8
 ```text
 .
 ├─ main.py
-├─ cli_server.py
-├─ cli_client.py
+├─ cli
+│  ├─ cli_server.py
+│  └─ cli_client.py
 ├─ pyproject.toml
 ├─ uv.lock
 ├─ docs
@@ -80,18 +88,17 @@ uv run python cli_client.py --poll-interval 0.5 --http-timeout 8
 │  ├─ 1.system-design.md
 │  ├─ 2.project-structure.md
 │  └─ 3.message-loop.md
-└─ packages
-   ├─ core
-   ├─ plugins
-   ├─ hub
-   ├─ agent
-   └─ memory
+├─ core
+├─ plugins
+├─ hub
+├─ agent
+└─ memory
 ```
 
 ## 常见自定义点
 
-- 调整中枢队列与消费循环：`packages/hub/src/hub/signal_hub.py`
-- 替换推理流程：`packages/agent/src/agent/agent.py`
-- 扩展记忆存取能力：`packages/memory/src/memory/`
-- 扩展 HTTP 消息服务：`cli_server.py`
-- 扩展外部协议映射与消息推送策略：`packages/plugins/src/plugins/channels/cli/`
+- 调整中枢队列与消费循环：`hub/src/hub/signal_hub.py`
+- 替换推理流程：`agent/src/agent/agent.py`
+- 扩展记忆存取能力：`memory/src/memory/`
+- 扩展 HTTP 消息服务：`cli/cli_server.py`
+- 扩展外部协议映射与消息推送策略：`plugins/src/plugins/channels/cli/`

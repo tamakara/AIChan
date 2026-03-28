@@ -1,0 +1,18 @@
+[project]
+name = "core"
+version = "0.1.0"
+description = "Add your description here"
+authors = [
+    { name = "tamakara", email = "tamakara@qq.com" }
+]
+requires-python = ">=3.10"
+dependencies = [
+    "loguru>=0.7.3",
+    "pydantic>=2.12.5",
+    "pydantic-settings>=2.13.1",
+    "rich>=13.7.1",
+]
+
+[build-system]
+requires = ["uv_build>=0.10.6,<0.11.0"]
+build-backend = "uv_build"
