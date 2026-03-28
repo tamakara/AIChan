@@ -4,13 +4,11 @@ from plugins.channels.cli.models import (
     CLIChannelReader,
     CLIChannelSender,
     CLI_CHANNEL_NAME,
-    DEFAULT_CLI_SERVER_BASE_URL,
 )
 from plugins.channels.cli.plugin import CLIChannelPlugin
 
 __all__ = [
     "CLI_CHANNEL_NAME",
-    "DEFAULT_CLI_SERVER_BASE_URL",
     "CLIChannelSender",
     "CLIChannelReader",
     "CLIChannelMessage",

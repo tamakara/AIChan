@@ -14,6 +14,7 @@ class AppSettings(BaseSettings):
     llm_base_url: str
     llm_model_name: str
     llm_temperature: float
+    cli_server_base_url: str = "http://127.0.0.1:8765"
 
     model_config = SettingsConfigDict(
         env_file=".env",

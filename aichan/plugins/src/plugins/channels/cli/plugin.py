@@ -3,6 +3,7 @@ from __future__ import annotations
 import time
 from typing import Literal
 
+from core.config import settings
 from core.entities import ChannelMessage
 from core.logger import logger
 from plugins.base import ChannelPlugin
@@ -11,7 +12,6 @@ from plugins.channels.cli.models import (
     CLIChannelMessage,
     CLIChannelSender,
     DEFAULT_CLI_CHANNEL_NAME,
-    DEFAULT_CLI_SERVER_BASE_URL,
     DEFAULT_CLI_TIMEOUT_SECONDS,
 )
 
@@ -28,12 +28,17 @@ class CLIChannelPlugin(ChannelPlugin):
     def __init__(
         self,
         name: str = DEFAULT_CLI_CHANNEL_NAME,
-        server_base_url: str = DEFAULT_CLI_SERVER_BASE_URL,
+        server_base_url: str | None = None,
         timeout_seconds: float = DEFAULT_CLI_TIMEOUT_SECONDS,
     ) -> None:
         super().__init__(name=name)
+        resolved_server_base_url = (
+            settings.cli_server_base_url
+            if server_base_url is None
+            else server_base_url
+        )
         self._client = CLIMessageServiceClient(
-            server_base_url=server_base_url,
+            server_base_url=resolved_server_base_url,
             timeout_seconds=timeout_seconds,
         )
 

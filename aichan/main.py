@@ -11,7 +11,6 @@ from hub.cli_sse_listener import CLIMessageSSEListener
 from hub.signal_hub import SignalHub
 from hub.signal_processor import SignalProcessor
 from plugins.channels.cli import CLIChannelPlugin
-from plugins.channels.cli.models import DEFAULT_CLI_SERVER_BASE_URL
 from plugins.registry import PluginRegistry
 from plugins.tools.time_tool import CurrentTimeToolPlugin
 
@@ -48,7 +47,7 @@ def main() -> None:
     if not isinstance(plugin, CLIChannelPlugin):
         raise RuntimeError("CLIChannelPlugin 未注册")
 
-    cli_server_base_url = DEFAULT_CLI_SERVER_BASE_URL
+    cli_server_base_url = settings.cli_server_base_url
     cli_sse_listener = CLIMessageSSEListener(
         channel_name=plugin.name,
         signal_hub=signal_hub,
