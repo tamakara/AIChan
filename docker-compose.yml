@@ -13,8 +13,6 @@ services:
       dockerfile: aichan/Dockerfile
     depends_on:
       - cli_channel
-    env_file:
-      - ./aichan/.env
     environment:
       CLI_SERVER_BASE_URL: http://cli_channel:${CLI_SERVER_PORT}
     restart: unless-stopped
