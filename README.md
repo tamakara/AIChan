@@ -1,104 +1,91 @@
 # AIChan
 
-一个基于 `LangChain + LangGraph` 的模块化 AI 助手示例项目，采用 `uv workspace` 管理多包结构。  
-当前默认运行模式为：
+AIChan 当前采用 **Registry + SignalHub** 的动态架构：
 
-- `main.py` 只启动 AIChan 核心（`SignalHub + SignalProcessor + Agent`）。
-- `cli_server.py` 独立进程运行（`FastAPI`），负责消息存储与 SSE 推送。
-- `cli_client.py` 独立控制台客户端（基于 `prompt_toolkit`），通过 HTTP 与 `cli_server` 通信。
+- 网关（如 `cli_gateway`）启动后主动向大脑注册；
+- 大脑通过注册中心动态发现网关能力并映射为 LLM 可调用工具；
+- 网关消息事件先进入全局事件总线，再由独立触发器推送到 `SignalHub`；
+- `SignalProcessor` 串行消费信号，拉取增量消息并调用 Agent 推理回写。
 
-消息存储与收发管理由 `cli_server` 负责。  
-AIChan 侧通过 SSE（`/v1/events?reader=ai&after_id=...`）实时接收新消息事件，并向 `SignalHub` 推送信号。
+> 本仓库已完成对旧静态插件模式的硬切换，不保留兼容链路。
 
-## 项目文档
+## 核心组件
 
-- 0号文档（边界说明）：[docs/0.boundary.md](docs/0.boundary.md)
-- 1号文档（设计文档）：[docs/1.system-design.md](docs/1.system-design.md)
-- 2号文档（架构文档）：[docs/2.project-structure.md](docs/2.project-structure.md)
-- 3号文档（消息闭环）：[docs/3.message-loop.md](docs/3.message-loop.md)
-
-## 架构概览
-
-1. `plugins`：插件层（I/O 总线），统一承载输入渠道与动作工具能力。
-2. `hub`：中央神经枢纽，维护异步队列并驱动消费心跳。
-3. `agent`：推理层，基于 LangGraph 执行“推理 -> 调用能力 -> 再推理”。
-4. `cli_server`：独立双对象消息服务（`ai/user`），负责消息存储、SSE 事件推送与外部 API。
-5. `cli_client`：独立用户端，负责控制台输入输出，通过 HTTP 与 `cli_server` 通信。
-6. `core` / `memory`：共享能力与记忆扩展层。
+1. `aichan/registry`
+   - 管理网关注册、OpenAPI 工具映射、SSE 感知接入。
+2. `aichan/hub`
+   - `SignalHub`：统一信号排队与顺序消费。
+   - `RegistrySignalTrigger`：从 `global_event_bus` 转换为 `AgentSignal`。
+   - `SignalProcessor`：基于 Registry 配置拉取消息、构建动态工具并驱动 Agent。
+3. `aichan/agent`
+   - 基于 LangGraph 执行推理与工具调用闭环。
+4. `gateway/channels/cli`
+   - CLI 通道网关，提供 `/v1/messages` 与 `/v1/events`，并在启动时自动注册到大脑。
 
 ## 快速开始
 
 ### 1. 安装依赖
 
 ```bash
+cd aichan
 uv sync
 ```
 
 ### 2. 配置环境变量
 
-至少需要配置：
+必须提供：
 
 - `LLM_API_KEY`
 - `LLM_BASE_URL`
 - `LLM_MODEL_NAME`
 - `LLM_TEMPERATURE`
 
-CLI 通道服务固定监听本地地址：
+可选：
 
-- `http://127.0.0.1:8765`
+- `AICHAN_REGISTRY_URL`（网关注册中心地址）
+- `CLI_SERVER_HOST` / `CLI_SERVER_PORT`
+- `CLI_GATEWAY_BASE_HOST`
 
-### 3. 启动独立 cli_server
-
-```bash
-uv run python cli/cli_server.py
-```
-
-### 4. 启动 AIChan 核心服务
+### 3. 启动大脑
 
 ```bash
+cd aichan
 uv run python main.py
 ```
 
-### 5. 在另一个终端启动独立客户端
+### 4. 启动 CLI 网关
 
 ```bash
-uv run python cli/cli_client.py
+python gateway/channels/cli/cli_gateway.py
 ```
 
-启动后按提示输入要连接的服务地址（例如 `http://127.0.0.1:8765`）。
+## 关键 API
 
-可选参数：
-
-```bash
-uv run python cli/cli_client.py --connect-retry-delay 3 --sse-timeout 30 --http-timeout 8
-```
+- 大脑注册接口：`POST /internal/registry/register`
+  - 请求体：
+    - `name: str`
+    - `type: "channel" | "tool"`
+    - `base_url: str`
+    - `openapi_path: str`
+    - `sse_path: str`（仅 `channel` 必填）
+- CLI 网关消息接口：
+  - `GET /v1/messages?after_id=0`
+  - `POST /v1/messages`
+  - `GET /v1/events?after_id=0`
 
 ## 目录结构
 
 ```text
 .
-├─ main.py
-├─ cli
-│  ├─ cli_server.py
-│  └─ cli_client.py
-├─ pyproject.toml
-├─ uv.lock
-├─ docs
-│  ├─ 0.boundary.md
-│  ├─ 1.system-design.md
-│  ├─ 2.project-structure.md
-│  └─ 3.message-loop.md
-├─ core
-├─ plugins
-├─ hub
-├─ agent
-└─ memory
+├─ aichan
+│  ├─ main.py
+│  ├─ registry
+│  ├─ hub
+│  ├─ agent
+│  ├─ core
+│  └─ memory
+├─ gateway
+│  └─ channels
+│     └─ cli
+└─ docs
 ```
-
-## 常见自定义点
-
-- 调整中枢队列与消费循环：`hub/src/hub/signal_hub.py`
-- 替换推理流程：`agent/src/agent/agent.py`
-- 扩展记忆存取能力：`memory/src/memory/`
-- 扩展 HTTP 消息服务：`cli/cli_server.py`
-- 扩展外部协议映射与消息推送策略：`plugins/src/plugins/channels/cli/`

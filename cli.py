@@ -92,11 +92,11 @@ class ExternalServiceClient:
         raw = self._request_json(method="GET", path="/health")
         return isinstance(raw, dict) and raw.get("ok") is True
 
-    def list_messages(self, reader: str, after_id: int = 0) -> list[ExternalMessage]:
+    def list_messages(self, after_id: int = 0) -> list[ExternalMessage]:
         raw = self._request_json(
             method="GET",
             path="/v1/messages",
-            query={"reader": reader, "after_id": after_id},
+            query={"after_id": after_id},
         )
         if not isinstance(raw, list):
             raise ExternalServiceError("拉取消息失败：返回体不是列表")
@@ -141,8 +141,8 @@ class ExternalServiceClient:
             created_at=created_at,
         )
 
-    def build_events_url(self, reader: str, after_id: int = 0) -> str:
-        query = parse.urlencode({"reader": reader, "after_id": after_id})
+    def build_events_url(self, after_id: int = 0) -> str:
+        query = parse.urlencode({"after_id": after_id})
         return f"{self._server_url}/v1/events?{query}"
 
     def _request_json(
@@ -197,7 +197,7 @@ class CLIUserInterface:
         )
         self._server_session = PromptSession(
             complete_while_typing=False,
-            enable_history_search=True
+            enable_history_search=True,
         )
         self._chat_session = PromptSession(
             history=InMemoryHistory(),
@@ -224,7 +224,7 @@ class CLIUserInterface:
         print_formatted_text(line, style=self._style)
 
     def prompt_server_url(self, default_url: str) -> str:
-        print_formatted_text("请输入要连接的 cli_server 地址。", style=self._style)
+        print_formatted_text("请输入要连接的 cli_gateway 地址。", style=self._style)
         print_formatted_text(
             f"直接回车使用默认值：{default_url}",
             style=self._style,
@@ -307,6 +307,8 @@ def parse_args() -> argparse.Namespace:
         parser.error("--sse-reconnect-delay 必须大于 0")
     if args.sse_timeout <= 0:
         parser.error("--sse-timeout 必须大于 0")
+    if args.http_timeout <= 0:
+        parser.error("--http-timeout 必须大于 0")
     return args
 
 
@@ -340,7 +342,7 @@ def load_initial_messages_with_retry(
     """启动阶段拉取历史消息，失败后按固定间隔持续重试。"""
     while True:
         try:
-            initial_messages = client.list_messages(reader="user", after_id=state.last_seen_id)
+            initial_messages = client.list_messages(after_id=state.last_seen_id)
             return state.merge_new_messages(initial_messages)
         except ExternalServiceError as exc:
             ui.print_error_message(f"启动同步失败：{exc}")
@@ -363,11 +365,16 @@ def start_sse_sync_worker(
         event_name: str,
         data_lines: list[str],
     ) -> int | None:
+        _ = event_id
         if event_name != "message" or not data_lines:
             return None
 
+        raw_data = "\n".join(data_lines).strip()
+        if not raw_data:
+            return None
+
         try:
-            payload = json.loads("\n".join(data_lines))
+            payload = json.loads(raw_data)
             message = client.parse_external_message(payload)
         except (json.JSONDecodeError, ExternalServiceError):
             ui.print_error_message("实时同步失败：收到非法 SSE 消息事件")
@@ -383,7 +390,7 @@ def start_sse_sync_worker(
         last_id = state.last_seen_id
         while not stop_event.is_set():
             try:
-                url = client.build_events_url(reader="user", after_id=last_id)
+                url = client.build_events_url(after_id=last_id)
                 req = request.Request(
                     url=url,
                     headers={"Accept": "text/event-stream"},
@@ -434,7 +441,7 @@ def start_sse_sync_worker(
                     )
                     if handled_id is not None:
                         last_id = max(last_id, handled_id)
-            except (ExternalServiceError, error.URLError) as exc:
+            except (ExternalServiceError, error.URLError, TimeoutError) as exc:
                 ui.print_error_message(
                     f"实时同步失败：{exc}，{reconnect_delay_seconds:g} 秒后重连"
                 )
@@ -532,3 +539,4 @@ def run_cli_client() -> None:
 
 if __name__ == "__main__":
     run_cli_client()
+

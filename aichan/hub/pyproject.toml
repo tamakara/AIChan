@@ -7,9 +7,12 @@ authors = [
 ]
 requires-python = ">=3.10"
 dependencies = [
+    "agent",
     "core",
+    "httpx>=0.28.0",
+    "langchain-core>=1.2.20",
     "memory",
-    "plugins",
+    "pydantic>=2.12.5",
 ]
 
 [build-system]
@@ -17,6 +20,6 @@ requires = ["uv_build>=0.10.6,<0.11.0"]
 build-backend = "uv_build"
 
 [tool.uv.sources]
+agent = { workspace = true }
 core = { workspace = true }
 memory = { workspace = true }
-plugins = { workspace = true }

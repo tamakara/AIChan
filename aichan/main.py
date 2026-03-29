@@ -1,76 +1,124 @@
 from __future__ import annotations
 
-import time
+from contextlib import asynccontextmanager
+from typing import Any
 
-from agent.agent import Agent
+import uvicorn
+from fastapi import FastAPI
 from langchain_openai import ChatOpenAI
 
 from core.config import settings
 from core.logger import logger
-from hub.cli_sse_listener import CLIMessageSSEListener
+from hub.registry_signal_trigger import RegistrySignalTrigger
 from hub.signal_hub import SignalHub
 from hub.signal_processor import SignalProcessor
-from plugins.channels.cli import CLIChannelPlugin
-from plugins.registry import PluginRegistry
-from plugins.tools.time_tool import CurrentTimeToolPlugin
+from registry.server import (
+    gateway_config_registry,
+    gateway_tools_registry,
+    global_event_bus,
+    registry_router,
+)
 
 
-def register_plugins() -> None:
+def build_llm_client() -> ChatOpenAI:
     """
-    注册默认插件：
-    - cli 通道插件（通过 HTTP 访问外部 cli_server）
-    - get_current_time 工具插件
-    """
-    PluginRegistry.clear()
-    PluginRegistry.register(CLIChannelPlugin())
-    PluginRegistry.register(CurrentTimeToolPlugin())
+    构建 LLM 客户端。
 
-def main() -> None:
+    本项目采用“无兼容降级”策略，启动时要求关键环境变量全部可用。
     """
-    本地启动入口：仅运行 AIChan 核心，依赖外部独立运行的 CLI Channel Server。
-    """
-    register_plugins()
-
-    llm = ChatOpenAI(
-        api_key=settings.llm_api_key,
+    return ChatOpenAI(
+        api_key=settings.llm_api_key.get_secret_value(),
         base_url=settings.llm_base_url,
         model=settings.llm_model_name,
         temperature=settings.llm_temperature,
     )
-    agent = Agent(llm_client=llm, tools=PluginRegistry.all_tools())
-    signal_processor = SignalProcessor(agent=agent)
+
+
+@asynccontextmanager
+async def app_lifespan(app: FastAPI):
+    """
+    应用生命周期管理。
+
+    启动阶段：
+    1. 初始化 SignalProcessor；
+    2. 启动 SignalHub 心跳主循环；
+    3. 启动注册中心事件触发器。
+
+    关闭阶段：
+    1. 停止事件触发器；
+    2. 停止 SignalHub。
+    """
+    logger.info("🚀 [Main] AICHAN 大脑生命周期启动中（Registry + SignalHub）")
+
+    signal_processor = SignalProcessor(
+        llm_factory=build_llm_client,
+        gateway_config_registry=gateway_config_registry,
+        gateway_tools_registry=gateway_tools_registry,
+    )
     signal_hub = SignalHub(signal_processor=signal_processor)
     signal_hub.start_heartbeat()
 
-    
-    plugin = PluginRegistry.get("cli")
-    if not isinstance(plugin, CLIChannelPlugin):
-        raise RuntimeError("CLIChannelPlugin 未注册")
-
-    cli_server_base_url = settings.cli_server_base_url
-    cli_sse_listener = CLIMessageSSEListener(
-        channel_name=plugin.name,
+    signal_trigger = RegistrySignalTrigger(
         signal_hub=signal_hub,
-        server_base_url=cli_server_base_url,
+        global_event_bus=global_event_bus,
+        gateway_config_registry=gateway_config_registry,
     )
-    
+    await signal_trigger.start()
+
+    app.state.signal_processor = signal_processor
+    app.state.signal_hub = signal_hub
+    app.state.signal_trigger = signal_trigger
+
     try:
-        cli_sse_listener.start()
-
-        logger.info("AIChan 服务已启动，模型: {}", settings.llm_model_name)
-        logger.info("CLI 外部聊天服务地址: {}", cli_server_base_url)
-        logger.info("CLI 消息接入方式: SSE (/v1/events)")
-        logger.info("请先在另一个终端启动服务: uv run python .\\cli_server\\cli_server.py")
-        logger.info("再启动客户端: uv run python .\\cli_client\\cli_client.py")
-
-        while True:
-            time.sleep(1.0)
-    except KeyboardInterrupt:
-        logger.info("收到退出信号，正在关闭服务")
+        yield
     finally:
-        if cli_sse_listener is not None:
-            cli_sse_listener.stop()
+        logger.info("🛑 [Main] AICHAN 大脑生命周期关闭中")
+        await signal_trigger.stop()
         signal_hub.stop_heartbeat(wait=True)
+        logger.info("✅ [Main] AICHAN 大脑已停止")
+
+
+def create_app() -> FastAPI:
+    """
+    创建 AICHAN 大脑应用。
+
+    路由构成：
+    - `registry_router`：网关注册中心；
+    - `/health`：基础健康检查。
+    """
+    app = FastAPI(
+        title="AICHAN Brain",
+        version="3.0.0",
+        lifespan=app_lifespan,
+    )
+    app.include_router(registry_router)
+
+    @app.get("/health")
+    async def health() -> dict[str, Any]:
+        return {
+            "ok": True,
+            "service": "aichan_brain",
+            "gateway_count": len(gateway_config_registry),
+            "tool_gateway_count": len(gateway_tools_registry),
+            "event_queue_size": global_event_bus.qsize(),
+        }
+
+    return app
+
+
+app = create_app()
+
+
+def main() -> None:
+    """直接启动 AICHAN 大脑服务。"""
+    logger.info("🚀 [Main] AICHAN Brain 启动中，监听 0.0.0.0:8000")
+    uvicorn.run(
+        app,
+        host="0.0.0.0",
+        port=8000,
+        log_level="info",
+        access_log=True,
+    )
 
 
 if __name__ == "__main__":

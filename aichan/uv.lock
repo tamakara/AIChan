@@ -9,7 +9,6 @@ members = [
     "core",
     "hub",
     "memory",
-    "plugins",
 ]
 
 [[package]]
@@ -41,12 +40,12 @@ dependencies = [
     { name = "agent" },
     { name = "core" },
     { name = "fastapi" },
+    { name = "httpx" },
+    { name = "httpx-sse" },
     { name = "hub" },
     { name = "langchain-core" },
     { name = "langchain-openai" },
     { name = "memory" },
-    { name = "plugins" },
-    { name = "prompt-toolkit" },
     { name = "uvicorn" },
 ]
 
@@ -55,12 +54,12 @@ requires-dist = [
     { name = "agent", editable = "agent" },
     { name = "core", editable = "core" },
     { name = "fastapi", specifier = ">=0.118.0" },
+    { name = "httpx", specifier = ">=0.28.0" },
+    { name = "httpx-sse", specifier = ">=0.4.0" },
     { name = "hub", editable = "hub" },
     { name = "langchain-core", specifier = ">=1.2.20" },
     { name = "langchain-openai", specifier = ">=1.1.11" },
     { name = "memory", editable = "memory" },
-    { name = "plugins", editable = "plugins" },
-    { name = "prompt-toolkit", specifier = ">=3.0.36" },
     { name = "uvicorn", specifier = ">=0.37.0" },
 ]
 
@@ -325,20 +324,35 @@ wheels = [
 ]
 
 [[package]]
+name = "httpx-sse"
+version = "0.4.3"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/0f/4c/751061ffa58615a32c31b2d82e8482be8dd4a89154f003147acee90f2be9/httpx_sse-0.4.3.tar.gz", hash = "sha256:9b1ed0127459a66014aec3c56bebd93da3c1bc8bb6618c8082039a44889a755d", size = 15943, upload-time = "2025-10-10T21:48:22.271Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/d2/fd/6668e5aec43ab844de6fc74927e155a3b37bf40d7c3790e49fc0406b6578/httpx_sse-0.4.3-py3-none-any.whl", hash = "sha256:0ac1c9fe3c0afad2e0ebb25a934a59f4c7823b60792691f779fad2c5568830fc", size = 8960, upload-time = "2025-10-10T21:48:21.158Z" },
+]
+
+[[package]]
 name = "hub"
 version = "0.1.0"
 source = { editable = "hub" }
 dependencies = [
+    { name = "agent" },
     { name = "core" },
+    { name = "httpx" },
+    { name = "langchain-core" },
     { name = "memory" },
-    { name = "plugins" },
+    { name = "pydantic" },
 ]
 
 [package.metadata]
 requires-dist = [
+    { name = "agent", editable = "agent" },
     { name = "core", editable = "core" },
+    { name = "httpx", specifier = ">=0.28.0" },
+    { name = "langchain-core", specifier = ">=1.2.20" },
     { name = "memory", editable = "memory" },
-    { name = "plugins", editable = "plugins" },
+    { name = "pydantic", specifier = ">=2.12.5" },
 ]
 
 [[package]]
@@ -785,33 +799,6 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/65/ee/299d360cdc32edc7d2cf530f3accf79c4fca01e96ffc950d8a52213bd8e4/packaging-26.0.tar.gz", hash = "sha256:00243ae351a257117b6a241061796684b084ed1c516a08c48a3f7e147a9d80b4", size = 143416, upload-time = "2026-01-21T20:50:39.064Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/b7/b9/c538f279a4e237a006a2c98387d081e9eb060d203d8ed34467cc0f0b9b53/packaging-26.0-py3-none-any.whl", hash = "sha256:b36f1fef9334a5588b4166f8bcd26a14e521f2b55e6b9de3aaa80d3ff7a37529", size = 74366, upload-time = "2026-01-21T20:50:37.788Z" },
-]
-
-[[package]]
-name = "plugins"
-version = "0.1.0"
-source = { editable = "plugins" }
-dependencies = [
-    { name = "core" },
-    { name = "langchain-core" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "core", editable = "core" },
-    { name = "langchain-core", specifier = ">=1.2.20" },
-]
-
-[[package]]
-name = "prompt-toolkit"
-version = "3.0.52"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "wcwidth" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/a1/96/06e01a7b38dce6fe1db213e061a4602dd6032a8a97ef6c1a862537732421/prompt_toolkit-3.0.52.tar.gz", hash = "sha256:28cde192929c8e7321de85de1ddbe736f1375148b02f2e17edd840042b1be855", size = 434198, upload-time = "2025-08-27T15:24:02.057Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/84/03/0d3ce49e2505ae70cf43bc5bb3033955d2fc9f932163e84dc0779cc47f48/prompt_toolkit-3.0.52-py3-none-any.whl", hash = "sha256:9aac639a3bbd33284347de5ad8d68ecc044b91a762dc39b7c21095fcd6a19955", size = 391431, upload-time = "2025-08-27T15:23:59.498Z" },
 ]
 
 [[package]]
@@ -1382,15 +1369,6 @@ wheels = [
 ]
 
 [[package]]
-name = "wcwidth"
-version = "0.6.0"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/35/a2/8e3becb46433538a38726c948d3399905a4c7cabd0df578ede5dc51f0ec2/wcwidth-0.6.0.tar.gz", hash = "sha256:cdc4e4262d6ef9a1a57e018384cbeb1208d8abbc64176027e2c2455c81313159", size = 159684, upload-time = "2026-02-06T19:19:40.919Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/68/5a/199c59e0a824a3db2b89c5d2dade7ab5f9624dbf6448dc291b46d5ec94d3/wcwidth-0.6.0-py3-none-any.whl", hash = "sha256:1a3a1e510b553315f8e146c54764f4fb6264ffad731b3d78088cdb1478ffbdad", size = 94189, upload-time = "2026-02-06T19:19:39.646Z" },
-]
-
-[[package]]
 name = "win32-setctime"
 version = "1.2.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1606,4 +1584,3 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/3a/43/241f9615bcf8ba8903b3f0432da069e857fc4fd1783bd26183db53c4804b/zstandard-0.25.0-cp314-cp314-win_amd64.whl", hash = "sha256:c19bcdd826e95671065f8692b5a4aa95c52dc7a02a4c5a0cac46deb879a017a2", size = 516118, upload-time = "2025-09-14T22:18:17.849Z" },
     { url = "https://files.pythonhosted.org/packages/f0/ef/da163ce2450ed4febf6467d77ccb4cd52c4c30ab45624bad26ca0a27260c/zstandard-0.25.0-cp314-cp314-win_arm64.whl", hash = "sha256:d7541afd73985c630bafcd6338d2518ae96060075f9463d7dc14cfb33514383d", size = 476940, upload-time = "2025-09-14T22:18:19.088Z" },
 ]
-

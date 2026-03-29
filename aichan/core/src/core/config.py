@@ -9,12 +9,11 @@ class AppSettings(BaseSettings):
     所有字段统一从环境变量读取，避免在代码里硬编码敏感参数。
     """
 
-    # 大模型访问配置
+    # 大模型访问配置（必填）
     llm_api_key: SecretStr
     llm_base_url: str
     llm_model_name: str
     llm_temperature: float
-    cli_server_base_url: str = "http://127.0.0.1:8765"
 
     model_config = SettingsConfigDict(
         env_file=".env",
