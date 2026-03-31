@@ -8,6 +8,7 @@ dependencies = [
     "fastapi>=0.118.0",
     "httpx>=0.28.0",
     "httpx-sse>=0.4.0",
+    "mcp_hub",
     "langchain-core>=1.2.20",
     "langchain-openai>=1.1.11",
     "memory",
@@ -16,11 +17,12 @@ dependencies = [
 ]
 
 [tool.uv.workspace]
-members = ["agent", "core", "hub", "memory"]
+members = ["agent", "core", "hub", "memory", "mcp_hub"]
 
 [tool.uv.sources]
 agent = { workspace = true }
 core = { workspace = true }
 memory = { workspace = true }
 hub = { workspace = true }
+mcp_hub = { workspace = true }
 

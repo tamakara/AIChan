@@ -1,18 +1,15 @@
 [project]
-name = "hub"
+name = "mcp_hub"
 version = "0.1.0"
-description = "Add your description here"
+description = "MCPHub package for AIChan"
 authors = [
     { name = "tamakara", email = "tamakara@qq.com" }
 ]
 requires-python = ">=3.10"
 dependencies = [
-    "agent",
     "core",
-    "httpx>=0.28.0",
     "langchain-core>=1.2.20",
-    "mcp_hub",
-    "memory",
+    "mcp>=1.26.0",
     "pydantic>=2.12.5",
 ]
 
@@ -21,7 +18,4 @@ requires = ["uv_build>=0.10.6,<0.11.0"]
 build-backend = "uv_build"
 
 [tool.uv.sources]
-agent = { workspace = true }
 core = { workspace = true }
-memory = { workspace = true }
-mcp_hub = { workspace = true }

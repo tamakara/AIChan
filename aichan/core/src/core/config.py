@@ -15,6 +15,9 @@ class AppSettings(BaseSettings):
     llm_model_name: str
     llm_temperature: float
 
+    # MCPHub 连接配置（逗号分隔多个 SSE 地址）
+    mcp_server_urls: str = "http://localhost:9000/mcp/sse"
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
