@@ -12,11 +12,11 @@ from core.logger import logger
 from hub.registry_signal_trigger import RegistrySignalTrigger
 from hub.signal_hub import SignalHub
 from hub.signal_processor import SignalProcessor
-from registry.server import (
+from registry.routes import registry_router
+from registry.state import (
     gateway_config_registry,
     gateway_tools_registry,
     global_event_bus,
-    registry_router,
 )
 
 

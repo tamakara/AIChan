@@ -2,101 +2,16 @@ from __future__ import annotations
 
 import asyncio
 import json
-from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, Literal
+from typing import Any
 
 import httpx
-from fastapi import APIRouter, HTTPException
 from httpx_sse import aconnect_sse
-from pydantic import AnyHttpUrl, BaseModel, Field
 
 from core.logger import logger
 
-# 注册中心路由：仅负责网关接入、工具映射与事件感知，不负责信号触发。
-registry_router = APIRouter(tags=["registry"])
-
-# 全局事件总线：网关 SSE 收到的 message 事件统一写入该队列。
-global_event_bus: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
-# 动态工具注册表：键为网关名，值为该网关映射出的工具集合与元数据。
-gateway_tools_registry: dict[str, dict[str, Any]] = {}
-# 网关配置注册表：供 SignalProcessor 和事件触发器查询网关连接信息与类型。
-gateway_config_registry: dict[str, "GatewayConfig"] = {}
-# 网关后台接入任务表：同名网关重复注册时可安全替换旧任务。
-gateway_onboarding_tasks: dict[str, asyncio.Task[Any]] = {}
-
-GatewayType = Literal["channel", "tool"]
-
-
-@dataclass(slots=True, frozen=True)
-class GatewayConfig:
-    """注册中心内部统一网关配置对象。"""
-
-    name: str
-    gateway_type: GatewayType
-    base_url: str
-    openapi_path: str
-    sse_path: str | None
-
-
-class GatewayRegisterRequest(BaseModel):
-    """网关注册请求体（破坏性升级后版本）。"""
-
-    name: str = Field(..., min_length=1, max_length=100)
-    type: GatewayType
-    base_url: AnyHttpUrl | str
-    openapi_path: str | None = None
-    sse_path: str | None = None
-
-
-def _normalize_path(path: str) -> str:
-    """规范化路径，保证以 `/` 开头。"""
-    normalized = path.strip()
-    if not normalized.startswith("/"):
-        normalized = f"/{normalized}"
-    return normalized
-
-
-def _normalize_gateway_config(payload: GatewayRegisterRequest) -> GatewayConfig:
-    """
-    将注册请求转换为强约束配置对象。
-
-    约束规则（无兼容分支）：
-    1. `channel` 必须提供 `openapi_path` 与 `sse_path`；
-    2. `tool` 必须提供 `openapi_path`，且不允许提供 `sse_path`。
-    """
-    gateway_name = payload.name.strip().lower()
-    if not gateway_name:
-        raise ValueError("name 不能为空")
-
-    base_url = str(payload.base_url).strip().rstrip("/")
-    if not base_url:
-        raise ValueError("base_url 不能为空")
-
-    raw_openapi_path = (payload.openapi_path or "").strip()
-    if not raw_openapi_path:
-        raise ValueError("openapi_path 不能为空")
-    openapi_path = _normalize_path(raw_openapi_path)
-
-    gateway_type = payload.type
-    raw_sse_path = (payload.sse_path or "").strip()
-
-    if gateway_type == "channel":
-        if not raw_sse_path:
-            raise ValueError("channel 类型必须提供 sse_path")
-        sse_path = _normalize_path(raw_sse_path)
-    else:
-        if raw_sse_path:
-            raise ValueError("tool 类型不允许提供 sse_path")
-        sse_path = None
-
-    return GatewayConfig(
-        name=gateway_name,
-        gateway_type=gateway_type,
-        base_url=base_url,
-        openapi_path=openapi_path,
-        sse_path=sse_path,
-    )
+from .models import GatewayConfig
+from .state import gateway_tools_registry, global_event_bus, gateway_onboarding_tasks
 
 
 def _build_send_tool(
@@ -139,9 +54,7 @@ def _build_send_tool(
 
     request_body = selected_operation.get("requestBody", {})
     input_schema = (
-        request_body.get("content", {})
-        .get("application/json", {})
-        .get("schema")
+        request_body.get("content", {}).get("application/json", {}).get("schema")
     )
     if not isinstance(input_schema, dict):
         input_schema = {
@@ -328,7 +241,7 @@ async def brain_onboarding_process(gateway_name: str, config: GatewayConfig) -> 
         )
 
 
-def _onboarding_done(task: asyncio.Task[Any], gateway_name: str) -> None:
+def handle_onboarding_done(task: asyncio.Task[Any], gateway_name: str) -> None:
     """后台任务完成回调：回收任务引用并记录异常。"""
     if gateway_onboarding_tasks.get(gateway_name) is task:
         gateway_onboarding_tasks.pop(gateway_name, None)
@@ -343,51 +256,3 @@ def _onboarding_done(task: asyncio.Task[Any], gateway_name: str) -> None:
             gateway_name,
             exc,
         )
-
-
-@registry_router.post("/internal/registry/register")
-async def register_gateway(payload: GatewayRegisterRequest) -> dict[str, Any]:
-    """
-    网关注册入口（无兼容版本）。
-
-    处理流程：
-    1. 严格校验并规范化配置；
-    2. 覆盖写入配置注册表；
-    3. 启动/替换后台 onboarding 任务；
-    4. 立即返回 accepted，不阻塞调用方。
-    """
-    try:
-        config = _normalize_gateway_config(payload)
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-
-    gateway_config_registry[config.name] = config
-
-    existing_task = gateway_onboarding_tasks.get(config.name)
-    if existing_task is not None and not existing_task.done():
-        logger.warning("♻️ [Registry] 重复注册，替换旧任务，gateway='{}'", config.name)
-        existing_task.cancel()
-
-    onboarding_task = asyncio.create_task(
-        brain_onboarding_process(gateway_name=config.name, config=config),
-        name=f"brain-onboarding-{config.name}",
-    )
-    onboarding_task.add_done_callback(
-        lambda task, gateway_name=config.name: _onboarding_done(task, gateway_name)
-    )
-    gateway_onboarding_tasks[config.name] = onboarding_task
-
-    logger.info(
-        "✅ [Registry] 注册受理成功，gateway='{}'，type='{}'，base_url='{}'",
-        config.name,
-        config.gateway_type,
-        config.base_url,
-    )
-    return {
-        "status": "accepted",
-        "gateway": config.name,
-        "type": config.gateway_type,
-        "base_url": config.base_url,
-        "openapi_path": config.openapi_path,
-        "sse_path": config.sse_path,
-    }
