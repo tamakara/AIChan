@@ -21,6 +21,34 @@ MCP 服务定义与 SSE 接入端点。
 2. 通过 `ChatStore` 协议与消息存储交互，不依赖具体存储实现。
 """
 
+FETCH_MESSAGE_HISTORY_DEFAULT_PAGE = 1
+FETCH_MESSAGE_HISTORY_DEFAULT_PAGE_SIZE = 50
+FETCH_MESSAGE_HISTORY_MAX_PAGE_SIZE = 200
+
+
+def _read_int_argument(
+    arguments: dict[str, Any],
+    name: str,
+    *,
+    minimum: int,
+    default: int | None = None,
+    maximum: int | None = None,
+) -> int | None:
+    """读取并校验整数参数。"""
+    if name not in arguments:
+        return default
+
+    value = arguments[name]
+    if value is None:
+        return default
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(f"{name} 必须是整数")
+    if value < minimum:
+        raise ValueError(f"{name} 不能小于 {minimum}")
+    if maximum is not None and value > maximum:
+        raise ValueError(f"{name} 不能大于 {maximum}")
+    return value
+
 
 class McpSessionBroadcaster:
     """
@@ -128,6 +156,33 @@ def build_mcp_server(store: ChatStore, broadcaster: McpSessionBroadcaster) -> Se
                     "additionalProperties": False,
                 },
             ),
+            types.Tool(
+                name="fetch_message_history",
+                description=(
+                    "主动查询历史消息（包含已读与未读，含 user/ai）。"
+                    "支持 page/page_size 分页参数，结果按时间倒序（新到旧）返回。"
+                    "返回结果是 JSON 列表，每项包含 id/sender/text/created_at。"
+                ),
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "page": {
+                            "type": ["integer", "null"],
+                            "minimum": 1,
+                            "default": FETCH_MESSAGE_HISTORY_DEFAULT_PAGE,
+                            "description": "页码（从 1 开始），默认 1",
+                        },
+                        "page_size": {
+                            "type": ["integer", "null"],
+                            "minimum": 1,
+                            "maximum": FETCH_MESSAGE_HISTORY_MAX_PAGE_SIZE,
+                            "default": FETCH_MESSAGE_HISTORY_DEFAULT_PAGE_SIZE,
+                            "description": "每页条数，默认 50",
+                        },
+                    },
+                    "additionalProperties": False,
+                },
+            ),
         ]
 
     @mcp_server.call_tool()
@@ -164,6 +219,52 @@ def build_mcp_server(store: ChatStore, broadcaster: McpSessionBroadcaster) -> Se
                     types.TextContent(
                         type="text",
                         text=unread_json,
+                    )
+                ],
+                isError=False,
+            )
+        if name == "fetch_message_history":
+            history_args = arguments or {}
+            if not isinstance(history_args, dict):
+                raise ValueError("fetch_message_history 参数必须是 JSON 对象")
+
+            allowed_keys = {"page", "page_size"}
+            unknown_keys = sorted(str(key) for key in history_args.keys() if key not in allowed_keys)
+            if unknown_keys:
+                raise ValueError(
+                    "fetch_message_history 存在未知参数: " + ", ".join(unknown_keys)
+                )
+
+            page = _read_int_argument(
+                history_args,
+                "page",
+                minimum=1,
+                default=FETCH_MESSAGE_HISTORY_DEFAULT_PAGE,
+            )
+            page_size = _read_int_argument(
+                history_args,
+                "page_size",
+                minimum=1,
+                maximum=FETCH_MESSAGE_HISTORY_MAX_PAGE_SIZE,
+                default=FETCH_MESSAGE_HISTORY_DEFAULT_PAGE_SIZE,
+            )
+
+            if page is None:
+                page = FETCH_MESSAGE_HISTORY_DEFAULT_PAGE
+            if page_size is None:
+                page_size = FETCH_MESSAGE_HISTORY_DEFAULT_PAGE_SIZE
+
+            history_messages = await store.list_message_history(
+                page=page,
+                page_size=page_size,
+            )
+            history_payload = [message.model_dump(mode="json") for message in history_messages]
+            history_json = json.dumps(history_payload, ensure_ascii=False)
+            return types.CallToolResult(
+                content=[
+                    types.TextContent(
+                        type="text",
+                        text=history_json,
                     )
                 ],
                 isError=False,

@@ -223,7 +223,7 @@ class WakeUpAgentRuntime:
             ],
             "execution_note": (
                 "你已被外部消息唤醒。请严格遵守系统规则，"
-                "先调用所有 fetch_unread_messages 工具再做后续动作。"
+                "先调用所有 fetch_unread_messages 工具；如需上下文可再调用 fetch_message_history。"
             ),
         }
         return [

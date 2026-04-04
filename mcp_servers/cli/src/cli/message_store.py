@@ -23,6 +23,14 @@ class ChatStore(Protocol):
     async def list_messages(self, after_id: int = 0) -> list[ChatMessage]:
         """列出指定 ID 之后的消息快照。"""
 
+    async def list_message_history(
+        self,
+        *,
+        page: int = 1,
+        page_size: int = 50,
+    ) -> list[ChatMessage]:
+        """按分页查询历史消息（新到旧）。"""
+
     async def wait_for_messages(
         self, after_id: int, timeout_seconds: float
     ) -> list[ChatMessage]:
@@ -62,6 +70,31 @@ class AsyncChatStore:
         """返回 `after_id` 之后的消息列表。"""
         async with self._lock:
             return [msg for msg in self._messages if msg.id > after_id]
+
+    async def list_message_history(
+        self,
+        *,
+        page: int = 1,
+        page_size: int = 50,
+    ) -> list[ChatMessage]:
+        """
+        按分页查询历史消息（包含 user 与 ai）。
+
+        规则：
+        1. 分页参数从 1 开始计数；
+        2. 结果按消息 ID 倒序（新到旧）；
+        3. 第 1 页总是最新消息窗口。
+        """
+        if page < 1:
+            raise ValueError("page 必须大于等于 1")
+        if page_size < 1:
+            raise ValueError("page_size 必须大于等于 1")
+
+        async with self._lock:
+            newest_first = list(reversed(self._messages))
+            start = (page - 1) * page_size
+            end = start + page_size
+            return newest_first[start:end]
 
     async def wait_for_messages(
         self, after_id: int, timeout_seconds: float
