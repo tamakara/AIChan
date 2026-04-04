@@ -6,16 +6,10 @@ from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from loguru import logger
 
-if __package__:
-    from .mcp_server import build_mcp_server_routes
-    from .message_store import AsyncChatStore, ChatStore
-    from .models import ChatMessage, SendMessageRequest
-    from .settings import CLI_SERVER_SSE_WAIT_TIMEOUT_SECONDS
-else:
-    from mcp_server import build_mcp_server_routes
-    from message_store import AsyncChatStore, ChatStore
-    from models import ChatMessage, SendMessageRequest
-    from settings import CLI_SERVER_SSE_WAIT_TIMEOUT_SECONDS
+from .mcp_server import build_mcp_server_routes
+from .message_store import AsyncChatStore, ChatStore
+from .models import ChatMessage, SendMessageRequest
+from .settings import CLI_SERVER_SSE_WAIT_TIMEOUT_SECONDS
 
 """
 FastAPI 应用装配层。

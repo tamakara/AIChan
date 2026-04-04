@@ -8,10 +8,7 @@ from mcp.server import Server
 from mcp.server.sse import SseServerTransport
 from starlette.routing import Route
 
-if __package__:
-    from .message_store import ChatStore
-else:
-    from message_store import ChatStore
+from .message_store import ChatStore
 
 """
 MCP 服务定义与 SSE 接入端点。

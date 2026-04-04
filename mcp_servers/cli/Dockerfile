@@ -17,4 +17,4 @@ RUN uv sync --frozen --no-dev --package cli-mcp-server
 EXPOSE 9000
 
 # 从 workspace 根目录启动 CLI 模块入口。
-CMD ["uv", "run", "--package", "cli-mcp-server", "python", "cli/server.py"]
+CMD ["uv", "run", "--package", "cli-mcp-server", "python", "-m", "cli.server"]

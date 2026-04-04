@@ -3,22 +3,13 @@ from __future__ import annotations
 import uvicorn
 from loguru import logger
 
-if __package__:
-    from .app import build_cli_mcp_app
-    from .settings import (
-        CLI_SERVER_HOST,
-        CLI_SERVER_PORT,
-        CLI_SERVER_TIMEOUT_GRACEFUL_SHUTDOWN_SECONDS,
-        CLI_SERVER_TIMEOUT_KEEP_ALIVE_SECONDS,
-    )
-else:
-    from app import build_cli_mcp_app
-    from settings import (
-        CLI_SERVER_HOST,
-        CLI_SERVER_PORT,
-        CLI_SERVER_TIMEOUT_GRACEFUL_SHUTDOWN_SECONDS,
-        CLI_SERVER_TIMEOUT_KEEP_ALIVE_SECONDS,
-    )
+from .app import build_cli_mcp_app
+from .settings import (
+    CLI_SERVER_HOST,
+    CLI_SERVER_PORT,
+    CLI_SERVER_TIMEOUT_GRACEFUL_SHUTDOWN_SECONDS,
+    CLI_SERVER_TIMEOUT_KEEP_ALIVE_SECONDS,
+)
 
 """
 CLI MCP Server 启动入口。

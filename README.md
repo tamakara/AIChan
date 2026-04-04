@@ -57,7 +57,7 @@ uv run python main.py
 ```bash
 cd mcp_servers
 uv sync
-uv run --package cli-mcp-server python cli/server.py
+uv run --package cli-mcp-server python -m cli.server
 ```
 
 ## 关键 API

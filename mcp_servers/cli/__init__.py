@@ -1,0 +1,1 @@
+"""CLI MCP Server package."""

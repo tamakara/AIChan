@@ -4,10 +4,7 @@ import asyncio
 from datetime import datetime, timezone
 from typing import Protocol
 
-if __package__:
-    from .models import CLIChannelIdentity, ChatMessage
-else:
-    from models import CLIChannelIdentity, ChatMessage
+from .models import CLIChannelIdentity, ChatMessage
 
 """
 消息存储抽象与默认实现。
