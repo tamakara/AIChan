@@ -4,8 +4,9 @@ import asyncio
 import json
 import re
 import time
-from typing import Annotated, Any, Callable, TypedDict
+from typing import Annotated,  Callable, TypedDict
 
+from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
 from langchain_core.tools import BaseTool
 from langgraph.graph import END, StateGraph
@@ -68,7 +69,7 @@ class WakeUpAgentRuntime:
     def __init__(
         self,
         *,
-        llm_factory: Callable[[], Any],
+        llm_factory: Callable[[], BaseChatModel],
         mcp_manager: MCPManager,
     ) -> None:
         self._llm_factory = llm_factory

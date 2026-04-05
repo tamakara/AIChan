@@ -7,6 +7,7 @@ import re
 
 import uvicorn
 from fastapi import FastAPI
+from langchain_core.language_models import BaseChatModel
 from langchain_openai import ChatOpenAI
 
 from agent import WakeUpAgentRuntime
@@ -15,28 +16,28 @@ from core.logger import logger
 from mcp_hub import MCPManager, MCPServerConfig
 
 
-def build_llm_client() -> ChatOpenAI:
+def build_llm_client() -> BaseChatModel:
     """
     构建 LLM 客户端。
     """
     return ChatOpenAI(
-        api_key=settings.llm_api_key.get_secret_value(),
+        api_key=settings.llm_api_key,
         base_url=settings.llm_base_url,
         model=settings.llm_model_name,
         temperature=settings.llm_temperature,
     )
 
 
-def build_mcp_server_configs(raw_urls: str) -> list[MCPServerConfig]:
+def build_mcp_server_configs(raw_urls: list[str]) -> list[MCPServerConfig]:
     """
     将环境变量中的 MCP URL 列表解析为标准配置。
 
     约定：
-    - 逗号分隔多个 URL；
+    - 允许多个 URL；
     - 自动生成稳定服务别名；
     - 当前版本默认全部视为强依赖服务。
     """
-    parsed_urls = [item.strip() for item in raw_urls.split(",") if item.strip()]
+    parsed_urls = [item.strip() for item in raw_urls if item and item.strip()]
     if not parsed_urls:
         parsed_urls = ["http://localhost:9000/mcp/sse"]
 
@@ -112,8 +113,8 @@ def create_app() -> FastAPI:
     - `/health`：基础健康检查。
     """
     app = FastAPI(
-        title="AICHAN Brain",
-        version="3.0.0",
+        title="AICHAN",
+        version="1.0.0",
         lifespan=app_lifespan,
     )
 

@@ -1,5 +1,7 @@
-from pydantic import SecretStr
-from pydantic_settings import BaseSettings, SettingsConfigDict
+import json
+from typing import Annotated
+from pydantic import Field, SecretStr, field_validator
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
 class AppSettings(BaseSettings):
@@ -15,8 +17,44 @@ class AppSettings(BaseSettings):
     llm_model_name: str
     llm_temperature: float
 
-    # MCPHub 连接配置（逗号分隔多个 SSE 地址）
-    mcp_server_urls: str = "http://localhost:9000/mcp/sse"
+    # MCPHub 连接配置（仅支持 JSON 列表）
+    mcp_server_urls: Annotated[list[str], NoDecode] = Field(
+        default_factory=lambda: ["http://localhost:9000/mcp/sse"]
+    )
+
+    @field_validator("mcp_server_urls", mode="before")
+    @classmethod
+    def parse_mcp_server_urls(cls, value: object) -> object:
+        """
+        仅接受两种入参形态：
+        - JSON 列表字符串：["http://a/mcp/sse", "http://b/mcp/sse"]
+        - Python 列表/元组/集合。
+        """
+        if isinstance(value, str):
+            raw_value = value.strip()
+            if not raw_value:
+                return []
+
+            try:
+                parsed_json = json.loads(raw_value)
+            except json.JSONDecodeError as exc:
+                raise ValueError(
+                    "mcp_server_urls must be a JSON array string, "
+                    "for example: [\"http://localhost:9000/mcp/sse\"]"
+                ) from exc
+
+            if isinstance(parsed_json, list):
+                return [str(item).strip() for item in parsed_json if str(item).strip()]
+
+            raise ValueError(
+                "mcp_server_urls must be a JSON array, "
+                "for example: [\"http://localhost:9000/mcp/sse\"]"
+            )
+
+        if isinstance(value, (list, tuple, set)):
+            return [str(item).strip() for item in value if str(item).strip()]
+
+        return value
 
     model_config = SettingsConfigDict(
         env_file=".env",
