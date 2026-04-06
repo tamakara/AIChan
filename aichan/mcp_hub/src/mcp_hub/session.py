@@ -27,7 +27,7 @@ class _ServerNotificationWithCustom(
     pass
 
 
-class AichanClientSession(ClientSession):
+class MCPClientSession(ClientSession):
     """
     对 `ClientSession` 的最小扩展：
     1. 接受 JSON-RPC custom notifications；
@@ -94,7 +94,7 @@ class AichanClientSession(ClientSession):
 
 def bind_wakeup_notification_handler(
     *,
-    session: AichanClientSession,
+    session: MCPClientSession,
     server_name: str,
     handler: WakeupHandler,
 ) -> None:

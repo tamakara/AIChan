@@ -8,10 +8,9 @@ from langchain_core.tools import StructuredTool
 
 from core.logger import logger
 from .connections import MCPConnectionPool
-from .models import WakeupSignal
 from .tool_catalog import MCPToolCatalog
 from .tool_executor import MCPToolExecutor
-from .wakeup import WakeupEventBus
+from .wakeup import WakeupEventBus, WakeupSignal
 
 
 class MCPManager:
@@ -53,7 +52,7 @@ class MCPManager:
         连接一个或多个 MCP URL，并返回对应服务名。
 
         连接策略：
-        1. 输入 URL 先做清洗（strip + 去空）；
+        1. 输入 URL 先做清洗；
         2. 已连接 URL 幂等跳过；
         3. 未连接 URL 全部成功后才返回；
         4. 任一失败会在固定间隔后持续重试。
@@ -136,7 +135,7 @@ class MCPManager:
         self._wakeup_bus.reset()
 
         # 释放全部会话连接资源。
-        await self._connections.stop()
+        await self._connections.close()
         logger.info("🛑 [MCPHub] MCPManager 连接资源已释放")
 
     async def get_all_tools(self, refresh: bool = True) -> list[StructuredTool]:

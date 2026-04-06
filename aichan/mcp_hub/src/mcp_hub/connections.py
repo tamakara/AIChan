@@ -16,7 +16,7 @@ import mcp.types as mcp_types
 from core.logger import logger
 from mcp.client.streamable_http import streamable_http_client
 
-from .session import AichanClientSession, WakeupHandler, bind_wakeup_notification_handler
+from mcp_hub.session import MCPClientSession, WakeupHandler, bind_wakeup_notification_handler
 
 
 class MCPConnectionPool:
@@ -32,16 +32,16 @@ class MCPConnectionPool:
 
     def __init__(self) -> None:
         # 已建立连接的会话映射：server_name -> session。
-        self._sessions: dict[str, AichanClientSession] = {}
+        self._sessions: dict[str, MCPClientSession] = {}
 
         # URL 到 server_name 的稳定映射（用于幂等 connect 与结果回填）。
         self._url_to_server_name: dict[str, str] = {}
 
-        # 统一管理所有异步上下文，stop 时一次性释放。
+        # 统一管理所有异步上下文，close 时一次性释放。
         self._exit_stack: AsyncExitStack | None = None
 
     @property
-    def sessions(self) -> dict[str, AichanClientSession]:
+    def sessions(self) -> dict[str, MCPClientSession]:
         """返回当前会话映射（由上层只读使用）。"""
         return self._sessions
 
@@ -87,7 +87,7 @@ class MCPConnectionPool:
                 streamable_http_client(clean_url)
             )
             session = await temp_stack.enter_async_context(
-                AichanClientSession(
+                MCPClientSession(
                     read_stream,
                     write_stream,
                 )
@@ -131,7 +131,7 @@ class MCPConnectionPool:
         self._url_to_server_name[clean_url] = resolved_server_name
         return resolved_server_name
 
-    async def stop(self) -> None:
+    async def close(self) -> None:
         """释放全部连接资源并清空会话状态。"""
         exit_stack = self._exit_stack
 

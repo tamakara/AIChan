@@ -7,7 +7,7 @@ MCP Hub 包导出入口。
 """
 
 from mcp_hub.manager import MCPManager
-from mcp_hub.models import WakeupSignal
+from mcp_hub.wakeup import WakeupSignal
 
 __all__ = [
     "MCPManager",
