@@ -2,7 +2,7 @@
 AICHAN Brain 服务主入口。
 
 模块职责：
-1. 读取配置并构建 LLM 客户端；
+1. 读取配置并装配运行时依赖；
 2. 解析 MCP 端点并启动 MCP 管理器；
 3. 装配 AgentRuntime，建立唤醒驱动的推理循环；
 4. 暴露 FastAPI 健康检查与服务生命周期。
@@ -10,74 +10,16 @@ AICHAN Brain 服务主入口。
 
 from __future__ import annotations
 
-import asyncio
 from contextlib import asynccontextmanager
 from typing import Any
-from urllib.parse import urlparse
-import re
 
 import uvicorn
 from fastapi import FastAPI
-from langchain_core.language_models import BaseChatModel
-from langchain_openai import ChatOpenAI
 
 from agent import AgentRuntime
 from core.config import settings
 from core.logger import logger
-from mcp_hub import MCPManager, MCPServerConfig
-
-
-def build_llm_client() -> BaseChatModel:
-    """
-    构建 LLM 客户端。
-    """
-    return ChatOpenAI(
-        api_key=settings.llm_api_key,
-        base_url=settings.llm_base_url,
-        model=settings.llm_model_name,
-        temperature=settings.llm_temperature,
-    )
-
-
-def build_mcp_server_configs(raw_endpoints: str) -> list[MCPServerConfig]:
-    """
-    将环境变量中的 MCP 端点列表解析为标准配置。
-
-    约定：
-    - 逗号分隔多个端点 URL；
-    - 自动生成稳定服务别名；
-    - 唤醒行为由 MCP 自定义通知驱动，不再依赖 URL 查询参数过滤；
-    - 当前版本默认全部视为强依赖服务。
-    """
-    # 先将逗号分隔输入清洗为“非空 URL 列表”。
-    parsed_endpoints = [
-        item.strip() for item in raw_endpoints.split(",") if item.strip()
-    ]
-    configs: list[MCPServerConfig] = []
-    used_aliases: set[str] = set()
-    for index, endpoint_url in enumerate(parsed_endpoints, start=1):
-        clean_url = endpoint_url
-        parsed = urlparse(clean_url)
-        # 以域名为主生成服务别名，缺失时回退到顺序别名。
-        raw_alias = parsed.netloc or f"mcp_{index}"
-        alias = re.sub(r"[^A-Za-z0-9_]+", "_", raw_alias).strip("_").lower()
-        if not alias:
-            alias = f"mcp_{index}"
-        if alias[0].isdigit():
-            alias = f"mcp_{alias}"
-
-        # 处理别名冲突，保证同一轮配置内别名唯一。
-        if alias in used_aliases:
-            alias = f"{alias}_{index}"
-        used_aliases.add(alias)
-
-        configs.append(
-            MCPServerConfig(
-                name=alias,
-                endpoint_url=clean_url,
-            )
-        )
-    return configs
+from mcp_hub import MCPManager
 
 
 @asynccontextmanager
@@ -95,29 +37,17 @@ async def app_lifespan(app: FastAPI):
     """
     logger.info("🚀 [Main] AICHAN 生命周期启动中...")
 
-    server_configs = build_mcp_server_configs(settings.mcp_server_endpoints)
     mcp_manager = MCPManager(
-        server_configs=server_configs,
+        reconnect_seconds=settings.mcp_connect_retry_seconds,
     )
-    # 重试间隔下限已由配置层校验（>=1秒），此处直接使用配置值。
-    retry_seconds = settings.mcp_connect_retry_seconds
-    while True:
-        try:
-            await mcp_manager.start()
-            break
-        except asyncio.CancelledError:
-            raise
-        except Exception as exc:
-            logger.warning(
-                "⚠️ [Main] MCPHub 连接失败，将在 {:.1f}s 后重试，error='{}: {}'",
-                retry_seconds,
-                exc.__class__.__name__,
-                exc,
-            )
-            await asyncio.sleep(retry_seconds)
+    await mcp_manager.connect(settings.mcp_server_endpoints)
 
     agent_runtime = AgentRuntime(
-        llm_factory=build_llm_client,
+        llm_api_type=settings.llm_api_type,
+        llm_api_key=settings.llm_api_key.get_secret_value(),
+        llm_base_url=settings.llm_base_url,
+        llm_model_name=settings.llm_model_name,
+        llm_temperature=settings.llm_temperature,
         mcp_manager=mcp_manager,
     )
     await agent_runtime.start()
@@ -130,7 +60,7 @@ async def app_lifespan(app: FastAPI):
     finally:
         logger.info("🛑 [Main] AICHAN 生命周期关闭中")
         await agent_runtime.stop()
-        await mcp_manager.stop()
+        await mcp_manager.close()
         logger.info("✅ [Main] AICHAN 已停止")
 
 

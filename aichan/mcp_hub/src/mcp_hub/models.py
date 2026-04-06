@@ -1,9 +1,8 @@
 """
 MCP Hub 领域模型定义。
 
-包含两类核心数据结构：
-1. `MCPServerConfig`：连接层输入配置；
-2. `WakeupSignal`：通知层输出的统一唤醒信号。
+当前仅保留运行时唤醒信号模型，连接配置改由 MCPManager
+直接接收 URL 列表并在连接时动态解析服务信息。
 """
 
 from __future__ import annotations
@@ -11,32 +10,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
-
-
-@dataclass(frozen=True, slots=True)
-class MCPServerConfig:
-    """
-    MCP Server 连接配置。
-
-    字段说明：
-    - name: 服务别名，用于工具名前缀与日志定位。
-    - endpoint_url: MCP Streamable HTTP 端点地址。
-    """
-
-    name: str
-    endpoint_url: str
-
-    def __post_init__(self) -> None:
-        clean_name = self.name.strip()
-        clean_url = self.endpoint_url.strip()
-        if not clean_name:
-            raise ValueError("MCPServerConfig.name 不能为空")
-        if not clean_url:
-            raise ValueError("MCPServerConfig.endpoint_url 不能为空")
-
-        # dataclass(frozen=True) 场景下需要使用 object.__setattr__ 回填清洗后的值。
-        object.__setattr__(self, "name", clean_name)
-        object.__setattr__(self, "endpoint_url", clean_url)
 
 
 @dataclass(frozen=True, slots=True)

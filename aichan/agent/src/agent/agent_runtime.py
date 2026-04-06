@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable
+from typing import Literal
 
 from langchain_core.language_models import BaseChatModel
+from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_openai import ChatOpenAI
 
 from core.logger import logger
 from mcp_hub import MCPManager
@@ -28,7 +30,11 @@ class AgentRuntime:
     def __init__(
         self,
         *,
-        llm_factory: Callable[[], BaseChatModel],
+        llm_api_type: Literal["openai", "google"],
+        llm_api_key: str,
+        llm_base_url: str,
+        llm_model_name: str,
+        llm_temperature: float,
         mcp_manager: MCPManager,
     ) -> None:
         # 后台工作任务句柄；运行中为 asyncio.Task，停止后为 None。
@@ -37,8 +43,15 @@ class AgentRuntime:
         # 运行状态位，控制主循环是否继续消费唤醒事件。
         self._running = False
 
+        # LLM 配置由 main 注入，具体客户端在运行时内部构建。
+        self._llm_api_type = llm_api_type
+        self._llm_api_key = llm_api_key
+        self._llm_base_url = llm_base_url
+        self._llm_model_name = llm_model_name
+        self._llm_temperature = llm_temperature
+
         # 图执行器：负责 reason/tools 图的构建与执行。
-        graph_runner = ReasoningGraphRunner(llm_factory=llm_factory)
+        graph_runner = ReasoningGraphRunner(llm_factory=self._build_llm_client)
 
         # 规则审计器：负责首步 fetch 与 send 工具规则校验。
         rules_auditor = RuntimeRulesAuditor()
@@ -94,3 +107,27 @@ class AgentRuntime:
     def _is_running(self) -> bool:
         """提供给调度器的运行状态读取回调。"""
         return self._running
+
+    def _build_llm_client(self) -> BaseChatModel:
+        """
+        根据 API 类型构建实际 LLM 客户端。
+
+        - openai: 使用 ChatOpenAI；
+        - google: 使用 ChatGoogleGenerativeAI。
+        """
+        if self._llm_api_type == "openai":
+            return ChatOpenAI(
+                api_key=self._llm_api_key,
+                base_url=self._llm_base_url,
+                model=self._llm_model_name,
+                temperature=self._llm_temperature,
+            )
+
+        if self._llm_api_type == "google":
+            return ChatGoogleGenerativeAI(
+                model=self._llm_model_name,
+                google_api_key=self._llm_api_key,
+                temperature=self._llm_temperature,
+            )
+
+        raise ValueError(f"不支持的 llm_api_type: {self._llm_api_type}")
