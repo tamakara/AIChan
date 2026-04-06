@@ -37,7 +37,9 @@ class RuntimeLoopRunner:
         while is_running():
             try:
                 # 无轮询等待，直到收到 wakeup 事件。
+                logger.info("⏳ [AgentRuntime] 等待 MCPHub 唤醒信号")
                 await self._mcp_manager.wait_for_wakeup()
+                logger.info("🚦 [AgentRuntime] 已接收到唤醒信号，准备消费本轮")
 
                 # 立刻清除事件，避免同一置位被重复消费。
                 self._mcp_manager.clear_wakeup_event()

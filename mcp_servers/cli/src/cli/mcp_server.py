@@ -7,6 +7,7 @@ from typing import Any
 import mcp.types as types
 from loguru import logger
 from mcp.server import Server
+from mcp.server.lowlevel.helper_types import ReadResourceContents
 from mcp.server.session import ServerSession
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 from starlette.routing import Route
@@ -24,8 +25,8 @@ MCP 服务定义与 Streamable HTTP 接入端点。
 FETCH_MESSAGE_HISTORY_DEFAULT_PAGE = 1
 FETCH_MESSAGE_HISTORY_DEFAULT_PAGE_SIZE = 50
 FETCH_MESSAGE_HISTORY_MAX_PAGE_SIZE = 200
-AICHAN_WAKEUP_METHOD = "aichan/wakeup"
-AICHAN_WAKEUP_REASON_NEW_MESSAGE = "new_message"
+AICHAN_RESOURCE_UPDATED_METHOD = "notifications/resources/updated"
+AICHAN_UNREAD_EVENTS_RESOURCE_URI = "aichan://events/unread"
 SEND_TOOL_NAME = "send_message"
 
 
@@ -57,13 +58,13 @@ class McpSessionBroadcaster:
     """
     MCP 会话广播器。
 
-    用于维护活跃会话并异步推送 `aichan/wakeup` 自定义通知。
+    用于维护活跃会话并异步推送 `resources/updated` 原生通知。
     """
 
     def __init__(self) -> None:
         self._lock = asyncio.Lock()
         self._sessions: set[ServerSession] = set()
-        self._wakeup_queue: asyncio.Queue[dict[str, str]] = asyncio.Queue()
+        self._resource_signal_queue: asyncio.Queue[str] = asyncio.Queue()
         self._worker_task: asyncio.Task[None] | None = None
 
     async def start(self) -> None:
@@ -72,8 +73,8 @@ class McpSessionBroadcaster:
             logger.warning("♻️ [MCP] 会话广播器已启动，忽略重复调用")
             return
         self._worker_task = asyncio.create_task(
-            self._wakeup_worker_loop(),
-            name="cli-mcp-wakeup-broadcaster",
+            self._resource_signal_worker_loop(),
+            name="cli-mcp-resource-signal-broadcaster",
         )
 
     async def stop(self) -> None:
@@ -111,72 +112,53 @@ class McpSessionBroadcaster:
             return
         await self.register(context.session)
 
-    def enqueue_wakeup(self, *, channel: str, reason: str) -> None:
-        """非阻塞入队一条唤醒信号。"""
-        clean_channel = channel.strip()
-        clean_reason = reason.strip()
-        if not clean_channel or not clean_reason:
+    def enqueue_resource_updated(self, *, resource_uri: str) -> None:
+        """非阻塞入队一条资源更新信号。"""
+        clean_uri = resource_uri.strip()
+        if not clean_uri:
             logger.warning(
-                "⚠️ [MCP] 忽略无效唤醒信号，channel='{}'，reason='{}'",
-                channel,
-                reason,
+                "⚠️ [MCP] 忽略无效资源更新信号，uri='{}'",
+                resource_uri,
             )
             return
-        self._wakeup_queue.put_nowait(
-            {
-                "channel": clean_channel,
-                "reason": clean_reason,
-            }
-        )
+        self._resource_signal_queue.put_nowait(clean_uri)
 
-    async def _wakeup_worker_loop(self) -> None:
-        """后台消费唤醒队列并广播 MCP 自定义通知。"""
+    async def _resource_signal_worker_loop(self) -> None:
+        """后台消费资源信号队列并广播 MCP 原生资源更新通知。"""
         while True:
-            payload = await self._wakeup_queue.get()
+            resource_uri = await self._resource_signal_queue.get()
             try:
-                await self._broadcast_wakeup(
-                    channel=payload["channel"],
-                    reason=payload["reason"],
-                )
+                await self._broadcast_resource_updated(resource_uri=resource_uri)
             except Exception as exc:
                 logger.error(
-                    "❌ [MCP] 广播唤醒通知失败: {}: {}",
+                    "❌ [MCP] 广播资源更新通知失败: {}: {}",
                     exc.__class__.__name__,
                     exc,
                 )
             finally:
-                self._wakeup_queue.task_done()
+                self._resource_signal_queue.task_done()
 
-    async def _broadcast_wakeup(self, *, channel: str, reason: str) -> None:
-        """向全部活跃会话广播 `aichan/wakeup` 自定义通知。"""
-        notification = types.Notification[dict[str, str], str](
-            method=AICHAN_WAKEUP_METHOD,
-            params={
-                "channel": channel,
-                "reason": reason,
-            },
-        )
-
+    async def _broadcast_resource_updated(self, *, resource_uri: str) -> None:
+        """向全部活跃会话广播 `notifications/resources/updated`。"""
         async with self._lock:
             sessions_snapshot = list(self._sessions)
 
         failed_sessions: list[ServerSession] = []
         for session in sessions_snapshot:
             try:
-                await session.send_notification(notification)
+                await session.send_resource_updated(uri=resource_uri)
             except Exception as exc:
                 failed_sessions.append(session)
                 logger.warning(
-                    "⚠️ [MCP] 广播唤醒通知失败，已标记会话待移除: {}: {}",
+                    "⚠️ [MCP] 广播资源更新通知失败，已标记会话待移除: {}: {}",
                     exc.__class__.__name__,
                     exc,
                 )
             else:
                 logger.info(
-                    "🔔 [MCP] 已发送唤醒通知，method='{}'，channel='{}'，reason='{}'",
-                    AICHAN_WAKEUP_METHOD,
-                    channel,
-                    reason,
+                    "🔔 [MCP] 已发送资源更新通知，method='{}'，uri='{}'",
+                    AICHAN_RESOURCE_UPDATED_METHOD,
+                    resource_uri,
                 )
 
         if failed_sessions:
@@ -188,6 +170,42 @@ class McpSessionBroadcaster:
 def build_mcp_server(store: ChatStore, broadcaster: McpSessionBroadcaster) -> Server:
     """构建并注册 CLI MCP Server。"""
     mcp_server = Server("cli-mcp-server")
+
+    @mcp_server.list_resources()
+    async def handle_list_resources() -> list[types.Resource]:
+        # 仅暴露“有未读事件信号”资源，不承载业务消息内容。
+        await broadcaster.register_from_request_context(mcp_server)
+        return [
+            types.Resource(
+                name="unread_events",
+                uri=AICHAN_UNREAD_EVENTS_RESOURCE_URI,
+                description=(
+                    "Signal-only resource. Use fetch_unread_messages tool to pull "
+                    "business payload."
+                ),
+                mimeType="application/json",
+            )
+        ]
+
+    @mcp_server.read_resource()
+    async def handle_read_resource(uri: types.AnyUrl) -> list[ReadResourceContents]:
+        await broadcaster.register_from_request_context(mcp_server)
+        if str(uri) != AICHAN_UNREAD_EVENTS_RESOURCE_URI:
+            raise ValueError(f"未知资源 URI: {uri}")
+        signal_payload = json.dumps(
+            {
+                "resource": AICHAN_UNREAD_EVENTS_RESOURCE_URI,
+                "mode": "signal_only",
+                "data_source": "fetch_unread_messages",
+            },
+            ensure_ascii=False,
+        )
+        return [
+            ReadResourceContents(
+                content=signal_payload,
+                mime_type="application/json",
+            )
+        ]
 
     @mcp_server.list_tools()
     async def handle_list_tools() -> list[types.Tool]:
@@ -212,7 +230,7 @@ def build_mcp_server(store: ChatStore, broadcaster: McpSessionBroadcaster) -> Se
             types.Tool(
                 name="fetch_unread_messages",
                 description=(
-                    "拉取当前所有渠道的未读消息，并在返回后清空未读池。"
+                    "拉取当前所有渠道的未读事件，并在返回后原子清空事件队列。"
                     "返回结果是 JSON 列表，每项包含 channel/message_id/sender/text/created_at。"
                 ),
                 inputSchema={

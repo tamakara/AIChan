@@ -6,8 +6,8 @@ MCP Hub 包导出入口。
 2. `WakeupSignal` 用于读取最近一次唤醒上下文。
 """
 
-from mcp_hub.manager import MCPManager
-from mcp_hub.wakeup import WakeupSignal
+from .manager import MCPManager
+from .wakeup import WakeupSignal
 
 __all__ = [
     "MCPManager",

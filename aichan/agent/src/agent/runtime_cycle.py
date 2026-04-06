@@ -49,6 +49,10 @@ class RuntimeCycleRunner:
         required_fetch_tools = self._rules_auditor.collect_required_fetch_tools(tools)
         if not required_fetch_tools:
             raise RuntimeError("当前工具集中不存在 fetch_unread_messages，无法执行唤醒流程")
+        logger.info(
+            "🧭 [AgentRuntime] 本轮首步需全量拉取 fetch 工具: {}",
+            ", ".join(sorted(required_fetch_tools)),
+        )
 
         # 构建本轮模型输入上下文。
         prompt_messages = build_context_messages(
@@ -69,6 +73,7 @@ class RuntimeCycleRunner:
             messages=all_messages,
             required_fetch_tools=required_fetch_tools,
         )
+        logger.info("✅ [AgentRuntime] 首步全量 fetch_unread_messages 审计通过")
 
         # 统计本轮所有 send 工具调用。
         send_tool_names = self._rules_auditor.collect_send_tool_calls(all_messages)

@@ -40,7 +40,7 @@ class ChatStore(Protocol):
         """写入一条消息并返回完整消息对象。"""
 
     async def fetch_unread_messages(self) -> list[UnreadMessage]:
-        """拉取全部未读消息并清空未读池（drain 语义）。"""
+        """拉取全部未读事件并清空事件队列（drain 语义）。"""
 
 
 class AsyncChatStore:
@@ -59,8 +59,8 @@ class AsyncChatStore:
         self._default_channel = default_channel
         # 自增主键起始值。
         self._next_id = 1
-        # 未读池：按 channel 聚合，调用 fetch_unread_messages 时原子清空。
-        self._unread_by_channel: dict[str, list[UnreadMessage]] = defaultdict(list)
+        # 事件队列：按 channel 聚合，调用 fetch_unread_messages 时原子清空。
+        self._event_queue_by_channel: dict[str, list[UnreadMessage]] = defaultdict(list)
         # 互斥锁：保护共享状态。
         self._lock = asyncio.Lock()
         # 条件变量：新消息到达时唤醒等待方。
@@ -145,9 +145,9 @@ class AsyncChatStore:
                 created_at=datetime.now(timezone.utc).isoformat(),
             )
             self._messages.append(message)
-            # 仅将外部入站消息进入未读池，避免 AI 消息被二次拉取造成循环。
+            # 仅将外部入站消息进入未读事件队列，避免 AI 消息被二次拉取造成循环。
             if sender == "user":
-                self._unread_by_channel[target_channel].append(
+                self._event_queue_by_channel[target_channel].append(
                     UnreadMessage(
                         channel=target_channel,
                         message_id=message.id,
@@ -162,10 +162,10 @@ class AsyncChatStore:
         return message
 
     async def fetch_unread_messages(self) -> list[UnreadMessage]:
-        """原子拉取并清空所有通道未读消息。"""
+        """原子拉取并清空所有通道未读事件。"""
         async with self._lock:
             drained_messages: list[UnreadMessage] = []
-            for channel in sorted(self._unread_by_channel.keys()):
-                drained_messages.extend(self._unread_by_channel[channel])
-            self._unread_by_channel.clear()
+            for channel in sorted(self._event_queue_by_channel.keys()):
+                drained_messages.extend(self._event_queue_by_channel[channel])
+            self._event_queue_by_channel.clear()
             return drained_messages

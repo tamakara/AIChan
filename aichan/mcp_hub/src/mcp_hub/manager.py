@@ -20,7 +20,7 @@ class MCPManager:
     设计目标：
     1. 统一维护 MCP 会话生命周期；
     2. 动态发现并包装工具；
-    3. 以 MCP Custom Notification 触发全局唤醒 Event。
+    3. 以 MCP 原生资源通知触发全局唤醒 Event。
     """
 
     def __init__(
@@ -80,7 +80,7 @@ class MCPManager:
                 try:
                     server_name = await self._connections.connect_once(
                         endpoint_url=endpoint_url,
-                        wakeup_handler=self._wakeup_bus.handle_wakeup_notification,
+                        resource_updated_handler=self._wakeup_bus.handle_resource_updated,
                         name_resolver=self._resolve_unique_server_name,
                     )
                     logger.info(

@@ -7,10 +7,10 @@
 3. 通过模块级 `settings` 单例供全局复用。
 """
 
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import Field, SecretStr, field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
 class AppSettings(BaseSettings):
@@ -28,7 +28,7 @@ class AppSettings(BaseSettings):
     llm_temperature: float = Field(default=0.5, ge=0.0, le=2.0)
 
     # MCPHub 连接配置（支持逗号分隔字符串，预处理后为 URL 列表）。
-    mcp_server_endpoints: list[str]
+    mcp_server_endpoints: Annotated[list[str], NoDecode]
     # MCP 首次连接失败后的重试间隔（秒），最小值为 1 秒。
     mcp_connect_retry_seconds: float = Field(default=2.0, ge=1.0)
 

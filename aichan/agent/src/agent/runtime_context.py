@@ -22,16 +22,16 @@ def build_context_messages(wakeup_signal: WakeupSignal | None) -> list[BaseMessa
         "wakeup_signal": (
             {
                 "server_name": wakeup_signal.server_name,
-                "channel": wakeup_signal.channel,
-                "reason": wakeup_signal.reason,
+                "resource_uri": wakeup_signal.resource_uri,
                 "received_at": wakeup_signal.received_at,
             }
             if wakeup_signal is not None
             else None
         ),
         "execution_note": (
-            "你已被外部消息唤醒。请严格遵守系统规则，"
-            "第一步必须一次性调用全部 fetch_unread_messages 工具；如需上下文可再调用 fetch_message_history。"
+            "你收到的是资源更新信号，不包含业务消息正文。"
+            "请严格遵守系统规则：第一步必须一次性调用全部 fetch_unread_messages 工具拉取真实未读；"
+            "如需上下文可再调用 fetch_message_history。"
         ),
     }
 

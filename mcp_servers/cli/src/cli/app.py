@@ -8,7 +8,7 @@ from fastapi.responses import StreamingResponse
 from loguru import logger
 
 from cli.mcp_server import (
-    AICHAN_WAKEUP_REASON_NEW_MESSAGE,
+    AICHAN_UNREAD_EVENTS_RESOURCE_URI,
     McpSessionBroadcaster,
     build_mcp_server_routes,
 )
@@ -120,9 +120,8 @@ def build_cli_mcp_app(store: ChatStore | None = None) -> FastAPI:
             )
             logger.info("👤 [UI] 收到人类消息: {}", message.text)
             if message.sender == "user":
-                broadcaster.enqueue_wakeup(
-                    channel=CLI_SERVER_CHANNEL_NAME,
-                    reason=AICHAN_WAKEUP_REASON_NEW_MESSAGE,
+                broadcaster.enqueue_resource_updated(
+                    resource_uri=AICHAN_UNREAD_EVENTS_RESOURCE_URI,
                 )
             return message
         except ValueError as exc:
