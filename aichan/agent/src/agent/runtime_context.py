@@ -6,7 +6,7 @@ from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
 
 from mcp_hub import WakeupSignal
 
-from agent.prompt_templates import TOOL_AS_ACTION_SYSTEM_PROMPT
+from agent.prompt_templates import EXECUTION_NOTE, SYSTEM_PROMPT
 
 
 def build_context_messages(wakeup_signal: WakeupSignal | None) -> list[BaseMessage]:
@@ -28,15 +28,11 @@ def build_context_messages(wakeup_signal: WakeupSignal | None) -> list[BaseMessa
             if wakeup_signal is not None
             else None
         ),
-        "execution_note": (
-            "你收到的是资源更新信号，不包含业务消息正文。"
-            "请严格遵守系统规则：第一步必须一次性调用全部 fetch_unread_messages 工具拉取真实未读；"
-            "如需上下文可再调用 fetch_message_history。"
-        ),
+        "execution_note": EXECUTION_NOTE,
     }
 
     # System + Human 双消息结构可最大化兼容当前模型调用链。
     return [
-        SystemMessage(content=TOOL_AS_ACTION_SYSTEM_PROMPT),
+        SystemMessage(content=SYSTEM_PROMPT),
         HumanMessage(content=json.dumps(payload, ensure_ascii=False, indent=2)),
     ]

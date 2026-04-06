@@ -66,3 +66,18 @@ class RuntimeLoopRunner:
                     exc.__class__.__name__,
                     exc,
                 )
+                self._log_runtime_hint_if_known_issue(exc)
+
+    @staticmethod
+    def _log_runtime_hint_if_known_issue(exc: Exception) -> None:
+        """针对常见上游报错输出可执行的排障提示。"""
+        error_text = str(exc)
+        if "thought_signature" not in error_text:
+            return
+
+        logger.warning(
+            "💡 [AgentRuntime] 检测到 Gemini 函数调用 thought_signature 报错。"
+            "若你在 docker-compose 中通过 .env 使用 LLM_API_TYPE，"
+            "请确认已把 LLM_API_TYPE 传入容器；"
+            "若当前走 OpenAI 兼容网关 + Gemini，建议改用 google 客户端链路或切换到不要求 thought_signature 的模型。"
+        )

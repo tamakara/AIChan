@@ -75,6 +75,10 @@ class RuntimeCycleRunner:
         )
         logger.info("✅ [AgentRuntime] 首步全量 fetch_unread_messages 审计通过")
 
+        # 硬约束：同一目标 send 工具不能在同一步并发，避免消息顺序错乱。
+        self._rules_auditor.ensure_no_parallel_send_for_same_target(all_messages)
+        logger.info("✅ [AgentRuntime] 同目标 send 串行约束审计通过")
+
         # 统计本轮所有 send 工具调用。
         send_tool_names = self._rules_auditor.collect_send_tool_calls(all_messages)
         elapsed_ms = int((time.perf_counter() - started_at) * 1000)

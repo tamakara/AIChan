@@ -9,6 +9,7 @@ from langchain_openai import ChatOpenAI
 
 from core.logger import logger
 from mcp_hub import MCPManager
+from pydantic import SecretStr
 
 from .runtime_cycle import RuntimeCycleRunner
 from .runtime_graph import ReasoningGraphRunner
@@ -31,7 +32,7 @@ class AgentRuntime:
         self,
         *,
         llm_api_type: Literal["openai", "google"],
-        llm_api_key: str,
+        llm_api_key: SecretStr,
         llm_base_url: str,
         llm_model_name: str,
         llm_temperature: float,
@@ -127,6 +128,7 @@ class AgentRuntime:
             return ChatGoogleGenerativeAI(
                 model=self._llm_model_name,
                 google_api_key=self._llm_api_key,
+                base_url=self._llm_base_url,
                 temperature=self._llm_temperature,
             )
 

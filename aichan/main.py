@@ -44,7 +44,7 @@ async def app_lifespan(app: FastAPI):
 
     agent_runtime = AgentRuntime(
         llm_api_type=settings.llm_api_type,
-        llm_api_key=settings.llm_api_key.get_secret_value(),
+        llm_api_key=settings.llm_api_key,
         llm_base_url=settings.llm_base_url,
         llm_model_name=settings.llm_model_name,
         llm_temperature=settings.llm_temperature,
