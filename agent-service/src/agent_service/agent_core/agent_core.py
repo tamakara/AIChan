@@ -16,8 +16,8 @@ class AgentCore:
         llm_api_key: str,
         llm_base_url: str,
         system_prompt: str,
-        mcp_sse_url: str,
-        mcp_sse_bearer_token: str = "",
+        mcp_gateway_sse_url: str,
+        mcp_gateway_auth_token: str = "",
     ):
         self._llm_client = LlmClient(
             model=llm_model_name, api_key=llm_api_key, base_url=llm_base_url
@@ -28,8 +28,8 @@ class AgentCore:
         self._messages_storage.add_system_message(self._system_prompt)
 
         self._tool_registry = ToolRegistry(
-            sse_url=mcp_sse_url,
-            bearer_token=mcp_sse_bearer_token or None,
+            sse_url=mcp_gateway_sse_url,
+            bearer_token=mcp_gateway_auth_token or None,
         )
         self._tool_registry.register_mcp_server()
 

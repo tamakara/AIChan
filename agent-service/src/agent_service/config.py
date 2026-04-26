@@ -7,8 +7,8 @@ class Settings(BaseSettings):
     llm_model_name: str = "gpt-4.1-mini"
     llm_api_key: str
     llm_base_url: str
-    mcp_sse_url: str
-    mcp_sse_bearer_token: str = ""
+    mcp_gateway_sse_url: str
+    mcp_gateway_auth_token: str = ""
     host: str = "0.0.0.0"
     port: int = 8000
     log_level: str = "info"
@@ -22,7 +22,7 @@ class Settings(BaseSettings):
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
-    return Settings()
+    return Settings() # type: ignore
 
 
 @lru_cache(maxsize=1)

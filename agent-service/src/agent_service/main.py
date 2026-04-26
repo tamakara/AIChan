@@ -14,8 +14,8 @@ agent = AgentCore(
     llm_api_key=settings.llm_api_key,
     llm_base_url=settings.llm_base_url,
     system_prompt=system_prompt,
-    mcp_sse_url=settings.mcp_sse_url,
-    mcp_sse_bearer_token=settings.mcp_sse_bearer_token,
+    mcp_gateway_sse_url=settings.mcp_gateway_sse_url,
+    mcp_gateway_auth_token=settings.mcp_gateway_auth_token,
 )
 agent_lock = Lock()
 
