@@ -2,7 +2,6 @@
 name = "agent-service"
 version = "0.1.0"
 description = "agent-service FastAPI service managed by uv."
-readme = "README.md"
 authors = [
     { name = "魂辛カラ", email = "tamakara@qq.com" }
 ]
