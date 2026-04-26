@@ -70,8 +70,12 @@ class AgentCore:
                         tool_name=tool_name, tool_args=tool_args
                     )
                 except Exception as e:
-                    print(f"Error occurred while calling tool '{tool_name}': {e}")
-                    continue
+                    # 即使工具执行失败，也必须回填一条 tool 消息给对应的 tool_call_id。
+                    # 这样下一轮请求仍满足 OpenAI 的 tool-calls 协议，避免会话因缺失配对消息而报错中断。
+                    tool_call_result = json.dumps(
+                        {"error": f"tool `{tool_name}` failed: {e}"},
+                        ensure_ascii=False,
+                    )
 
                 self._messages_storage.add_tool_message(
                     tool_name, tool_call_result, tool_call_id

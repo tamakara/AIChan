@@ -5,10 +5,10 @@ from threading import Lock
 
 from fastapi import APIRouter, HTTPException
 
-router = APIRouter()
-
 
 def create_router(agent: AgentCore, agent_lock: Lock) -> APIRouter:
+    # 每次装配时创建独立路由对象，避免测试或重复初始化时重复注册同一路由。
+    router = APIRouter()
 
     @router.get("/healthz", response_model=HealthResponse)
     def healthz() -> HealthResponse:

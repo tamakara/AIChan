@@ -5,7 +5,7 @@
 ## 模块结构
 
 - `agent_service/main.py`：模块根目录唯一启动入口。
-- `agent_service/web_server/`：仅负责 Web 服务器启动、HTTP 路由与请求/响应 Schema。
+- `agent_service/router/`：仅负责 HTTP 路由与请求/响应 Schema。
 - `agent_service/app/app.py`：负责应用组装编排（AgentCore、依赖注入、FastAPI 应用拼装）。
 - `agent_service/agent_core/`：核心 Agent 逻辑，不直接承担 HTTP 服务装配职责。
 - `agent_service/prompts/system-prompt.md`：系统提示词，独立于运行时代码管理。
