@@ -31,12 +31,25 @@
 uv sync --all-packages
 ```
 
-### 2. 配置环境变量
+### 2. 启动 MCP 网关（本地部署前置）
+
+本地部署前，先运行以下命令启动 MCP 网关：
+
+```bash
+docker mcp gateway run --transport sse --port 8080
+```
+
+启动后，从网关输出中获取并填写：
+
+- `MCP_SSE_URL`
+- `MCP_SSE_BEARER_TOKEN`
+
+### 3. 配置环境变量
 
 复制并编辑：
 
 ```bash
-cp agent-service/.env.example agent-service/.env
+cp .env.example .env
 ```
 
 至少需要配置：
@@ -44,8 +57,9 @@ cp agent-service/.env.example agent-service/.env
 - `LLM_API_KEY`
 - `LLM_BASE_URL`
 - `MCP_SSE_URL`
+- `MCP_SSE_BEARER_TOKEN`
 
-### 3. 启动服务
+### 4. 启动服务
 
 在根目录启动：
 
