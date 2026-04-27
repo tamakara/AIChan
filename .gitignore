@@ -1,4 +1,15 @@
-__pycache__
-.vscode/
-.venv
+# uv / virtual env
+.venv/
+.uv-cache/
+
+# Python cache
+__pycache__/
+*.py[cod]
+
+# OS / editor
+.DS_Store
+Thumbs.db
+
+# Local env
 .env
+.venv/

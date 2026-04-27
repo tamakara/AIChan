@@ -1,23 +1,33 @@
 services:
-  cli_channel:
-    build:
-      context: .
-      dockerfile: cli_channel/Dockerfile
-    environment:
-      CLI_SERVER_HOST: ${CLI_SERVER_HOST}
-      CLI_SERVER_PORT: ${CLI_SERVER_PORT}
-    ports:
-      - "${CLI_SERVER_PORT}:${CLI_SERVER_PORT}"
+  mcp-gateway:
+    image: docker/mcp-gateway:latest
     restart: unless-stopped
-
-  aichan:
-    build:
-      context: .
-      dockerfile: aichan/Dockerfile
     environment:
+      DOCKER_MCP_IN_CONTAINER: "1"
+      MCP_GATEWAY_AUTH_TOKEN: ${MCP_GATEWAY_AUTH_TOKEN}
+    command:
+      - --transport=sse
+      - --port=9000
+      - --servers=${MCP_GATEWAY_SERVERS}
+    ports:
+      - "9000:9000"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+
+  agent-service:
+    build:
+      context: ./agent-service
+    restart: unless-stopped
+    depends_on:
+      - mcp-gateway
+    environment:
+      LLM_MODEL_NAME: ${LLM_MODEL_NAME}
       LLM_API_KEY: ${LLM_API_KEY}
       LLM_BASE_URL: ${LLM_BASE_URL}
-      LLM_MODEL_NAME: ${LLM_MODEL_NAME}
-      LLM_TEMPERATURE: ${LLM_TEMPERATURE}
-      CLI_SERVER_BASE_URL: http://cli_channel:${CLI_SERVER_PORT}
-    restart: unless-stopped
+      MCP_GATEWAY_SSE_URL: http://mcp-gateway:9000/sse
+      MCP_GATEWAY_AUTH_TOKEN: ${MCP_GATEWAY_AUTH_TOKEN}
+      HOST: 0.0.0.0
+      PORT: 8000
+      LOG_LEVEL: ${LOG_LEVEL}
+    ports:
+      - "8000:8000"

@@ -1,104 +1,96 @@
 # AIChan
 
-一个基于 `LangChain + LangGraph` 的模块化 AI 助手示例项目，采用 `uv workspace` 管理多包结构。  
-当前默认运行模式为：
-
-- `main.py` 只启动 AIChan 核心（`SignalHub + SignalProcessor + Agent`）。
-- `cli_server.py` 独立进程运行（`FastAPI`），负责消息存储与 SSE 推送。
-- `cli_client.py` 独立控制台客户端（基于 `prompt_toolkit`），通过 HTTP 与 `cli_server` 通信。
-
-消息存储与收发管理由 `cli_server` 负责。  
-AIChan 侧通过 SSE（`/v1/events?reader=ai&after_id=...`）实时接收新消息事件，并向 `SignalHub` 推送信号。
-
-## 项目文档
-
-- 0号文档（边界说明）：[docs/0.boundary.md](docs/0.boundary.md)
-- 1号文档（设计文档）：[docs/1.system-design.md](docs/1.system-design.md)
-- 2号文档（架构文档）：[docs/2.project-structure.md](docs/2.project-structure.md)
-- 3号文档（消息闭环）：[docs/3.message-loop.md](docs/3.message-loop.md)
-
-## 架构概览
-
-1. `plugins`：插件层（I/O 总线），统一承载输入渠道与动作工具能力。
-2. `hub`：中央神经枢纽，维护异步队列并驱动消费心跳。
-3. `agent`：推理层，基于 LangGraph 执行“推理 -> 调用能力 -> 再推理”。
-4. `cli_server`：独立双对象消息服务（`ai/user`），负责消息存储、SSE 事件推送与外部 API。
-5. `cli_client`：独立用户端，负责控制台输入输出，通过 HTTP 与 `cli_server` 通信。
-6. `core` / `memory`：共享能力与记忆扩展层。
-
-## 快速开始
-
-### 1. 安装依赖
-
-```bash
-uv sync
-```
-
-### 2. 配置环境变量
-
-至少需要配置：
-
-- `LLM_API_KEY`
-- `LLM_BASE_URL`
-- `LLM_MODEL_NAME`
-- `LLM_TEMPERATURE`
-
-CLI 通道服务固定监听本地地址：
-
-- `http://127.0.0.1:8765`
-
-### 3. 启动独立 cli_server
-
-```bash
-uv run python cli/cli_server.py
-```
-
-### 4. 启动 AIChan 核心服务
-
-```bash
-uv run python main.py
-```
-
-### 5. 在另一个终端启动独立客户端
-
-```bash
-uv run python cli/cli_client.py
-```
-
-启动后按提示输入要连接的服务地址（例如 `http://127.0.0.1:8765`）。
-
-可选参数：
-
-```bash
-uv run python cli/cli_client.py --connect-retry-delay 3 --sse-timeout 30 --http-timeout 8
-```
+基于 `uv workspace` 的多包项目，当前核心服务是 `agent-service`（FastAPI + AgentCore）。
 
 ## 目录结构
 
 ```text
 .
-├─ main.py
-├─ cli
-│  ├─ cli_server.py
-│  └─ cli_client.py
 ├─ pyproject.toml
 ├─ uv.lock
-├─ docs
-│  ├─ 0.boundary.md
-│  ├─ 1.system-design.md
-│  ├─ 2.project-structure.md
-│  └─ 3.message-loop.md
-├─ core
-├─ plugins
-├─ hub
-├─ agent
-└─ memory
+├─ .env.example
+├─ docker-compose.yml
+├─ docs/
+│  └─ agent-service.md
+└─ agent-service/
+   ├─ pyproject.toml
+   ├─ Dockerfile
+   └─ src/agent_service
 ```
 
-## 常见自定义点
+## 环境变量
 
-- 调整中枢队列与消费循环：`hub/src/hub/signal_hub.py`
-- 替换推理流程：`agent/src/agent/agent.py`
-- 扩展记忆存取能力：`memory/src/memory/`
-- 扩展 HTTP 消息服务：`cli/cli_server.py`
-- 扩展外部协议映射与消息推送策略：`plugins/src/plugins/channels/cli/`
+默认值统一定义在根目录 `.env.example`，代码和 `docker-compose.yml` 不再内置回退默认值。
+
+关键变量：
+
+- `LLM_API_KEY`
+- `LLM_BASE_URL`
+- `MCP_GATEWAY_SSE_URL`
+- `MCP_GATEWAY_AUTH_TOKEN`
+- `LLM_MODEL_NAME`
+- `HOST`
+- `PORT`
+- `LOG_LEVEL`
+- `MCP_GATEWAY_PORT`
+- `MCP_GATEWAY_SERVERS`
+
+## 本地运行（uv）
+
+1. 安装依赖（根目录）：
+
+```bash
+uv sync --all-packages
+```
+
+2. 复制环境变量文件并填写：
+
+```bash
+cp .env.example .env
+```
+
+3. 启动 MCP Gateway（示例为 PowerShell）：
+
+```powershell
+$env:MCP_GATEWAY_AUTH_TOKEN = "your_fixed_gateway_token"
+docker mcp gateway run --transport sse --port 9000
+```
+
+4. 本地直连运行前，将 `.env` 中 `MCP_GATEWAY_SSE_URL` 调整为 `http://localhost:9000/sse`。
+
+5. 启动 agent-service（另一个终端）：
+
+```bash
+uv run --package agent-service agent-service
+```
+
+## Docker Compose 部署（推荐）
+
+1. 从 `.env.example` 复制 `.env`，并按实际环境修改（至少替换 `LLM_API_KEY` 和 `MCP_GATEWAY_AUTH_TOKEN`）。
+2. 启动：
+
+```bash
+docker compose up -d --build
+```
+
+3. 验证：
+
+```bash
+curl http://localhost:8000/healthz
+```
+
+## API
+
+- `GET /healthz`
+- `POST /chat`
+
+`POST /chat` 请求示例：
+
+```json
+{
+  "user_input": "你好",
+  "max_turns": 10
+}
+```
+
+子模块文档请查看 `docs/agent-service.md`。

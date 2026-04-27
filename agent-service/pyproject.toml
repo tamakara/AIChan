@@ -1,0 +1,24 @@
+[project]
+name = "agent-service"
+version = "0.1.0"
+description = "agent-service FastAPI service managed by uv."
+authors = [
+    { name = "魂辛カラ", email = "tamakara@qq.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "anyio>=4.6.2",
+    "fastapi>=0.115.6",
+    "mcp>=1.13.0",
+    "openai>=1.65.0",
+    "pydantic-settings>=2.7.1",
+    "uvicorn[standard]>=0.34.0",
+]
+
+[project.scripts]
+# 使用明确的服务名作为唯一入口，避免 `run` 这类通用命令名在容器/宿主机环境中语义不清。
+agent-service = "agent_service.main:main"
+
+[build-system]
+requires = ["uv_build>=0.11.7,<0.12.0"]
+build-backend = "uv_build"
