@@ -16,7 +16,8 @@ dependencies = [
 ]
 
 [project.scripts]
-run = "agent_service.main:main"
+# 使用明确的服务名作为唯一入口，避免 `run` 这类通用命令名在容器/宿主机环境中语义不清。
+agent-service = "agent_service.main:main"
 
 [build-system]
 requires = ["uv_build>=0.11.7,<0.12.0"]

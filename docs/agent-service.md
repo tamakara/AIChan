@@ -41,7 +41,7 @@
 本地运行（在仓库根目录）：
 
 ```bash
-uv run --package agent-service run
+uv run --package agent-service agent-service
 ```
 
 若使用本机直连 MCP Gateway，请将 `MCP_GATEWAY_SSE_URL` 改为 `http://localhost:9000/sse`。
@@ -49,7 +49,5 @@ uv run --package agent-service run
 容器运行入口：
 
 ```bash
-python -m agent_service.main
+agent-service
 ```
-
-该入口依赖 `main.py` 的 `__main__` 调用 `main()`，以确保容器前台进程持续运行。

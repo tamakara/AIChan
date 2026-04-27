@@ -15,4 +15,4 @@ RUN uv pip install --system .
 
 EXPOSE 8000
 
-CMD ["python", "-m", "agent_service.main"]
+CMD ["agent-service"]
