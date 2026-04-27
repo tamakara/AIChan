@@ -20,19 +20,20 @@
 
 ## 环境变量
 
-必需变量：
+默认值统一定义在根目录 `.env.example`，代码和 `docker-compose.yml` 不再内置回退默认值。
+
+关键变量：
 
 - `LLM_API_KEY`
 - `LLM_BASE_URL`
 - `MCP_GATEWAY_SSE_URL`
-
-常用变量：
-
-- `MCP_GATEWAY_AUTH_TOKEN`（建议固定值；需与 MCP Gateway 一致）
-- `LLM_MODEL_NAME`（默认 `gpt-4.1-mini`）
-- `HOST`（默认 `0.0.0.0`）
-- `PORT`（默认 `8000`）
-- `LOG_LEVEL`（默认 `info`）
+- `MCP_GATEWAY_AUTH_TOKEN`
+- `LLM_MODEL_NAME`
+- `HOST`
+- `PORT`
+- `LOG_LEVEL`
+- `MCP_GATEWAY_PORT`
+- `MCP_GATEWAY_SERVERS`
 
 ## 本地运行（uv）
 
@@ -55,7 +56,9 @@ $env:MCP_GATEWAY_AUTH_TOKEN = "your_fixed_gateway_token"
 docker mcp gateway run --transport sse --port 9000
 ```
 
-4. 启动 agent-service（另一个终端）：
+4. 本地直连运行前，将 `.env` 中 `MCP_GATEWAY_SSE_URL` 调整为 `http://localhost:9000/sse`。
+
+5. 启动 agent-service（另一个终端）：
 
 ```bash
 uv run --package agent-service agent-service
@@ -63,7 +66,7 @@ uv run --package agent-service agent-service
 
 ## Docker Compose 部署（推荐）
 
-1. 配置 `.env`（至少设置 `LLM_API_KEY`、`LLM_BASE_URL`、`MCP_GATEWAY_AUTH_TOKEN`）。
+1. 从 `.env.example` 复制 `.env`，并按实际环境修改（至少替换 `LLM_API_KEY` 和 `MCP_GATEWAY_AUTH_TOKEN`）。
 2. 启动：
 
 ```bash

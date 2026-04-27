@@ -26,14 +26,15 @@
 
 ## 环境变量
 
+- 默认值集中定义在仓库根目录 `.env.example`，`agent-service` 代码内不再保存任何环境变量默认值。
 - `LLM_API_KEY`（必需）
 - `LLM_BASE_URL`（必需）
 - `MCP_GATEWAY_SSE_URL`（必需）
-- `MCP_GATEWAY_AUTH_TOKEN`（可选，默认空）
-- `LLM_MODEL_NAME`（默认 `gpt-4.1-mini`）
-- `HOST`（默认 `0.0.0.0`）
-- `PORT`（默认 `8000`）
-- `LOG_LEVEL`（默认 `info`）
+- `MCP_GATEWAY_AUTH_TOKEN`（必需；若不鉴权可显式设为空字符串）
+- `LLM_MODEL_NAME`（必需）
+- `HOST`（必需）
+- `PORT`（必需）
+- `LOG_LEVEL`（必需）
 
 ## 运行
 
@@ -42,6 +43,8 @@
 ```bash
 uv run --package agent-service run
 ```
+
+若使用本机直连 MCP Gateway，请将 `MCP_GATEWAY_SSE_URL` 改为 `http://localhost:9000/sse`。
 
 容器运行入口：
 

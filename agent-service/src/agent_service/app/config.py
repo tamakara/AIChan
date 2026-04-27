@@ -5,14 +5,15 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    llm_model_name: str = "gpt-4.1-mini"
+    # 默认值统一收口在仓库根目录 .env.example，避免代码与部署配置出现双重真相。
+    llm_model_name: str
     llm_api_key: str
     llm_base_url: str
     mcp_gateway_sse_url: str
-    mcp_gateway_auth_token: str = ""
-    host: str = "0.0.0.0"
-    port: int = 8000
-    log_level: str = "info"
+    mcp_gateway_auth_token: str
+    host: str
+    port: int
+    log_level: str
 
     model_config = SettingsConfigDict(
         env_file=".env",

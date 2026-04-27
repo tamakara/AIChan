@@ -8,9 +8,9 @@ services:
     command:
       - --transport=sse
       - --port=9000
-      - --servers=${MCP_GATEWAY_SERVERS:-duckduckgo,fetch}
+      - --servers=${MCP_GATEWAY_SERVERS}
     ports:
-      - "${MCP_GATEWAY_PORT:-9000}:9000"
+      - "${MCP_GATEWAY_PORT}:9000"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
 
@@ -21,13 +21,13 @@ services:
     depends_on:
       - mcp-gateway
     environment:
-      LLM_MODEL_NAME: ${LLM_MODEL_NAME:-gpt-4.1-mini}
+      LLM_MODEL_NAME: ${LLM_MODEL_NAME}
       LLM_API_KEY: ${LLM_API_KEY}
-      LLM_BASE_URL: ${LLM_BASE_URL:-https://api.openai.com/v1}
-      MCP_GATEWAY_SSE_URL: http://mcp-gateway:9000/sse
+      LLM_BASE_URL: ${LLM_BASE_URL}
+      MCP_GATEWAY_SSE_URL: ${MCP_GATEWAY_SSE_URL}
       MCP_GATEWAY_AUTH_TOKEN: ${MCP_GATEWAY_AUTH_TOKEN}
-      HOST: 0.0.0.0
-      PORT: 8000
-      LOG_LEVEL: ${LOG_LEVEL:-info}
+      HOST: ${HOST}
+      PORT: ${PORT}
+      LOG_LEVEL: ${LOG_LEVEL}
     ports:
-      - "${PORT:-8000}:8000"
+      - "${PORT}:8000"
