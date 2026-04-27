@@ -10,7 +10,7 @@ services:
       - --port=9000
       - --servers=${MCP_GATEWAY_SERVERS}
     ports:
-      - "${MCP_GATEWAY_PORT}:9000"
+      - "9000:9000"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
 
@@ -24,10 +24,10 @@ services:
       LLM_MODEL_NAME: ${LLM_MODEL_NAME}
       LLM_API_KEY: ${LLM_API_KEY}
       LLM_BASE_URL: ${LLM_BASE_URL}
-      MCP_GATEWAY_SSE_URL: http://mcp-gateway:${MCP_GATEWAY_PORT}/sse
+      MCP_GATEWAY_SSE_URL: http://mcp-gateway:9000/sse
       MCP_GATEWAY_AUTH_TOKEN: ${MCP_GATEWAY_AUTH_TOKEN}
-      HOST: ${HOST}
-      PORT: ${PORT}
+      HOST: 0.0.0.0
+      PORT: 8000
       LOG_LEVEL: ${LOG_LEVEL}
     ports:
-      - "${PORT}:8000"
+      - "8000:8000"
