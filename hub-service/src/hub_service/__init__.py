@@ -1,1 +1,1 @@
-﻿"""hub_service package."""
+"""hub_service package."""

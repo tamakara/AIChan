@@ -2,7 +2,7 @@
 
 ## 1. 模块一句话定位
 `agent-service` 是对话推理执行层：维护会话上下文、驱动 LLM 多轮推理与 MCP 工具调用，并通过 HTTP `/chat` 输出最终回复。  
-不负责消息接入与投递（由 `channel-service`/`hub-service` 处理）。
+不负责消息接入与投递（由 `adapter-service`/`hub-service` 处理）。
 
 ## 2. 接口契约
 ### 2.1 对外提供（HTTP）
@@ -162,3 +162,4 @@ flowchart TD
 - `max_turns` 到达即失败：防无限循环有效，但复杂工具链任务可能被硬截断。
 - MCP 工具 schema 只做最小清洗，跨提供方兼容性依然依赖上游 schema 质量。
 - 当前 `config.yml` 方式要求明文敏感配置，需结合部署侧密钥管理策略降低泄露风险。
+

@@ -6,7 +6,7 @@ requires-python = ">=3.12"
 members = [
     "agent-service",
     "aichan",
-    "channel-service",
+    "adapter-service",
     "hub-service",
 ]
 
@@ -159,9 +159,9 @@ wheels = [
 ]
 
 [[package]]
-name = "channel-service"
+name = "adapter-service"
 version = "0.1.0"
-source = { editable = "channel-service" }
+source = { editable = "adapter-service" }
 dependencies = [
     { name = "fastapi" },
     { name = "httpx" },
@@ -1576,3 +1576,4 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/51/47/3fa2286c3cb162c71cdb34c4224d5745a1ceceb391b2bd9b19b668a8d724/yarl-1.23.0-cp314-cp314t-win_arm64.whl", hash = "sha256:44bb7bef4ea409384e3f8bc36c063d77ea1b8d4a5b2706956c0d6695f07dcc25", size = 86041, upload-time = "2026-03-01T22:07:49.026Z" },
     { url = "https://files.pythonhosted.org/packages/69/68/c8739671f5699c7dc470580a4f821ef37c32c4cb0b047ce223a7f115757f/yarl-1.23.0-py3-none-any.whl", hash = "sha256:a2df6afe50dea8ae15fa34c9f824a3ee958d785fd5d089063d960bae1daa0a3f", size = 48288, upload-time = "2026-03-01T22:07:51.388Z" },
 ]
+

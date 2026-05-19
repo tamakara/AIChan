@@ -1,8 +1,8 @@
 # hub-service
 
 ## 1. 模块一句话定位
-`hub-service` 是会话编排中枢：从 `onebot.events` 消费消息事件，按 `session_id` 做防抖与串行调度，调用 `agent-service` 生成回复，并把回复写入 `onebot.actions`。  
-不负责 OneBot 协议接入、不负责消息发送落地（发送由 `channel-service` 执行）。
+`hub-service` 是会话编排中枢：从 `qq.events` 消费消息事件，按 `session_id` 做防抖与串行调度，调用 `agent-service` 生成回复，并把回复写入 `qq.actions`。  
+不负责 QQ 协议接入、不负责消息发送落地（发送由 `adapter-service` 执行）。
 
 ## 2. 接口契约
 ### 2.1 对外提供（HTTP）
@@ -24,7 +24,7 @@
   - 下游响应结构不匹配：Pydantic 校验异常。
 
 ### 2.3 对外消费（Redis Stream）
-- 输入流：`redis.events_stream`（默认 `onebot.events`）
+- 输入流：`redis.events_stream`（默认 `qq.events`）
 - 读取方式：`XREADGROUP`（group=`redis.events_group`，consumer=`redis.events_consumer`）
 - 消息字段（`EventStreamMessage`）：
   - `event_id`、`session_id`、`user_id`、`content`、`source`、`message_type`、`raw_event`、`created_at`
@@ -34,7 +34,7 @@
   - 运行期异常：记录 `hub.event_retry`，不 ACK（保留在 PEL，后续重试）。
 
 ### 2.4 对外产出（Redis Stream）
-- 输出流：`redis.actions_stream`（默认 `onebot.actions`）
+- 输出流：`redis.actions_stream`（默认 `qq.actions`）
 - 动作模型（`ActionStreamMessage`）：
   - `action_id: uuid4`
   - `session_id: str`
@@ -84,7 +84,7 @@ flowchart TD
     M -->|否| O[合并 pending_messages 为 user_message]
     O --> P[调用 agent-service /chat]
     P --> Q{调用是否成功}
-    Q -->|成功| R[写入 onebot.actions send_message]
+    Q -->|成功| R[写入 qq.actions send_message]
     Q -->|失败| S[记录 hub.session_run_failed]
     R --> T[记录 hub.session_run_completed]
     S --> U{本会话是否仍有新 pending}
@@ -145,9 +145,9 @@ flowchart TD
 - `healthz` 仅用于存活探针，不参与主链路。
 
 ### 7.4 故障影响
-- `hub-service` 不可用：`onebot.events` 堆积，消息无法触发 agent。
+- `hub-service` 不可用：`qq.events` 堆积，消息无法触发 agent。
 - `agent-service` 不可用：事件被消费后无法生成回复，失败只在日志可见。
-- `channel-service` 不可用：`onebot.actions` 堆积，回复无法实际发送。
+- `adapter-service` 不可用：`qq.actions` 堆积，回复无法实际发送。
 
 ## 8. 设计权衡与已知不足
 - 仅处理 `private`，`group` 消息直接 ACK 丢弃：行为清晰，但当前不支持群聊机器人。
@@ -155,3 +155,4 @@ flowchart TD
 - 失败恢复依赖 PEL 重试，没有显式重试上限/死信队列：可保“至少一次”，但潜在坏消息会长期回放。
 - 下游调用 `timeout=None`：避免长响应误超时，但缺少硬超时会放大尾部请求占用。
 - 对外无业务诊断接口（仅 `healthz`）：排障主要依赖日志与 Redis 观测。
+

@@ -6,15 +6,15 @@
 ```mermaid
 flowchart LR
     U[用户] --> O[OneBot v11 实现]
-    O -->|事件| C[channel-service]
-    C -->|onebot.events| R[(Redis Streams)]
-    R -->|onebot.events| H[hub-service]
+    O -->|事件| C[adapter-service]
+    C -->|qq.events| R[(Redis Streams)]
+    R -->|qq.events| H[hub-service]
     H -->|/chat| A[agent-service]
     A -->|MCP SSE| M[MCP Gateway]
-    M -->|docker://channel-service:latest| T[channel-mcp]
+    M -->|docker://adapter-service:latest| T[adapter-mcp]
     A -->|reply| H
-    H -->|onebot.actions| R
-    R -->|onebot.actions| C
+    H -->|qq.actions| R
+    R -->|qq.actions| C
     C -->|send_message| O
     O --> U
 ```
@@ -22,8 +22,8 @@ flowchart LR
 ## 职责矩阵
 | 服务 | 职责 | 接口 | 依赖 | 故障影响 |
 |---|---|---|---|---|
-| `channel-service` | OneBot 接入、事件标准化、动作执行、MCP 历史查询 | `WS /onebot/v11/ws`、`GET /api/v1/*`、`channel-mcp` | OneBot、Redis、`mcp-gateway` | 事件无法入流，动作无法回写 |
-| `hub-service` | 事件消费、会话防抖、调用 `agent-service`、写回动作流 | `GET /healthz` | Redis、`agent-service` | 回复链路中断，`onebot.events` 堆积 |
+| `adapter-service` | OneBot 接入、事件标准化、动作执行、MCP 历史查询 | `WS /onebot/v11/ws`、`GET /api/v1/*`、`adapter-mcp` | OneBot、Redis、`mcp-gateway` | 事件无法入流，动作无法回写 |
+| `hub-service` | 事件消费、会话防抖、调用 `agent-service`、写回动作流 | `GET /healthz` | Redis、`agent-service` | 回复链路中断，`qq.events` 堆积 |
 | `agent-service` | 会话上下文、LLM 推理、MCP 工具调用 | `POST /chat` | LLM API、MCP SSE | 无法生成回复正文 |
 
 ## 核心链路
@@ -31,19 +31,19 @@ flowchart LR
 sequenceDiagram
     participant U as 用户
     participant O as OneBot
-    participant C as channel-service
+    participant C as adapter-service
     participant R as Redis
     participant H as hub-service
     participant A as agent-service
 
     U->>O: 私聊消息
     O->>C: WS 事件
-    C->>R: XADD onebot.events
-    H->>R: XREADGROUP onebot.events
+    C->>R: XADD qq.events
+    H->>R: XREADGROUP qq.events
     H->>A: POST /chat
     A-->>H: reply
-    H->>R: XADD onebot.actions
-    C->>R: XREADGROUP onebot.actions
+    H->>R: XADD qq.actions
+    C->>R: XREADGROUP qq.actions
     C->>O: OneBot send_message
     O-->>U: 回复
 ```
@@ -61,7 +61,7 @@ docker compose up -d redis mcp-gateway
 
 3. 启动业务服务：
 ```bash
-uv run --package channel-service channel-service
+uv run --package adapter-service adapter-service
 uv run --package hub-service hub-service
 uv run --package agent-service agent-service
 ```
@@ -83,7 +83,7 @@ uv run --package agent-service agent-service
 ## 文档导航
 1. [docs/README.md](docs/README.md)
 2. [docs/aichan.md](docs/aichan.md)
-3. [docs/channel-service.md](docs/channel-service.md)
+3. [docs/adapter-service.md](docs/adapter-service.md)
 4. [docs/hub-service.md](docs/hub-service.md)
 5. [docs/agent-service.md](docs/agent-service.md)
 
@@ -91,3 +91,4 @@ uv run --package agent-service agent-service
 - 会话状态主要在内存中，重启会丢上下文。
 - 群聊事件当前被直接过滤，功能边界较窄。
 - Redis / LLM / OneBot 任一层抖动都会放大成端到端延迟。
+

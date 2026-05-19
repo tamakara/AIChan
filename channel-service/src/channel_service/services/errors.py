@@ -1,2 +1,0 @@
-﻿class NapcatDownstreamError(Exception):
-    pass

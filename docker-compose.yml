@@ -11,7 +11,7 @@ services:
     command:
       - --transport=sse
       - --port=9000
-      - --servers=playwright,fetch,time,docker://channel-service:latest
+      - --servers=playwright,fetch,time,docker://adapter-service:latest
     ports:
       - "9000:9000"
     volumes:
@@ -28,18 +28,18 @@ services:
     ports:
       - "8000:8000"
 
-  channel-service:
-    image: channel-service:latest
+  adapter-service:
+    image: adapter-service:latest
     build:
-      context: ./channel-service
+      context: ./adapter-service
     restart: unless-stopped
     depends_on:
       redis:
         condition: service_started
     command:
-      - channel-service
+      - adapter-service
     volumes:
-      - ./channel-service/config.yml:/app/channel-service/config.yml:ro
+      - ./adapter-service/config.yml:/app/adapter-service/config.yml:ro
     ports:
       - "8010:8010"
 
@@ -56,3 +56,4 @@ services:
       - ./hub-service/config.yml:/app/hub-service/config.yml:ro
     ports:
       - "8020:8020"
+

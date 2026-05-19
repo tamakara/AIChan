@@ -1,4 +1,4 @@
-﻿from threading import Lock
+from threading import Lock
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient

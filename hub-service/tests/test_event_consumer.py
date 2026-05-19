@@ -41,9 +41,9 @@ def test_private_event_is_forwarded_and_acked() -> None:
                     {
                         "event_id": "ev1",
                         "session_id": "private_1",
-                        "user_id": "onebot_1",
+                        "user_id": "qq_1",
                         "content": "hello",
-                        "source": "onebot",
+                        "source": "qq",
                         "message_type": "private",
                         "raw_event": "{\"k\":1}",
                         "created_at": "2026-01-01T00:00:00+00:00",
@@ -73,9 +73,9 @@ def test_group_event_is_acked_and_ignored() -> None:
                     {
                         "event_id": "ev1",
                         "session_id": "group_1",
-                        "user_id": "onebot_1",
+                        "user_id": "qq_1",
                         "content": "hello",
-                        "source": "onebot",
+                        "source": "qq",
                         "message_type": "group",
                         "raw_event": "{\"k\":1}",
                         "created_at": "2026-01-01T00:00:00+00:00",

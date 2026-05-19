@@ -22,9 +22,9 @@ def _event(session_id: str, content: str, message_type: str = "private") -> Even
     return EventStreamMessage(
         event_id=f"ev-{content}",
         session_id=session_id,
-        user_id="onebot_1",
+        user_id="qq_1",
         content=content,
-        source="onebot",
+        source="qq",
         message_type=message_type,  # type: ignore[arg-type]
         raw_event={"x": 1},
         created_at="2026-01-01T00:00:00+00:00",
