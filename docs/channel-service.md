@@ -18,6 +18,12 @@
 - `channel-service` -> Redis Stream `qq.events`：发布标准化事件
 - Redis Stream `qq.actions` -> `channel-service`：消费动作并执行 OneBot action
 
+## 运行日志
+
+- 运行时已关闭 FastAPI/Uvicorn 与 `httpx/httpcore/websockets` 的框架日志，仅保留 `channel_service.*` 业务日志。
+- 日志输出采用单轨可读格式：中文摘要 + 关键字段，不再输出 `event=...` 与全量结构化字段。
+- 关键链路日志覆盖启动/停止、OneBot WS 连接状态、动作消费成功/丢弃/重试、OneBot action 调用成功/超时。
+
 ## 路由契约
 
 - `GET /healthz`

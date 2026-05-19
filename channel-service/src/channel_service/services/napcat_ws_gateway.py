@@ -6,6 +6,7 @@ from typing import Any
 
 from fastapi import WebSocket, WebSocketDisconnect
 
+from ..logger import elapsed_ms, get_logger, log_info, log_warning, start_timer
 from .channel_service import AdapterService
 from .redis_stream import AdapterRedisStream
 from .stream_models import EventStreamMessage
@@ -18,6 +19,7 @@ class NapcatWsGateway:
         redis_stream: AdapterRedisStream,
         action_timeout_seconds: float,
     ) -> None:
+        self._logger = get_logger("napcat_ws_gateway")
         self._channel_service = channel_service
         self._redis_stream = redis_stream
         self._action_timeout_seconds = action_timeout_seconds
@@ -26,6 +28,7 @@ class NapcatWsGateway:
 
     async def handle_connection(self, websocket: WebSocket) -> None:
         await websocket.accept()
+        log_info(self._logger, "channel.ws_connected")
 
         try:
             while True:
@@ -42,8 +45,11 @@ class NapcatWsGateway:
                     continue
         except WebSocketDisconnect:
             return
+        finally:
+            log_info(self._logger, "channel.ws_disconnected")
 
     async def send_action(self, websocket: WebSocket, action: str, params: dict[str, Any]) -> dict[str, Any]:
+        started_at = start_timer()
         echo = str(uuid.uuid4())
         request = {
             "action": action,
@@ -58,7 +64,23 @@ class NapcatWsGateway:
 
         try:
             await websocket.send_json(request)
-            return await asyncio.wait_for(future, timeout=self._action_timeout_seconds)
+            result = await asyncio.wait_for(future, timeout=self._action_timeout_seconds)
+            log_info(
+                self._logger,
+                "channel.ws_action_completed",
+                action_type=action,
+                status=result.get("status", "unknown"),
+                elapsed_ms=elapsed_ms(started_at),
+            )
+            return result
+        except TimeoutError:
+            log_warning(
+                self._logger,
+                "channel.ws_action_timeout",
+                action_type=action,
+                elapsed_ms=elapsed_ms(started_at),
+            )
+            raise
         finally:
             async with self._pending_lock:
                 self._pending_actions.pop(echo, None)

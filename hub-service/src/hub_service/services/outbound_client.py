@@ -4,6 +4,7 @@ from typing import Any
 
 import httpx
 
+from ..logger import elapsed_ms, get_logger, log_info, start_timer
 from ..router.schemas import AgentChatRequest, AgentChatResponse
 from .redis_stream import HubRedisStream
 
@@ -14,21 +15,38 @@ class OutboundClient:
         agent_service_url: str,
         redis_stream: HubRedisStream,
     ) -> None:
+        self._logger = get_logger("outbound_client")
         self._agent_service_url = agent_service_url.rstrip("/")
         self._redis_stream = redis_stream
         self._client = httpx.AsyncClient(timeout=None)
 
     async def call_agent(self, session_id: str, user_message: str) -> str:
+        started_at = start_timer()
         payload = AgentChatRequest(
             session_id=session_id,
             user_message=user_message,
         )
         data = await self._post_json(f"{self._agent_service_url}/chat", payload.model_dump())
         response = AgentChatResponse.model_validate(data)
+        log_info(
+            self._logger,
+            "hub.downstream_called",
+            session_id=session_id,
+            status="ok",
+            elapsed_ms=elapsed_ms(started_at),
+        )
         return response.reply
 
     async def send_reply(self, session_id: str, content: str) -> None:
+        started_at = start_timer()
         await self._redis_stream.enqueue_send_message(session_id=session_id, content=content)
+        log_info(
+            self._logger,
+            "hub.reply_enqueued",
+            session_id=session_id,
+            reply_len=len(content),
+            elapsed_ms=elapsed_ms(started_at),
+        )
 
     async def _post_json(self, url: str, payload: dict[str, Any]) -> dict[str, Any]:
         response = await self._client.post(url, json=payload)

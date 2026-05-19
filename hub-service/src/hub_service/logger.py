@@ -3,62 +3,62 @@ from time import perf_counter
 from typing import Any
 
 
-LOGGER_NAME_PREFIX = "agent_service"
+LOGGER_NAME_PREFIX = "hub_service"
 EVENT_LABELS = {
-    "agent_app.boot": "服务初始化",
-    "agent_app.ready": "服务启动完成",
-    "agent.chat_received": "收到会话请求",
-    "agent.session_bound": "会话上下文绑定完成",
-    "agent.chat_completed": "会话处理完成",
-    "agent.chat_failed": "会话处理失败",
-    "agent_core.run_started": "Agent 执行开始",
-    "agent_core.llm_responded": "模型响应返回",
-    "agent_core.tool_called": "工具调用完成",
-    "agent_core.run_completed": "Agent 执行完成",
-    "mcp.registered": "MCP 工具注册完成",
-    "mcp.tool_called": "MCP 工具调用完成",
-    "llm.request_failed": "模型请求失败",
+    "hub_app.boot": "服务初始化",
+    "hub_app.ready": "服务启动完成",
+    "hub_app.stopping": "服务停止中",
+    "hub_app.stopped": "服务已停止",
+    "hub.consumer_started": "事件消费者已启动",
+    "hub.consumer_stopped": "事件消费者已停止",
+    "hub.event_dropped": "事件消息已丢弃",
+    "hub.event_retry": "事件处理失败将重试",
+    "hub.event_skipped": "事件消息已跳过",
+    "hub.event_submitted": "事件已提交调度",
+    "hub.session_run_started": "会话调度开始",
+    "hub.session_run_failed": "会话调度失败",
+    "hub.session_run_completed": "会话调度完成",
+    "hub.downstream_called": "下游请求完成",
+    "hub.reply_enqueued": "回复动作已入队",
 }
 FIELD_LABELS = {
     "session_id": "会话",
-    "turn": "轮次",
-    "tool_name": "工具",
+    "message_id": "消息",
+    "event_id": "事件",
+    "message_type": "消息类型",
+    "events_stream": "事件流",
+    "events_group": "事件组",
+    "actions_stream": "动作流",
     "status": "状态",
-    "model": "模型",
-    "max_turns": "最大轮次",
-    "finish_reason": "结束原因",
+    "reason": "原因",
     "elapsed_ms": "耗时",
-    "reply_len": "回复长度",
     "user_message_len": "用户消息长度",
-    "tool_count": "工具数",
-    "created_new_session": "新建会话",
-    "mcp_sse_url": "MCP地址",
-    "removed_keys": "移除字段",
+    "reply_len": "回复长度",
     "status_code": "状态码",
-    "detail": "详情",
+    "url": "地址",
 }
 DEFAULT_HIGHLIGHT_KEYS = (
     "session_id",
-    "turn",
-    "tool_name",
+    "message_id",
+    "event_id",
     "status",
+    "reason",
     "elapsed_ms",
-    "finish_reason",
     "status_code",
 )
 EVENT_HIGHLIGHT_KEYS = {
-    "agent_app.boot": ("model", "max_turns", "mcp_sse_url"),
-    "agent.chat_received": ("session_id", "user_message_len"),
-    "agent.session_bound": ("session_id", "created_new_session"),
-    "agent.chat_completed": ("session_id", "reply_len", "elapsed_ms"),
-    "agent.chat_failed": ("session_id", "elapsed_ms"),
-    "agent_core.run_started": ("session_id", "max_turns", "user_message_len"),
-    "agent_core.llm_responded": ("session_id", "turn", "finish_reason", "elapsed_ms"),
-    "agent_core.tool_called": ("session_id", "turn", "tool_name", "status", "elapsed_ms"),
-    "agent_core.run_completed": ("session_id", "turn", "elapsed_ms"),
-    "mcp.registered": ("tool_count", "elapsed_ms"),
-    "mcp.tool_called": ("tool_name", "elapsed_ms"),
-    "llm.request_failed": ("model", "status_code"),
+    "hub_app.boot": ("events_stream", "events_group", "actions_stream"),
+    "hub_app.ready": ("elapsed_ms",),
+    "hub_app.stopped": ("elapsed_ms",),
+    "hub.event_dropped": ("message_id", "reason"),
+    "hub.event_retry": ("message_id", "elapsed_ms"),
+    "hub.event_skipped": ("message_id", "message_type"),
+    "hub.event_submitted": ("message_id", "session_id", "event_id"),
+    "hub.session_run_started": ("session_id", "user_message_len"),
+    "hub.session_run_failed": ("session_id", "elapsed_ms"),
+    "hub.session_run_completed": ("session_id", "reply_len", "elapsed_ms"),
+    "hub.downstream_called": ("session_id", "elapsed_ms", "status"),
+    "hub.reply_enqueued": ("session_id", "reply_len", "elapsed_ms"),
 }
 
 
@@ -110,10 +110,12 @@ def _build_human_summary(event: str, fields: dict[str, Any]) -> str:
     highlights: list[str] = []
     highlight_keys = EVENT_HIGHLIGHT_KEYS.get(event, DEFAULT_HIGHLIGHT_KEYS)
     for key in highlight_keys:
-        if key in fields:
-            value = fields[key]
-            label_text = FIELD_LABELS.get(key, key)
-            highlights.append(f"{label_text}={_format_field_value_with_unit(key, value)}")
+        if key not in fields:
+            continue
+        label_text = FIELD_LABELS.get(key, key)
+        highlights.append(
+            f"{label_text}={_format_field_value_with_unit(key, fields[key])}"
+        )
 
     if not highlights:
         return label
@@ -136,7 +138,7 @@ def _format_field_value_with_unit(key: str, value: Any) -> str:
 
 
 def _silence_framework_loggers() -> None:
-    # 运行时日志统一收口到 agent_service.*，屏蔽框架与 HTTP 客户端噪声避免污染诊断信号。
+    # 运行时日志统一收口到 hub_service.*，避免框架/HTTP 库噪声干扰业务排障。
     framework_loggers = (
         "uvicorn",
         "uvicorn.error",
@@ -144,6 +146,7 @@ def _silence_framework_loggers() -> None:
         "fastapi",
         "httpx",
         "httpcore",
+        "websockets",
     )
     for logger_name in framework_loggers:
         framework_logger = logging.getLogger(logger_name)

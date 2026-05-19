@@ -8,7 +8,7 @@ import mcp.types as mcp_types
 from mcp.client.session import ClientSession
 from mcp.client.sse import sse_client
 
-from ..logger import elapsed_ms, get_logger, log_info, log_warning, start_timer
+from ..logger import elapsed_ms, get_logger, log_info, start_timer
 
 
 @dataclass(frozen=True)
@@ -19,8 +19,7 @@ class McpToolBinding:
 
 
 class McpGateway:
-    # 当前只针对已观测到的兼容性报错做最小修复：
-    # OpenAI 兼容网关在 tools schema 中不接受 propertyNames。
+    # 工具 schema 规范化：移除当前上游不接受的字段，避免注册阶段 schema 透传失败。
     _UNSUPPORTED_SCHEMA_KEYS = {"propertyNames"}
 
     def __init__(self, sse_url: str, auth_token: str | None = None):
@@ -44,7 +43,6 @@ class McpGateway:
                 description=remote_tool.description or "MCP tool from SSE Gateway",
                 input_schema=self._normalize_schema(
                     schema=remote_tool.inputSchema,
-                    tool_name=remote_tool.name,
                 ),
             )
         self._refresh_tools_schema()
@@ -122,7 +120,7 @@ class McpGateway:
                 await session.initialize() 
                 yield session
 
-    def _normalize_schema(self, schema: Any, tool_name: str) -> Dict[str, Any]:
+    def _normalize_schema(self, schema: Any) -> Dict[str, Any]:
         if not isinstance(schema, dict):
             return {"type": "object", "properties": {}}
 
@@ -132,15 +130,7 @@ class McpGateway:
         if out["type"] == "object" and "properties" not in out:
             out["properties"] = {}
 
-        cleaned, removed_keys = self._sanitize_schema_node(out)
-        if removed_keys:
-            log_warning(
-                self._logger,
-                "mcp.schema_sanitized",
-                tool_name=tool_name,
-                removed_keys=",".join(sorted(set(removed_keys))),
-            )
-
+        cleaned, _ = self._sanitize_schema_node(out)
         return cleaned
 
     def _sanitize_schema_node(self, node: Any) -> tuple[Any, list[str]]:

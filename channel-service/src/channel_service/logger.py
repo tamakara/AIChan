@@ -3,62 +3,57 @@ from time import perf_counter
 from typing import Any
 
 
-LOGGER_NAME_PREFIX = "agent_service"
+LOGGER_NAME_PREFIX = "channel_service"
 EVENT_LABELS = {
-    "agent_app.boot": "服务初始化",
-    "agent_app.ready": "服务启动完成",
-    "agent.chat_received": "收到会话请求",
-    "agent.session_bound": "会话上下文绑定完成",
-    "agent.chat_completed": "会话处理完成",
-    "agent.chat_failed": "会话处理失败",
-    "agent_core.run_started": "Agent 执行开始",
-    "agent_core.llm_responded": "模型响应返回",
-    "agent_core.tool_called": "工具调用完成",
-    "agent_core.run_completed": "Agent 执行完成",
-    "mcp.registered": "MCP 工具注册完成",
-    "mcp.tool_called": "MCP 工具调用完成",
-    "llm.request_failed": "模型请求失败",
+    "channel_app.boot": "服务初始化",
+    "channel_app.ready": "服务启动完成",
+    "channel_app.stopping": "服务停止中",
+    "channel_app.stopped": "服务已停止",
+    "channel.action_consumer_started": "动作消费者已启动",
+    "channel.action_consumer_stopped": "动作消费者已停止",
+    "channel.action_dropped": "动作消息已丢弃",
+    "channel.action_retry": "动作处理失败将重试",
+    "channel.action_skipped": "动作消息已跳过",
+    "channel.action_handled": "动作处理完成",
+    "channel.ws_connected": "OneBot WS 已连接",
+    "channel.ws_disconnected": "OneBot WS 已断开",
+    "channel.ws_action_completed": "OneBot Action 调用完成",
+    "channel.ws_action_timeout": "OneBot Action 调用超时",
 }
 FIELD_LABELS = {
     "session_id": "会话",
-    "turn": "轮次",
-    "tool_name": "工具",
+    "message_id": "消息",
+    "action_type": "动作类型",
+    "actions_stream": "动作流",
+    "actions_group": "动作组",
+    "events_stream": "事件流",
     "status": "状态",
-    "model": "模型",
-    "max_turns": "最大轮次",
-    "finish_reason": "结束原因",
+    "reason": "原因",
     "elapsed_ms": "耗时",
     "reply_len": "回复长度",
     "user_message_len": "用户消息长度",
     "tool_count": "工具数",
-    "created_new_session": "新建会话",
-    "mcp_sse_url": "MCP地址",
-    "removed_keys": "移除字段",
     "status_code": "状态码",
-    "detail": "详情",
 }
 DEFAULT_HIGHLIGHT_KEYS = (
     "session_id",
-    "turn",
-    "tool_name",
+    "message_id",
+    "action_type",
     "status",
+    "reason",
     "elapsed_ms",
-    "finish_reason",
     "status_code",
 )
 EVENT_HIGHLIGHT_KEYS = {
-    "agent_app.boot": ("model", "max_turns", "mcp_sse_url"),
-    "agent.chat_received": ("session_id", "user_message_len"),
-    "agent.session_bound": ("session_id", "created_new_session"),
-    "agent.chat_completed": ("session_id", "reply_len", "elapsed_ms"),
-    "agent.chat_failed": ("session_id", "elapsed_ms"),
-    "agent_core.run_started": ("session_id", "max_turns", "user_message_len"),
-    "agent_core.llm_responded": ("session_id", "turn", "finish_reason", "elapsed_ms"),
-    "agent_core.tool_called": ("session_id", "turn", "tool_name", "status", "elapsed_ms"),
-    "agent_core.run_completed": ("session_id", "turn", "elapsed_ms"),
-    "mcp.registered": ("tool_count", "elapsed_ms"),
-    "mcp.tool_called": ("tool_name", "elapsed_ms"),
-    "llm.request_failed": ("model", "status_code"),
+    "channel_app.boot": ("events_stream", "actions_stream", "actions_group"),
+    "channel_app.ready": ("elapsed_ms",),
+    "channel_app.stopped": ("elapsed_ms",),
+    "channel.action_dropped": ("message_id", "reason"),
+    "channel.action_retry": ("message_id", "elapsed_ms"),
+    "channel.action_skipped": ("action_type", "reason"),
+    "channel.action_handled": ("session_id", "action_type", "status", "elapsed_ms"),
+    "channel.ws_action_completed": ("action_type", "status", "elapsed_ms"),
+    "channel.ws_action_timeout": ("action_type", "elapsed_ms"),
 }
 
 
@@ -110,10 +105,12 @@ def _build_human_summary(event: str, fields: dict[str, Any]) -> str:
     highlights: list[str] = []
     highlight_keys = EVENT_HIGHLIGHT_KEYS.get(event, DEFAULT_HIGHLIGHT_KEYS)
     for key in highlight_keys:
-        if key in fields:
-            value = fields[key]
-            label_text = FIELD_LABELS.get(key, key)
-            highlights.append(f"{label_text}={_format_field_value_with_unit(key, value)}")
+        if key not in fields:
+            continue
+        label_text = FIELD_LABELS.get(key, key)
+        highlights.append(
+            f"{label_text}={_format_field_value_with_unit(key, fields[key])}"
+        )
 
     if not highlights:
         return label
@@ -136,7 +133,7 @@ def _format_field_value_with_unit(key: str, value: Any) -> str:
 
 
 def _silence_framework_loggers() -> None:
-    # 运行时日志统一收口到 agent_service.*，屏蔽框架与 HTTP 客户端噪声避免污染诊断信号。
+    # 运行时日志统一收口到 channel_service.*，避免框架/HTTP 库噪声干扰业务排障。
     framework_loggers = (
         "uvicorn",
         "uvicorn.error",
@@ -144,6 +141,7 @@ def _silence_framework_loggers() -> None:
         "fastapi",
         "httpx",
         "httpcore",
+        "websockets",
     )
     for logger_name in framework_loggers:
         framework_logger = logging.getLogger(logger_name)

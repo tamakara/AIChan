@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import asyncio
-import logging
 from dataclasses import dataclass, field
 
+from ..logger import elapsed_ms, get_logger, log_exception, log_info, start_timer
 from .outbound_client import OutboundClient
 from .stream_models import EventStreamMessage
 
@@ -22,7 +22,7 @@ class SessionCoordinator:
         outbound_client: OutboundClient,
         debounce_seconds: float,
     ) -> None:
-        self._logger = logging.getLogger(__name__)
+        self._logger = get_logger("session_coordinator")
         self._outbound_client = outbound_client
         self._debounce_seconds = debounce_seconds
         self._states: dict[str, SessionState] = {}
@@ -99,14 +99,33 @@ class SessionCoordinator:
             return
 
     async def _run_once(self, session_id: str, user_message: str) -> None:
+        run_started_at = start_timer()
+        log_info(
+            self._logger,
+            "hub.session_run_started",
+            session_id=session_id,
+            user_message_len=len(user_message),
+        )
         try:
             reply = await self._outbound_client.call_agent(
                 session_id=session_id,
                 user_message=user_message,
             )
             await self._outbound_client.send_reply(session_id=session_id, content=reply)
+            log_info(
+                self._logger,
+                "hub.session_run_completed",
+                session_id=session_id,
+                reply_len=len(reply),
+                elapsed_ms=elapsed_ms(run_started_at),
+            )
         except Exception:
-            self._logger.exception("session run failed: session_id=%s", session_id)
+            log_exception(
+                self._logger,
+                "hub.session_run_failed",
+                session_id=session_id,
+                elapsed_ms=elapsed_ms(run_started_at),
+            )
         finally:
             async with self._lock:
                 state = self._states.get(session_id)
