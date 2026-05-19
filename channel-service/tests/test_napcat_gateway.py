@@ -41,5 +41,5 @@ def test_private_event_published_to_stream() -> None:
     assert len(redis_stream.events) == 1
     message = redis_stream.events[0]
     assert message.session_id == "private_20002"
-    assert message.user_id == "qq_20002"
+    assert message.user_id == "onebot_20002"
     assert message.content == "hello"

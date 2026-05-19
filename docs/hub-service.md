@@ -1,101 +1,157 @@
 # hub-service
 
-`hub-service` 是 AICHAN 的会话编排中枢，负责消费 `channel-service` 写入的提醒事件，按会话串行调度 `agent-service`，并把回复以动作消息写回队列。
+## 1. 模块一句话定位
+`hub-service` 是会话编排中枢：从 `onebot.events` 消费消息事件，按 `session_id` 做防抖与串行调度，调用 `agent-service` 生成回复，并把回复写入 `onebot.actions`。  
+不负责 OneBot 协议接入、不负责消息发送落地（发送由 `channel-service` 执行）。
 
-## 设计目标
-
-- 中枢编排：集中管理“提醒 -> agent -> 回复动作入队”主链路。
-- 会话串行：同一 `session_id` 同一时刻仅运行一个 agent。
-- 防抖合并：首轮触发采用 1 秒（可配置）防抖窗口，减少连续短消息的重复触发。
-- 轻量状态：仅在内存维护会话状态，不做持久化恢复。
-
-## 运行日志
-
-- 运行时已关闭 FastAPI/Uvicorn 与 `httpx/httpcore/websockets` 的框架日志，仅保留 `hub_service.*` 业务日志。
-- 日志输出采用单轨可读格式：中文摘要 + 关键字段，不再输出 `event=...` 与全量结构化字段。
-- 关键链路日志覆盖启动/停止、事件消费与过滤、会话调度开始/成功/失败、调用 `agent-service` 与回复入队耗时。
-
-## 路由契约
-
+## 2. 接口契约
+### 2.1 对外提供（HTTP）
 - `GET /healthz`
-  - 返回：`{"status":"ok"}`
+  - 响应：`{"status":"ok"}`
+  - 语义：进程存活探针，不代表下游依赖全部健康。
 
-> `hub-service` 不再提供 `WS /qq/events` 事件入口；事件统一从 Redis Stream 消费。
+### 2.2 对外消费（HTTP）
+- 目标：`{hub.agent_url}/chat`
+- 方法：`POST`
+- 请求体（`AgentChatRequest`）：
+  - `session_id: str`（最小长度 1）
+  - `user_message: str`（最小长度 1）
+- 成功响应体（`AgentChatResponse`）：
+  - `reply: str`
+- 失败语义：
+  - 下游 `status_code >= 400`：抛出 `RuntimeError`，错误文本包含 `url/status/body`。
+  - 下游 JSON 不是对象：抛出 `ValueError`。
+  - 下游响应结构不匹配：Pydantic 校验异常。
 
-## 队列契约与行为
+### 2.3 对外消费（Redis Stream）
+- 输入流：`redis.events_stream`（默认 `onebot.events`）
+- 读取方式：`XREADGROUP`（group=`redis.events_group`，consumer=`redis.events_consumer`）
+- 消息字段（`EventStreamMessage`）：
+  - `event_id`、`session_id`、`user_id`、`content`、`source`、`message_type`、`raw_event`、`created_at`
+- 消费规则：
+  - `message_type != private`：直接 ACK 并跳过（当前仅处理私聊）。
+  - 非法消息（字段不合法）：记录 `hub.event_dropped`，ACK 丢弃。
+  - 运行期异常：记录 `hub.event_retry`，不 ACK（保留在 PEL，后续重试）。
 
-- 事件输入流：`qq.events`（Consumer Group 消费）
-  - 仅处理 `message_type=private`，群聊事件直接 ACK 丢弃。
+### 2.4 对外产出（Redis Stream）
+- 输出流：`redis.actions_stream`（默认 `onebot.actions`）
+- 动作模型（`ActionStreamMessage`）：
+  - `action_id: uuid4`
+  - `session_id: str`
+  - `action_type: "send_message"`
+  - `payload: {"content": "<reply>"}`
+  - `created_at: ISO8601 UTC`
 
-- 动作输出流：`qq.actions`
-  - 回复动作写入格式：`action_type=send_message`，`payload={"content":"..."}`。
-  - 当前策略为“入队即成功”，不等待 `channel-service` 执行回执。
+### 2.5 异常码说明
+- 本模块没有自定义业务异常码体系。
+- 对外 HTTP 仅暴露 `healthz`，业务失败通过内部日志与重试机制处理。
 
-## 会话调度策略
+## 3. 核心数据模型
+### 3.1 事件输入模型（`EventStreamMessage`）
+- 业务主键：`event_id`
+- 会话归并键：`session_id`
+- 决策字段：`message_type`（`private/group`，决定是否进入调度）
+- 审计上下文：`raw_event`（保留源事件原始信息）
 
-- 会话状态：`running`、`pending_messages`、`debounce_deadline`、`debounce_task`（内存态）。
-- 首条消息进入会话后，启动防抖窗口（默认 1 秒）；窗口内新消息会重置截止时间。
-- 窗口到期后把 `pending_messages` 合并为一次 `user_message` 调用 `agent-service /chat`。
-- 运行期间新消息只追加到 `pending_messages`，不打断当前轮。
-- 当前轮结束后若有 pending，则重新进入“防抖 -> 下一轮”。
+### 3.2 会话状态模型（`SessionState`，内存态）
+- `running: bool`：当前会话是否在执行一轮 agent 调用。
+- `pending_messages: list[str]`：等待被合并的消息队列。
+- `debounce_deadline: float | None`：防抖截止时间（事件循环时钟）。
+- `debounce_task: Task | None`：当前会话的防抖任务句柄。
 
-## 下游依赖接口
+### 3.3 动作输出模型（`ActionStreamMessage`）
+- `action_type` 当前固定 `send_message`，表示 hub 只产出“回复动作”，不承担更复杂动作编排。
 
-- `agent-service`
-  - `POST /chat`
-  - request: `{"session_id":"private_xxx","user_message":"..."}`
-  - response: `{"reply":"..."}`
+## 4. 核心业务流程
+```mermaid
+flowchart TD
+    A[启动 FastAPI] --> B[HubRedisStream.startup<br/>PING + 创建 Consumer Group]
+    B --> C[EventConsumerWorker.start]
+    C --> D{循环拉取事件}
+    D -->|先读 pending| E[read_pending_events]
+    D -->|无 pending 再读新消息| F[read_new_events]
+    E --> G[逐条处理]
+    F --> G
 
-## 配置文件
+    G --> H{message_type 是否 private}
+    H -->|否| I[ACK 并记录 hub.event_skipped]
+    H -->|是| J[SessionCoordinator.submit_event]
+    J --> K[ACK 并记录 hub.event_submitted]
 
-配置文件路径：`hub-service/config.yml`
+    J --> L[按 session_id 进入防抖状态机]
+    L --> M{窗口内是否有新消息}
+    M -->|是| N[刷新 debounce_deadline]
+    M -->|否| O[合并 pending_messages 为 user_message]
+    O --> P[调用 agent-service /chat]
+    P --> Q{调用是否成功}
+    Q -->|成功| R[写入 onebot.actions send_message]
+    Q -->|失败| S[记录 hub.session_run_failed]
+    R --> T[记录 hub.session_run_completed]
+    S --> U{本会话是否仍有新 pending}
+    T --> U
+    U -->|有| L
+    U -->|无| V[清理会话状态]
 
-配置约束（与当前代码一致）：
-
-- 仅从本服务目录内的 `config.yml` 读取运行配置。
-- 不读取 `.env`、`.env.example`，也不支持任何环境变量别名。
-- 修改地址、端口、防抖窗口、队列参数时，只更新 `hub-service/config.yml`。
-- 在 Docker Compose 中通过只读挂载该配置文件，保证容器与本地运行共享同一配置语义。
-- 配置加载阶段使用 Pydantic 严格校验：字段类型不匹配、缺失字段或出现未声明字段都会直接报错并阻断启动。
-
-```yaml
-server:
-  host: 0.0.0.0
-  port: 8020
-  log_level: debug
-
-hub:
-  agent_url: http://agent-service:8000
-  debounce_seconds: 1.0
-
-redis:
-  host: redis
-  port: 6379
-  db: 0
-  password: ""
-  events_stream: qq.events
-  events_group: hub-event-workers
-  events_consumer: hub-service-1
-  events_block_ms: 2000
-  actions_stream: qq.actions
+    G --> W{消息结构是否合法}
+    W -->|否| X[记录 hub.event_dropped 并 ACK]
+    G --> Y{运行期异常}
+    Y -->|是| Z[记录 hub.event_retry<br/>sleep 1s 且不 ACK]
 ```
 
-## 启动
+## 5. 配置项与运行依赖
+### 5.1 配置文件
+- 路径：`hub-service/config.yml`
+- 加载方式：仅加载该 YAML 文件，不读取 `.env`。
+- 校验策略：Pydantic `extra="forbid"`，未知字段/缺失字段/类型错误都会启动失败。
 
-在仓库根目录执行：
+### 5.2 配置项（当前代码可见）
+- `server.host`、`server.port`、`server.log_level`
+- `hub.agent_url`、`hub.debounce_seconds`
+- `redis.host`、`redis.port`、`redis.db`、`redis.password`
+- `redis.events_stream`、`redis.events_group`、`redis.events_consumer`、`redis.events_block_ms`
+- `redis.actions_stream`
 
-```bash
-uv run --package hub-service hub-service
-```
+### 5.3 运行依赖
+- Redis（Stream + Consumer Group）
+- `agent-service` HTTP 接口 `/chat`
+- `fastapi` + `uvicorn` + `httpx` + `redis-py asyncio`
 
-Docker Compose 启动：
+## 6. 非功能性设计
+### 6.1 错误处理
+- 消费循环采用“最小必要边界”：
+  - 脏数据：ACK 丢弃，避免阻塞游标。
+  - 运行期异常：不 ACK，依赖 PEL 至少一次重试。
+- 下游 HTTP 非 2xx 时保留响应体，提升排障可观测性。
 
-```bash
-docker compose up -d --build hub-service
-```
+### 6.2 日志
+- 统一 logger 前缀：`hub_service.*`
+- 框架日志（`uvicorn/httpx/websockets`）被静默，业务日志采用中文摘要 + 关键字段高亮。
+- 关键事件覆盖：启动、停止、消费过滤、调度成功/失败、下游调用耗时、动作入队耗时。
 
-## 容器构建稳定性
+### 6.3 性能关键点
+- 会话级串行 + 防抖合并：降低短时间多条消息造成的 LLM 调用放大。
+- `xreadgroup` 批量读取（每批 20）+ 阻塞读取新消息，减少空轮询压力。
+- 状态全在内存，路径短但不具备跨实例共享能力。
 
-- Dockerfile 改为在基础镜像内通过 `pip install uv==0.7.2` 安装 uv，避免依赖 `ghcr.io` 元数据拉取失败。
-- `hub-service/Dockerfile` 已设置 `UV_HTTP_TIMEOUT=180` 与 `UV_HTTP_RETRIES=8`，降低网络抖动导致的依赖下载超时失败概率。
-- `uv pip install --system .` 使用 3 次重试策略，针对 `uv_build` 元数据拉取偶发超时可自动恢复。
+## 7. 架构边界与集成点
+### 7.1 所在层级
+- 业务编排层（Orchestration Layer），位于消息接入与智能体执行之间。
+
+### 7.2 强依赖
+- Redis Stream：无 Redis 无法消费事件也无法产出动作。
+- `agent-service /chat`：无下游回复能力时仅能记录失败。
+
+### 7.3 弱依赖
+- `healthz` 仅用于存活探针，不参与主链路。
+
+### 7.4 故障影响
+- `hub-service` 不可用：`onebot.events` 堆积，消息无法触发 agent。
+- `agent-service` 不可用：事件被消费后无法生成回复，失败只在日志可见。
+- `channel-service` 不可用：`onebot.actions` 堆积，回复无法实际发送。
+
+## 8. 设计权衡与已知不足
+- 仅处理 `private`，`group` 消息直接 ACK 丢弃：行为清晰，但当前不支持群聊机器人。
+- 会话状态内存化：实现简单、低延迟，但多副本下无法共享会话态，存在跨实例顺序不一致风险。
+- 失败恢复依赖 PEL 重试，没有显式重试上限/死信队列：可保“至少一次”，但潜在坏消息会长期回放。
+- 下游调用 `timeout=None`：避免长响应误超时，但缺少硬超时会放大尾部请求占用。
+- 对外无业务诊断接口（仅 `healthz`）：排障主要依赖日志与 Redis 观测。

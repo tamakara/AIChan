@@ -68,7 +68,7 @@ class AdapterService:
         limit: int,
         before_message_id: int | None,
     ) -> OutboundAction:
-        # 历史查询沿用 session 维度，agent 不需要关心 QQ 的群/私聊底层差异。
+        # 历史查询沿用 session 维度，agent 不需要关心 OneBot 的群/私聊底层差异。
         message_seq = before_message_id if before_message_id is not None else 0
 
         if session_id.startswith("group_"):
@@ -120,7 +120,7 @@ class AdapterService:
 
     @staticmethod
     def to_abstract_user_id(user_id: int) -> str:
-        return f"qq_{user_id}"
+        return f"onebot_{user_id}"
 
     @staticmethod
     def parse_group_session_id(session_id: str) -> int:
@@ -138,11 +138,11 @@ class AdapterService:
 
     @staticmethod
     def parse_abstract_user_id(user_id: str) -> int:
-        if not user_id.startswith("qq_"):
-            raise ValueError("user_id must start with 'qq_'")
+        if not user_id.startswith("onebot_"):
+            raise ValueError("user_id must start with 'onebot_'")
 
         try:
-            return int(user_id.split("qq_", 1)[1])
+            return int(user_id.split("onebot_", 1)[1])
         except ValueError as exc:
             raise ValueError("invalid abstract user_id") from exc
 

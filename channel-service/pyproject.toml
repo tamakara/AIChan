@@ -1,7 +1,7 @@
 [project]
 name = "channel-service"
 version = "0.1.0"
-description = "QQ adapter FastAPI service managed by uv."
+description = "OneBot adapter FastAPI service managed by uv."
 authors = [
     { name = "????", email = "tamakara@qq.com" }
 ]

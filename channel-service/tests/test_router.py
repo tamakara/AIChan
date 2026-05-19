@@ -63,7 +63,7 @@ def test_healthz() -> None:
 
 def test_get_user_info_requires_ws_connection() -> None:
     client = build_client(StubAdapterService(), StubGateway(), NapcatConnectionState())
-    response = client.get("/api/v1/user/qq_1/info")
+    response = client.get("/api/v1/user/onebot_1/info")
     assert response.status_code == 503
 
 

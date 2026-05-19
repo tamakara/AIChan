@@ -1,7 +1,7 @@
 [project]
 name = "hub-service"
 version = "0.1.0"
-description = "QQ reminder hub service managed by uv."
+description = "OneBot reminder hub service managed by uv."
 authors = [
     { name = "魂辛カラ", email = "tamakara@qq.com" }
 ]

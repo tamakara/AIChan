@@ -1,165 +1,170 @@
 # channel-service
 
-`channel-service` 是 AICHAN 的 QQ 协议适配层与 MCP 工具网关，负责：
-- 与任意符合 OneBot v11 的实现通过单条反向 WebSocket 双向通信。
-- 把入站 QQ 事件标准化后写入 Redis Streams（不保存会话状态）。
-- 消费 `hub-service` 下发的动作消息并调用 OneBot action 执行。
-- 暴露消息历史查询能力供 MCP Gateway / agent 调用。
+## 1. 模块一句话定位
+`channel-service` 是 OneBot 协议适配层：连接 OneBot v11 反向 WebSocket，把入站事件标准化后写入 `onebot.events`，并消费 `onebot.actions` 执行发送动作。  
+不负责会话编排与 LLM 调用（这些由 `hub-service`、`agent-service` 负责）。
 
-## 设计目标
-
-- 无状态网关：只做协议转换与队列投递，不维护会话业务状态。
-- 单连接语义：OneBot v11 客户端仅连接 `WS /onebot/v11/ws`，事件与动作共用该连接。
-- 队列解耦：与 `hub-service` 仅通过 Redis Streams 通信，消除服务直连耦合。
-
-## 通信拓扑
-
-- OneBot v11 客户端 <-> `channel-service`：`ws://channel-service:8010/onebot/v11/ws`
-- `channel-service` -> Redis Stream `qq.events`：发布标准化事件
-- Redis Stream `qq.actions` -> `channel-service`：消费动作并执行 OneBot action
-
-## 运行日志
-
-- 运行时已关闭 FastAPI/Uvicorn 与 `httpx/httpcore/websockets` 的框架日志，仅保留 `channel_service.*` 业务日志。
-- 日志输出采用单轨可读格式：中文摘要 + 关键字段，不再输出 `event=...` 与全量结构化字段。
-- 关键链路日志覆盖启动/停止、OneBot WS 连接状态、动作消费成功/丢弃/重试、OneBot action 调用成功/超时。
-
-## 路由契约
-
+## 2. 接口契约
+### 2.1 对外提供（HTTP/WS）
 - `GET /healthz`
-  - 返回：`{"status":"ok"}`
+  - 响应：`{"status":"ok"}`
 
 - `WS /onebot/v11/ws`
-  - OneBot v11 反向 WebSocket 连接入口。
-  - 入站事件处理：仅文本消息进入事件链路；群聊仍在网关层忽略，私聊事件转为统一 JSON 后写入 `qq.events`。
-  - 出站动作处理：动作消费者从 `qq.actions` 取到 `send_message` 后，通过该连接发送 OneBot action 并等待 `echo` 响应。
+  - 入站消息分类：
+    - 事件消息：包含 `post_type`
+    - 动作响应：包含 `echo/status/retcode`
+  - 连接状态：`NapcatConnectionState` 全局仅保存当前单连接引用。
 
 - `GET /api/v1/user/{user_id}/info`
-  - 入参：`user_id=qq_123456`
-  - 行为：转换为 `get_stranger_info` action，通过当前 OneBot 反向 WebSocket 连接下发。
+  - 入参：`user_id`（如 `onebot_123`）
+  - 行为：转换为 OneBot `get_stranger_info` 并通过当前 WS 发送
+  - 失败语义：
+    - WS 未连接：`503`
+    - 参数非法：`422`
+    - OneBot 超时：`504`
+  - 成功响应：`{"ok": true, "data": <onebot_response_dict>}`
 
 - `GET /api/v1/message/history`
-  - 入参：
-    - `session_id=group_123|private_456`
-    - `limit=1..50`
-    - `before_message_id` 可选
+  - Query：
+    - `session_id`（最小长度 1，必须是 `group_*` 或 `private_*`）
+    - `limit`（`1..50`，默认 `20`）
+    - `before_message_id`（可选，`>=1`）
   - 行为：
     - `group_*` -> `get_group_msg_history`
     - `private_*` -> `get_friend_msg_history`
-    - 返回 `messages` 与 `next_before_message_id`
+    - 统一归一化输出为 `session_id/messages/next_before_message_id`
+  - 失败语义：同上（`503/422/504`）
+  - 成功响应：`{"ok": true, "data": {"session_id": "...", "messages": [...], "next_before_message_id": 123}}`
 
-## Redis 消息契约
+### 2.2 对外提供（MCP，`channel-mcp` 进程）
+- 工具名：`onebot_get_message_history`
+- 参数：
+  - `session_id: str`（前缀必须 `group_` 或 `private_`）
+  - `limit: int=20`（`1..50`）
+  - `before_message_id: int | None`（若提供必须正整数）
+- 返回：JSON 字符串（`ensure_ascii=False`），内容是 `channel-service /api/v1/message/history` 的 `data` 字段。
+- 错误语义：
+  - 参数边界错误：`ValueError`
+  - HTTP 请求失败或返回非法结构：`RuntimeError`
 
-- 事件流：`qq.events`
-  - 字段：`event_id`、`session_id`、`user_id`、`content`、`source`、`message_type`、`raw_event`、`created_at`
+### 2.3 对外消费（Redis Stream）
+- 读取流：`redis.actions_stream`（默认 `onebot.actions`）
+- 读取方式：`XREADGROUP`（group=`redis.actions_group`，consumer=`redis.actions_consumer`）
+- 消息结构（`ActionStreamMessage`）：
+  - `action_id`、`session_id`、`action_type`、`payload`、`created_at`
+  - `payload.content` 为必填且非空字符串
 
-- 动作流：`qq.actions`
-  - 字段：`action_id`、`session_id`、`action_type`、`payload`、`created_at`
-  - v1 仅支持：`action_type=send_message`，`payload={"content":"..."}`
+### 2.4 对外产出（Redis Stream）
+- 写入流：`redis.events_stream`（默认 `onebot.events`）
+- 消息结构（`EventStreamMessage`）：
+  - `event_id`、`session_id`、`user_id`、`content`、`source`、`message_type`、`raw_event`、`created_at`
 
-## MCP 工具契约
+### 2.5 异常码说明
+- 未定义独立业务错误码体系，错误通过 HTTP 状态码与日志表达。
 
-- 工具名：`qq_get_message_history`
-  - 参数：
-    - `session_id`：`group_123` 或 `private_456`
-    - `limit`：`1..50`，默认 `20`
-    - `before_message_id`：可选，正整数
-  - 行为：
-    - 工具参数校验通过后，调用本服务 HTTP 接口 `GET /api/v1/message/history`
-    - 返回 MCP `tool result` 的 JSON 字符串，字段固定为：`session_id`、`messages`、`next_before_message_id`
+## 3. 核心数据模型
+### 3.1 标准化事件（`FilteredEventPayload` / `EventStreamMessage`）
+- `session_id`：会话路由键（`group_` / `private_`）
+- `user_id`：抽象用户标识（`onebot_` 前缀）
+- `content`：清洗后的纯文本（去除 CQ 码后再 trim）
+- `raw_event`：原始事件保留，供下游诊断和再推理
 
-## ID 映射规则
+### 3.2 动作消息（`ActionStreamMessage`）
+- `action_type`：当前只识别 `send_message`
+- `payload.content`：最终回发给 OneBot 上游实现的消息体
 
-- 群会话：`group_id <-> session_id=group_{group_id}`
-- 私聊会话：`user_id <-> session_id=private_{user_id}`
-- 用户画像：`user_id <-> user_id=qq_{user_id}`
+### 3.3 连接与动作等待态
+- `NapcatConnectionState._websocket`：当前有效连接引用（单实例）
+- `NapcatWsGateway._pending_actions`：`echo -> Future` 映射，用于请求-响应配对
 
-## 配置文件
+### 3.4 ID 映射规则
+- `group_id <-> group_{group_id}`
+- `user_id <-> private_{user_id}`
+- `user_id <-> onebot_{user_id}`
 
-配置文件路径：`channel-service/config.yml`
+## 4. 核心业务流程
+```mermaid
+flowchart TD
+    A[OneBot 反向 WS 建连] --> B[channel.ws_connected]
+    B --> C{收到消息类型}
 
-配置约束（与当前代码一致）：
+    C -->|事件 post_type| D[AdapterService.clean_event]
+    D --> E{是否 accepted}
+    E -->|否| F[忽略并返回]
+    E -->|是| G[构建 EventStreamMessage]
+    G --> H[XADD 到 onebot.events]
 
-- 仅从本服务目录内的 `config.yml` 读取运行配置。
-- 不读取 `.env`、`.env.example`，也不支持任何环境变量别名。
-- 修改地址、端口、超时、队列参数时，只更新 `channel-service/config.yml`。
-- 在 Docker Compose 中通过只读挂载该配置文件，保证容器与本地运行共享同一配置语义。
-- 配置加载阶段使用 Pydantic 严格校验：字段类型不匹配、缺失字段或出现未声明字段都会直接报错并阻断启动。
+    C -->|动作响应 echo/status/retcode| I[_resolve_action]
+    I --> J[按 echo 唤醒 pending Future]
 
-```yaml
-server:
-  host: 0.0.0.0
-  port: 8010
-
-adapter:
-  onebot_ws_action_timeout_seconds: 5
-
-redis:
-  host: redis
-  port: 6379
-  db: 0
-  password: ""
-  events_stream: qq.events
-  actions_stream: qq.actions
-  actions_group: adapter-action-workers
-  actions_consumer: channel-service-1
-  actions_block_ms: 2000
-
-mcp:
-  base_url: http://channel-service:8010
-  timeout_seconds: 5
+    K[ActionConsumerWorker 轮询 onebot.actions] --> L[解析 ActionStreamMessage]
+    L --> M{action_type==send_message?}
+    M -->|否| N[记录 skipped]
+    M -->|是| O[build_send_message_action]
+    O --> P{WS 是否连接}
+    P -->|否| Q[抛 RuntimeError 不 ACK 留待重试]
+    P -->|是| R[send_action 发送 OneBot 请求]
+    R --> S{超时?}
+    S -->|是| T[记录 timeout 不 ACK 重试]
+    S -->|否| U{status==ok?}
+    U -->|否| V[抛 NapcatDownstreamError 不 ACK]
+    U -->|是| W[ACK 动作并记录 handled]
 ```
 
-消息历史查询与动作执行均依赖 OneBot v11 反向 WebSocket 已连接。
+## 5. 配置项与运行依赖
+### 5.1 配置文件
+- 路径：`channel-service/config.yml`
+- 规则：仅 YAML；Pydantic 严格校验；禁止未知字段。
 
-## 启动
+### 5.2 配置项（当前代码）
+- `server.host`、`server.port`
+- `adapter.onebot_ws_action_timeout_seconds`
+- `redis.host`、`redis.port`、`redis.db`、`redis.password`
+- `redis.events_stream`、`redis.actions_stream`
+- `redis.actions_group`、`redis.actions_consumer`、`redis.actions_block_ms`
+- `mcp.base_url`、`mcp.timeout_seconds`
 
-在仓库根目录执行：
+### 5.3 运行依赖
+- OneBot v11 反向 WebSocket 客户端（例如 NapCat 等兼容实现）
+- Redis（Stream + Consumer Group）
+- FastAPI / websockets / redis asyncio / nonebot-adapter-onebot / httpx / mcp
 
-```bash
-uv run --package channel-service channel-service
-```
+## 6. 非功能性设计
+### 6.1 错误处理
+- 动作消费者采用最小边界：
+  - 不可恢复输入错误（解析失败、非法 session）：ACK 丢弃
+  - 运行期故障（WS 断连、下游失败、超时）：不 ACK，保留 PEL 后续重试
+- MCP 客户端把下游错误详情折叠为可读字符串，便于 agent 决策。
 
-MCP stdio 入口（供 MCP Gateway 通过 `docker://` 拉起）：
+### 6.2 日志
+- 前缀统一：`channel_service.*`
+- 关键链路日志：启动/停止、WS 连接状态、动作消费结果、OneBot 调用耗时与超时。
+- 框架日志降噪，突出业务事件。
 
-```bash
-uv run --package channel-service channel-mcp
-```
+### 6.3 性能关键点
+- 事件与动作流均使用 Redis Stream 批量消费（每批 10）。
+- `echo->Future` 映射支持同一连接内并发 Action 请求-响应匹配。
+- 单连接状态简化了路由复杂度，但限制横向扩展形态。
 
-Docker Compose 启动：
+## 7. 架构边界与集成点
+### 7.1 所在层级
+- 渠道接入层（Channel Adapter Layer）。
 
-```bash
-docker compose up -d --build channel-service
-```
+### 7.2 强依赖
+- OneBot 反向 WS：无连接则无法执行历史查询和发送动作。
+- Redis：无 Redis 无法向 hub 投递事件，也无法消费动作。
 
-## 容器构建稳定性
+### 7.3 弱依赖
+- `channel-mcp` 是上层 agent 增强能力，不影响基础事件转发链路。
 
-- Dockerfile 改为在基础镜像内通过 `pip install uv==0.7.2` 安装 uv，避免依赖 `ghcr.io` 元数据拉取失败。
-- `channel-service/Dockerfile` 已设置 `UV_HTTP_TIMEOUT=180` 与 `UV_HTTP_RETRIES=8`，降低网络抖动导致的依赖下载超时失败概率。
-- `uv pip install --system .` 使用 3 次重试策略，针对 `uv_build` 元数据拉取偶发超时可自动恢复。
+### 7.4 故障影响
+- `channel-service` 不可用：OneBot 事件无法入流，`onebot.actions` 无人执行。
+- WS 断连：`/api/v1/*` 查询失败且动作处理转入重试。
+- `channel-mcp` 不可用：agent 的历史消息检索能力下降，但主消息流仍可运行。
 
-## MCP Gateway 接入
-
-- Gateway 服务参数中增加 `docker://channel-service:latest`。
-- `channel-service` 容器镜像默认入口为 `channel-mcp`（stdio MCP server）。
-- Compose 中通过 `command: ["channel-service"]` 显式覆盖，保证业务 HTTP 服务与 MCP 工具容器职责分离。
-
-## OneBot v11 反向 WS 手动对接
-
-`channel-service` 仅要求上游实现满足 OneBot v11 事件与 action 响应字段约定，不绑定具体厂商实现（如 NapCat、LLOneBot 等）。
-
-## 验证步骤
-
-1. 健康检查：
-
-```bash
-curl http://localhost:8010/healthz
-```
-
-2. 在你的 OneBot v11 实现中配置反向 WebSocket Client：
-   - 目标地址：`ws://channel-service:8010/onebot/v11/ws`
-   - 事件消息需包含 `post_type` 字段。
-   - action 响应需包含 `echo`、`status`、`retcode` 字段。
-   - 为了兼容 NoneBot 解析，建议消息段格式使用 OneBot v11 常见 `array` 形态（如果实现支持该选项）。
-
-3. 向机器人发送私聊消息，检查 Redis `qq.events` 是否出现新事件，随后检查 `qq.actions` 消费与回写日志。
+## 8. 设计权衡与已知不足
+- 当前显式忽略所有群聊事件：显著降噪并聚焦私聊提醒场景，但牺牲群聊机器人能力。
+- `NapcatConnectionState` 仅持有单 WS 引用：实现简单，但多连接/多实例下缺少路由与一致性策略。
+- 动作失败重试依赖 PEL，未设置死信队列与最大重试次数：故障消息可能长期回放。
+- `send_action` 只按 `echo` 匹配响应，未对返回体做更细语义校验（除了 `status`）。
+- HTTP `healthz` 不检查 Redis/WS/OneBot 真实可用性，探针成功不等于链路可用。

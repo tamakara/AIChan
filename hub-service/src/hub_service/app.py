@@ -35,7 +35,7 @@ def create_app() -> FastAPI:
     app = FastAPI(
         title="hub-service",
         version="0.1.0",
-        description="QQ reminder hub driven by Redis streams.",
+        description="OneBot reminder hub driven by Redis streams.",
     )
 
     app.include_router(create_router())

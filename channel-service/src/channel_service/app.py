@@ -40,7 +40,7 @@ def create_app() -> FastAPI:
     app = FastAPI(
         title="channel-service",
         version="0.1.0",
-        description="Redis-stream QQ adapter for OneBot v11 reverse websocket and hub module.",
+        description="Redis-stream OneBot adapter for reverse websocket and hub module.",
     )
 
     app.include_router(

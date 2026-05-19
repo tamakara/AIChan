@@ -27,7 +27,7 @@ class FilteredEventPayload(BaseModel):
     session_id: str
     user_id: str
     content: str
-    source: Literal["qq"] = "qq"
+    source: Literal["onebot"] = "onebot"
     message_type: Literal["group", "private"]
     raw_event: dict[str, Any]
 

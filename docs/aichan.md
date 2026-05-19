@@ -1,87 +1,104 @@
 # aichan
 
-本文档用于描述 AICHAN 项目的整体结构与模块关系，聚焦系统分层、职责边界与运行链路，不展开代码实现细节。
+## 1. 模块一句话定位
+AICHAN 是一个由 `channel-service`、`hub-service`、`agent-service` 组成的三层消息机器人系统，目标是把 OneBot 事件转成可编排、可推理、可回写的闭环。  
+本文档只描述系统级边界、服务组合方式和主链路，不展开单个服务的实现细节。
 
-## 项目概览
+## 2. 接口契约
+### 2.1 系统没有单一入口
+系统层本身不提供统一 API，真实契约分散在三个服务、Redis Streams 和 MCP Gateway 中。
 
-AICHAN 由三个核心服务组成：
+### 2.2 服务级接口
+- `channel-service`
+  - `GET /healthz`
+  - `WS /onebot/v11/ws`
+  - `GET /api/v1/user/{user_id}/info`
+  - `GET /api/v1/message/history`
+  - `channel-mcp` 工具：`onebot_get_message_history`
+- `hub-service`
+  - `GET /healthz`
+- `agent-service`
+  - `GET /healthz`
+  - `POST /chat`
 
-- `channel-service`：消息协议适配与桥接层（OneBot v11 入口、消息过滤、MCP 工具暴露）。
-- `hub-service`：业务编排中枢（提醒聚合、触发 agent、回写消息）。
-- `agent-service`：对话决策与工具调用执行层（LLM 推理、MCP 工具调用）。
+### 2.3 消息与工具通道
+- 事件流：`onebot.events`
+- 动作流：`onebot.actions`
+- MCP SSE：`http://mcp-gateway:9000/sse`
 
-项目采用 `uv workspace` 管理多包，服务间通过 HTTP 与 Redis Streams 解耦通信。
-当前 Redis Stream 名称仍使用 `qq.events` / `qq.actions` 作为内部通道标识，这是历史命名，不代表平台绑定。
+### 2.4 故障语义
+- `channel-service` 断开：消息无法进入系统，也无法回写。
+- `hub-service` 失败：事件无法被编排为回复。
+- `agent-service` 失败：无法生成回复正文。
+- `Redis` 失败：事件和动作都无法在服务间流转。
 
-## 模块职责
+## 3. 核心数据模型
+- `session_id`：跨服务的会话主键，格式为 `private_*` 或 `group_*`。
+- `user_id`：抽象用户标识，格式为 `onebot_*`。
+- `event_id`：进入系统的事件标识。
+- `action_id`：待发送动作标识。
+- `message_type`：`private` / `group`，决定是否进入 hub 调度。
+- `tool_calls`：agent 侧的工具调用指令集合。
 
-### `channel-service`
-
-- 接入任意符合 OneBot v11 的外部实现（反向 WebSocket）。
-- 过滤并标准化入站消息事件，写入 Redis `qq.events`。
-- 消费 Redis `qq.actions` 并通过 OneBot action 回写到外部消息平台。
-- 提供 MCP 工具能力（如历史消息查询）供 `agent-service` 通过 MCP Gateway 调用。
-
-### `hub-service`
-
-- 消费 `qq.events` 提醒事件（当前以点对点消息为主）。
-- 组织“提醒 -> agent -> 回复动作入队”主链路。
-- 作为流程中枢保持业务编排简洁，不承载模型推理逻辑。
-
-### `agent-service`
-
-- 提供 `/chat` 对话入口。
-- 管理会话上下文与串行策略。
-- 启动时通过 MCP Gateway 拉取工具信息（tool metadata/schema），作为本轮推理可用工具集。
-- 调用 LLM 生成回复，并在需要时通过 MCP Gateway 调用工具。
-
-## 服务关系图
-
+## 4. 核心业务流程
 ```mermaid
 flowchart LR
-    U[消息平台用户] --> N[OneBot v11 实现]
-    N <-->|Reverse WS（事件 + 动作）| A[channel-service]
-    A -->|XADD qq.events*| R[(Redis Streams)]
-    R -->|XREADGROUP qq.events*| H[hub-service]
-    H -->|HTTP /chat| G[agent-service]
-    H -->|XADD qq.actions*| R
-    R -->|XREADGROUP qq.actions*| A
-    G -->|SSE / MCP| M[MCP Gateway]
-    M -->|docker:// 工具容器| T[Tool Servers]
-    N --> U
+    U[用户] --> O[OneBot v11 实现]
+    O -->|事件| C[channel-service]
+    C -->|XADD onebot.events| R[(Redis Streams)]
+    R -->|XREADGROUP onebot.events| H[hub-service]
+    H -->|POST /chat| A[agent-service]
+    A -->|SSE 调用工具| M[MCP Gateway]
+    M -->|docker://channel-service:latest| T[channel-mcp]
+    A -->|reply| H
+    H -->|XADD onebot.actions| R
+    R -->|XREADGROUP onebot.actions| C
+    C -->|OneBot action| O
+    O -->|回复| U
+
+    C -.->|WS 断开时查询与动作失败| O
+    H -.->|仅处理 private 消息| X[丢弃 group 事件]
 ```
 
-## 部署拓扑图（Compose 视角）
+## 5. 配置项与运行依赖
+### 5.1 运行编排
+- `docker-compose.yml` 负责组合 `redis`、`mcp-gateway`、`agent-service`、`channel-service`、`hub-service`。
+- `uv workspace` 负责本地开发时的多包依赖管理。
 
-```mermaid
-flowchart TB
-    subgraph C[Docker Compose Network]
-        RD[redis:6379]
-        MG[mcp-gateway:9000]
-        AG[agent-service:8000]
-        HB[hub-service:8020]
-        AD[channel-service:8010]
-    end
+### 5.2 外部依赖
+- Redis 7
+- OneBot v11 兼容实现
+- OpenAI 兼容模型接口
+- MCP Gateway
+- Docker socket（供 `mcp-gateway` 拉起 `docker://channel-service:latest` 工具容器）
 
-    AD <-->|XADD/XREADGROUP| RD
-    HB <-->|XADD/XREADGROUP| RD
-    AG <-->|SSE| MG
-    HB -->|HTTP chat| AG
-```
+### 5.3 配置形态
+- 三个业务服务都只读取各自目录下的 `config.yml`。
+- 运行时没有环境变量别名层，配置语义全部由 YAML 决定。
 
-注：图中 `qq.events*` / `qq.actions*` 为现有内部 stream 名称，后续可按需要重命名为更中立命名。
+## 6. 非功能性设计
+- 系统采用“接入层 - 编排层 - 推理层”拆分，减少服务之间的强耦合。
+- 事件与动作使用 Redis Stream 解耦，默认语义接近至少一次投递。
+- 会话状态主要在 `hub-service` 和 `agent-service` 的进程内内存中，简单但不利于多副本共享。
+- 日志按服务名前缀收口，便于按链路排障。
 
-## 核心业务链路（点对点消息场景）
+## 7. 架构边界与集成点
+### 7.1 强依赖
+- `channel-service` 依赖 OneBot 连接与 Redis。
+- `hub-service` 依赖 Redis 与 `agent-service`。
+- `agent-service` 依赖 LLM API 与 MCP SSE。
 
-1. 用户点对点消息进入 OneBot v11 实现。
-2. `channel-service` 接收并过滤事件，写入 Redis `qq.events`。
-3. `hub-service` 消费事件并按会话调度，调用 `agent-service /chat` 请求生成回复。
-4. `agent-service` 基于 MCP Gateway 提供的工具信息进行工具决策，并在推理过程中按需调用 MCP 工具。
-5. `hub-service` 将回复写入 Redis `qq.actions`，由 `channel-service` 消费后回写到外部消息平台。
+### 7.2 弱依赖
+- `mcp-gateway` 是 `agent-service` 的工具扩展层，不直接影响基础消息收发。
+- `healthz` 只表示进程活着，不代表下游连通。
 
-## 文档分工
+### 7.3 故障影响链
+- OneBot 异常会先放大到 `channel-service`，再波及全链路。
+- Redis 异常会同时阻断事件入流与回复出流。
+- LLM 异常会让系统退化为“只能接入，不能生成回复”。
 
-- 本文档：系统级结构与模块关系。
-- `docs/agent-service.md`：agent 服务职责、配置、运行方式。
-- `docs/channel-service.md`：适配层协议与接口约束。
-- `docs/hub-service.md`：中枢编排职责与链路契约。
+## 8. 设计权衡与已知不足
+- 当前以私聊提醒为主，群聊在适配层被直接过滤，功能边界清晰但场景受限。
+- `onebot.events` / `onebot.actions` 已对齐协议中立命名，但历史测试数据与外部观测脚本可能仍残留旧名字。
+- `hub-service` 与 `agent-service` 都依赖进程内会话状态，多副本和重启恢复能力弱。
+- `channel-mcp` 与业务 HTTP 服务共用代码仓库，部署上通过镜像入口和 `command` 覆盖分离。

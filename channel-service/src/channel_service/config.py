@@ -68,7 +68,7 @@ class Settings(BaseModel):
 
 
 def _load_config() -> dict[str, Any]:
-    # QQ 适配器运行态只认服务目录内 YAML，避免同一字段被容器环境变量悄悄覆盖。
+    # OneBot 适配器运行态只认服务目录内 YAML，避免同一字段被容器环境变量悄悄覆盖。
     try:
         payload = yaml.safe_load(CONFIG_PATH.read_text(encoding="utf-8"))
     except FileNotFoundError as exc:

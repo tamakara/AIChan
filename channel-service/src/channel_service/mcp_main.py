@@ -14,16 +14,16 @@ def create_server() -> FastMCP:
 
     mcp = FastMCP(
         name="channel-service",
-        instructions="Expose QQ message history as MCP tools for agents.",
+        instructions="Expose OneBot message history as MCP tools for agents.",
     )
 
     @mcp.tool()
-    async def qq_get_message_history(
+    async def onebot_get_message_history(
         session_id: str,
         limit: int = 20,
         before_message_id: int | None = None,
     ) -> str:
-        # MCP 侧只做参数边界与协议转换，避免把 QQ 协议细节泄漏给 agent。
+        # MCP 侧只做参数边界与协议转换，避免把 OneBot 协议细节泄漏给 agent。
         if limit < 1 or limit > 50:
             raise ValueError("limit must be between 1 and 50")
         if before_message_id is not None and before_message_id < 1:

@@ -15,7 +15,7 @@ class EventStreamMessage(BaseModel):
     session_id: str
     user_id: str
     content: str
-    source: Literal["qq"]
+    source: Literal["onebot"]
     message_type: Literal["group", "private"]
     raw_event: dict[str, Any]
     created_at: str
@@ -28,7 +28,7 @@ class EventStreamMessage(BaseModel):
             session_id=fields.get("session_id", ""),
             user_id=fields.get("user_id", ""),
             content=fields.get("content", ""),
-            source=fields.get("source", "qq"),  # type: ignore[arg-type]
+            source=fields.get("source", "onebot"),  # type: ignore[arg-type]
             message_type=fields.get("message_type", "private"),  # type: ignore[arg-type]
             raw_event=raw_event if isinstance(raw_event, dict) else {},
             created_at=fields.get("created_at", ""),

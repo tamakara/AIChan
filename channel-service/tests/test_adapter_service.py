@@ -11,11 +11,11 @@ def service() -> AdapterService:
 def test_id_mapping_roundtrip(service: AdapterService) -> None:
     assert service.to_group_session_id(123) == "group_123"
     assert service.to_private_session_id(456) == "private_456"
-    assert service.to_abstract_user_id(789) == "qq_789"
+    assert service.to_abstract_user_id(789) == "onebot_789"
 
     assert service.parse_group_session_id("group_123") == 123
     assert service.parse_private_session_id("private_456") == 456
-    assert service.parse_abstract_user_id("qq_789") == 789
+    assert service.parse_abstract_user_id("onebot_789") == 789
 
 
 def test_private_text_clean_pass(service: AdapterService) -> None:
@@ -36,7 +36,7 @@ def test_private_text_clean_pass(service: AdapterService) -> None:
     assert result.accepted is True
     assert result.payload is not None
     assert result.payload.session_id == "private_20002"
-    assert result.payload.user_id == "qq_20002"
+    assert result.payload.user_id == "onebot_20002"
     assert result.payload.content == "??  ??"
 
 
@@ -116,7 +116,7 @@ def test_build_send_message_action_private(service: AdapterService) -> None:
 
 
 def test_build_get_user_info_action(service: AdapterService) -> None:
-    action = service.build_get_user_info_action("qq_777")
+    action = service.build_get_user_info_action("onebot_777")
     assert action.action == "get_stranger_info"
     assert action.params["user_id"] == 777
 

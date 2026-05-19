@@ -1,6 +1,6 @@
 FROM python:3.12-slim
 
-LABEL io.docker.server.metadata='{"name":"channel-service","description":"Expose QQ message history as MCP tools.","command":["channel-mcp"]}'
+LABEL io.docker.server.metadata='{"name":"channel-service","description":"Expose OneBot message history as MCP tools.","command":["channel-mcp"]}'
 
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
