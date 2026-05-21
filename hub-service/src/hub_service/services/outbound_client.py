@@ -5,7 +5,13 @@ from typing import Any
 import httpx
 
 from ..logger import elapsed_ms, get_logger, log_info, start_timer
-from ..router.schemas import AgentChatRequest, AgentChatResponse
+from ..router.schemas import (
+    AgentChatRequest,
+    AgentChatResponse,
+    AgentInboundMessage,
+    AgentRunCreateRequest,
+    AgentRunCreateResponse,
+)
 from .redis_stream import HubRedisStream
 
 
@@ -20,11 +26,30 @@ class OutboundClient:
         self._redis_stream = redis_stream
         self._client = httpx.AsyncClient(timeout=None)
 
-    async def call_agent(self, session_id: str, user_message: str) -> str:
+    async def create_agent_run(self, session_id: str, metadata: dict[str, Any]) -> str:
+        started_at = start_timer()
+        payload = AgentRunCreateRequest(metadata=metadata)
+        data = await self._post_json(f"{self._agent_service_url}/agent-runs", payload.model_dump())
+        response = AgentRunCreateResponse.model_validate(data)
+        log_info(
+            self._logger,
+            "hub.downstream_called",
+            session_id=session_id,
+            status="ok",
+            elapsed_ms=elapsed_ms(started_at),
+        )
+        return response.agent_id
+
+    async def call_agent(
+        self,
+        session_id: str,
+        agent_id: str,
+        messages: list[AgentInboundMessage],
+    ) -> str:
         started_at = start_timer()
         payload = AgentChatRequest(
-            session_id=session_id,
-            user_message=user_message,
+            agent_id=agent_id,
+            messages=messages,
         )
         data = await self._post_json(f"{self._agent_service_url}/chat", payload.model_dump())
         response = AgentChatResponse.model_validate(data)

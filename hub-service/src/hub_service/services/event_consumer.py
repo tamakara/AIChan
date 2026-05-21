@@ -67,6 +67,18 @@ class EventConsumerWorker:
                         reason="empty_content",
                     )
                     continue
+                raw_event_time = event.raw_event.get("time")
+                if not _is_valid_raw_event_time(raw_event_time):
+                    # event_time 只允许来自 raw_event.time，缺失或非法时直接丢弃避免脏时序污染。
+                    await self._redis_stream.ack_event(message_id)
+                    log_info(
+                        self._logger,
+                        "hub.event_skipped",
+                        message_id=message_id,
+                        message_type=event.message_type,
+                        reason="missing_event_time",
+                    )
+                    continue
                 await self._session_registry.submit_event(event)
                 await self._redis_stream.ack_event(message_id)
                 log_info(
@@ -94,3 +106,15 @@ class EventConsumerWorker:
                     elapsed_ms=elapsed_ms(handled_started_at),
                 )
                 await asyncio.sleep(1)
+
+
+def _is_valid_raw_event_time(value: object) -> bool:
+    if isinstance(value, bool):
+        return False
+    if isinstance(value, int):
+        return True
+    if isinstance(value, float):
+        return value.is_integer()
+    if isinstance(value, str):
+        return value.strip().isdigit()
+    return False

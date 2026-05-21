@@ -1,27 +1,37 @@
 # hub-service
 
 ## 1. 模块一句话定位
-`hub-service` 是会话编排中枢：从 `qq.events` 消费消息事件，做最小保底校验后按 `session_id` 分配给对应 `SessionRunner` 做防抖合并与串行调用 `agent-service`，最终把回复写回 `qq.actions`。  
-不负责 QQ 协议接入、不负责消息发送落地（发送由 `adapter-service` 执行）。
+`hub-service` 是会话编排中枢：从 `qq.events` 消费事件，做最小保底校验后按 `session_id` 进入防抖与串行调度，调用 `agent-service` 生成回复，再写回 `qq.actions`。  
+不负责 QQ 协议接入与消息发送执行（发送由 `adapter-service` 完成）。
 
 ## 2. 接口契约
 ### 2.1 对外提供（HTTP）
 - `GET /healthz`
   - 响应：`{"status":"ok"}`
-  - 语义：进程存活探针，不代表下游依赖全部健康。
+  - 语义：仅表示进程存活。
 
 ### 2.2 对外消费（HTTP）
-- 目标：`{hub.agent_url}/chat`
-- 方法：`POST`
-- 请求体（`AgentChatRequest`）：
-  - `session_id: str`（最小长度 1）
-  - `user_message: str`（最小长度 1）
-- 成功响应体（`AgentChatResponse`）：
-  - `reply: str`
-- 失败语义：
-  - 下游 `status_code >= 400`：抛出 `RuntimeError`，错误文本包含 `url/status/body`。
-  - 下游 JSON 不是对象：抛出 `ValueError`。
-  - 下游响应结构不匹配：Pydantic 校验异常。
+- `POST {hub.agent_url}/agent-runs`
+  - 请求体（`AgentRunCreateRequest`）：
+    - `metadata: dict[str, Any]`（hub 当前最小传入 `{"session_id": "<session_id>"}`）
+  - 响应体（`AgentRunCreateResponse`）：
+    - `agent_id: str`
+    - `metadata: dict[str, Any]`
+
+- `POST {hub.agent_url}/chat`
+  - 请求体（`AgentChatRequest`）：
+    - `agent_id: str`
+    - `messages: list[AgentInboundMessage]`（最少 1 条）
+    - `AgentInboundMessage` 固定字段：
+      - `user_id: str`
+      - `event_time: str`
+      - `content: str`
+  - 成功响应体（`AgentChatResponse`）：
+    - `reply: str`
+  - 失败语义：
+    - 下游 `status_code >= 400`：抛出 `RuntimeError`（包含 `url/status/body`）
+    - 下游 JSON 不是对象：抛出 `ValueError`
+    - 响应结构不匹配：Pydantic 校验异常
 
 ### 2.3 对外消费（Redis Stream）
 - 输入流：`redis.events_stream`（默认 `qq.events`）
@@ -29,10 +39,11 @@
 - 消息字段（`EventStreamMessage`）：
   - `event_id`、`session_id`、`user_id`、`content`、`source`、`message_type`、`raw_event`、`created_at`
 - 消费规则：
-  - `content` 去空白后为空：ACK 并记录 `hub.event_skipped`（保底防御，业务过滤不在 hub）。
-  - 其余合法消息：提交到 `SessionRegistry`，成功提交后 ACK 并记录 `hub.event_submitted`。
-  - 非法消息（字段不合法）：记录 `hub.event_dropped`，ACK 丢弃。
-  - 运行期异常：记录 `hub.event_retry`，不 ACK（保留在 PEL，后续重试）。
+  - `content` 去空白后为空：ACK + `hub.event_skipped(reason=empty_content)`
+  - `raw_event.time` 缺失或不可解析：ACK + `hub.event_skipped(reason=missing_event_time)`
+  - 合法事件：提交 `SessionRegistry`，成功后 ACK + `hub.event_submitted`
+  - 非法结构：`hub.event_dropped` 后 ACK
+  - 运行期异常：`hub.event_retry`，不 ACK（保留 PEL 供重试）
 
 ### 2.4 对外产出（Redis Stream）
 - 输出流：`redis.actions_stream`（默认 `qq.actions`）
@@ -43,72 +54,60 @@
   - `payload: {"content": "<reply>"}`
   - `created_at: ISO8601 UTC`
 
-### 2.5 异常码说明
-- 本模块没有自定义业务异常码体系。
-- 对外 HTTP 仅暴露 `healthz`，业务失败通过内部日志与重试机制处理。
-
 ## 3. 核心数据模型
 ### 3.1 事件输入模型（`EventStreamMessage`）
 - 业务主键：`event_id`
 - 会话归并键：`session_id`
-- 决策字段：`message_type`（由 adapter 过滤策略决定哪些类型会进入 hub）
-- 文本字段：`content`（hub 仅做空消息保底校验）
-- 审计上下文：`raw_event`（保留源事件原始信息）
+- 文本字段：`content`（hub 只做空文本保底）
+- 审计上下文：`raw_event`（`event_time` 必须从 `raw_event.time` 提取）
 
-### 3.2 会话运行模型（`SessionRunner`，内存态）
-- `pending_messages: list[str]`：当前会话缓冲区。
-- `running: bool`：当前会话是否正在执行 agent 调用。
-- `debounce_deadline: float | None`：防抖截止时间（事件循环时钟）。
-- `debounce_task: Task | None`：当前会话等待防抖窗口的任务句柄。
+### 3.2 会话运行模型（`SessionRunner`）
+- `pending_messages: list[AgentInboundMessage]`
+- `running: bool`
+- `debounce_deadline: float | None`
+- `debounce_task: Task | None`
+- 语义：
+  - 同一 `session_id` 串行
+  - 防抖窗口内合并为一个 `messages` 批次
 
 ### 3.3 会话注册表（`SessionRegistry`）
-- 维护 `session_id -> SessionRunner` 映射。
-- 同一时刻同一 `session_id` 只会绑定一个 runner，确保串行处理。
-- runner 空闲后自动从注册表移除，避免空会话长期占用内存对象。
+- `session_id -> SessionRunner`（活跃 runner 映射）
+- `session_id -> agent_id`（内存常驻映射，当前版本不回收）
+- 首次看到新 `session_id`：
+  - 先调用 `/agent-runs` 创建 `agent_id`
+  - 再创建 runner
+- 后续同会话复用同一 `agent_id`
 
 ## 4. 核心业务流程
 ```mermaid
 flowchart TD
-    A[启动 FastAPI] --> B[HubRedisStream.startup<br/>PING + 创建 Consumer Group]
-    B --> C[EventConsumerWorker.start]
-    C --> D{循环拉取事件}
-    D -->|先读 pending| E[read_pending_events]
-    D -->|无 pending 再读新消息| F[read_new_events]
-    E --> G[逐条解析 EventStreamMessage]
-    F --> G
+    A[消费 qq.events] --> B[解析 EventStreamMessage]
+    B --> C{content 非空?}
+    C -->|否| D[ACK + event_skipped]
+    C -->|是| E{raw_event.time 合法?}
+    E -->|否| F[ACK + event_skipped]
+    E -->|是| G[SessionRegistry.submit_event]
 
-    G --> H{content 去空白后非空?}
-    H -->|否| I[ACK 并记录 hub.event_skipped]
-    H -->|是| K[SessionRegistry.submit_event]
-    K --> L[ACK 并记录 hub.event_submitted]
+    G --> H{session 是否已有 agent_id?}
+    H -->|否| I[POST /agent-runs]
+    I --> J[保存 session -> agent_id]
+    H -->|是| K[复用 agent_id]
+    J --> L[提交给 SessionRunner]
+    K --> L
 
-    K --> M[按 session_id 获取或创建 SessionRunner]
-    M --> N[消息写入 runner 缓冲区]
-    N --> O[等待防抖窗口稳定]
-    O --> P[批量合并缓冲消息]
-    P --> Q[调用 agent-service /chat]
-    Q --> R{调用是否成功}
-    R -->|成功| S[写入 qq.actions send_message]
-    R -->|失败| T[记录 hub.session_run_failed]
-    S --> U[记录 hub.session_run_completed]
-    T --> V{缓冲区是否有新增消息}
-    U --> V
-    V -->|有| O
-    V -->|无| W[runner 进入空闲并释放]
-
-    G --> X{消息结构是否合法}
-    X -->|否| Y[记录 hub.event_dropped 并 ACK]
-    G --> Z{运行期异常}
-    Z -->|是| AA[记录 hub.event_retry<br/>sleep 1s 且不 ACK]
+    L --> M[防抖合并 messages]
+    M --> N[POST /chat(agent_id + messages)]
+    N --> O{成功?}
+    O -->|是| P[写入 qq.actions]
+    O -->|否| Q[记录 session_run_failed]
 ```
 
 ## 5. 配置项与运行依赖
 ### 5.1 配置文件
 - 路径：`hub-service/config.yml`
-- 加载方式：仅加载该 YAML 文件，不读取 `.env`。
-- 校验策略：Pydantic `extra="forbid"`，未知字段/缺失字段/类型错误都会启动失败。
+- 加载方式：仅 YAML，`extra="forbid"` 严格校验。
 
-### 5.2 配置项（当前代码可见）
+### 5.2 配置项（当前代码）
 - `server.host`、`server.port`、`server.log_level`
 - `hub.agent_url`、`hub.debounce_seconds`
 - `redis.host`、`redis.port`、`redis.db`、`redis.password`
@@ -117,45 +116,21 @@ flowchart TD
 
 ### 5.3 运行依赖
 - Redis（Stream + Consumer Group）
-- `agent-service` HTTP 接口 `/chat`
-- `fastapi` + `uvicorn` + `httpx` + `redis-py asyncio`
+- `agent-service`（`/agent-runs` + `/chat`）
+- FastAPI / uvicorn / httpx / redis-py asyncio
 
 ## 6. 非功能性设计
 ### 6.1 错误处理
-- 消费循环采用“最小必要边界”：
-  - 脏数据：ACK 丢弃，避免阻塞游标。
-  - 运行期异常：不 ACK，依赖 PEL 至少一次重试。
-- 下游 HTTP 非 2xx 时保留响应体，提升排障可观测性。
+- 脏数据 ACK 丢弃，避免卡消费游标。
+- 运行期异常不 ACK，依赖 PEL 做至少一次重试。
+- 下游 HTTP 非 2xx 保留响应体，提升排障可见性。
 
 ### 6.2 日志
-- 统一 logger 前缀：`hub_service.*`
-- 框架日志（`uvicorn/httpx/websockets`）被静默，业务日志采用中文摘要 + 关键字段高亮。
-- 关键事件覆盖：启动、停止、过滤跳过、调度成功/失败、下游调用耗时、动作入队耗时。
+- 统一前缀：`hub_service.*`
+- 关键事件：`event_skipped`、`event_submitted`、`session_run_started/completed/failed`、`downstream_called`
+- 会话调度日志核心字段：`session_id`、`agent_id`、`message_count`
 
-### 6.3 性能关键点
-- 会话级串行 + 防抖合并：降低短时间多条消息造成的 LLM 调用放大。
-- `xreadgroup` 批量读取（每批 20）+ 阻塞读取新消息，减少空轮询压力。
-- `SessionRunner` 按活跃会话创建，空闲会话自动释放，避免全局单状态锁竞争。
-
-## 7. 架构边界与集成点
-### 7.1 所在层级
-- 业务编排层（Orchestration Layer），位于消息接入与智能体执行之间。
-
-### 7.2 强依赖
-- Redis Stream：无 Redis 无法消费事件也无法产出动作。
-- `agent-service /chat`：无下游回复能力时仅能记录失败。
-
-### 7.3 弱依赖
-- `healthz` 仅用于存活探针，不参与主链路。
-
-### 7.4 故障影响
-- `hub-service` 不可用：`qq.events` 堆积，消息无法触发 agent。
-- `agent-service` 不可用：事件被消费后无法生成回复，失败只在日志可见。
-- `adapter-service` 不可用：`qq.actions` 堆积，回复无法实际发送。
-
-## 8. 设计权衡与已知不足
-- hub 不做业务消息类型过滤，若 adapter 放行了不需要的消息类型，会放大 hub 调度压力。
-- 会话状态内存化：实现简单、低延迟，但多副本下无法共享会话态，存在跨实例顺序不一致风险。
-- 失败恢复依赖 PEL 重试，没有显式重试上限/死信队列：可保“至少一次”，但潜在坏消息会长期回放。
-- 下游调用 `timeout=None`：避免长响应误超时，但缺少硬超时会放大尾部请求占用。
-- 对外无业务诊断接口（仅 `healthz`）：排障主要依赖日志与 Redis 观测。
+## 7. 设计权衡与已知不足
+- `session -> agent` 映射当前仅内存常驻，不做 TTL / 回收。
+- 状态内存化不支持跨实例共享与重启恢复。
+- 下游调用 `timeout=None`，避免误超时但缺少硬超时保护。

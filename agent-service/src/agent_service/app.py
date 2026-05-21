@@ -1,8 +1,6 @@
-from threading import Lock
-
 from fastapi import FastAPI
 
-from .services import AgentCore, LlmClient, McpGateway, Session
+from .services import AgentCore, AgentRunRegistry, LlmClient, McpGateway
 from .config import get_settings
 from .logger import get_logger, log_info
 from .router import create_router
@@ -26,9 +24,6 @@ def create_app() -> FastAPI:
         base_url=settings.agent.openai_base_url,
     )
 
-    session_contexts: dict[str, tuple[Session, Lock]] = {}
-    session_registry_lock = Lock()
-
     mcp_gateway = McpGateway(
         sse_url=settings.agent.mcp_sse_url,
         auth_token=settings.agent.mcp_auth_token,
@@ -41,6 +36,7 @@ def create_app() -> FastAPI:
         max_turns=settings.agent.max_turns,
         temperature=settings.agent.temperature,
     )
+    agent_run_registry = AgentRunRegistry(agent_core=agent)
 
     app = FastAPI(
         title="agent-service FastAPI service",
@@ -49,9 +45,7 @@ def create_app() -> FastAPI:
     )
     app.include_router(
         create_router(
-            agent=agent,
-            session_contexts=session_contexts,
-            session_registry_lock=session_registry_lock,
+            agent_run_registry=agent_run_registry,
         )
     )
 

@@ -1,31 +1,49 @@
 # agent-service
 
 ## 1. 模块一句话定位
-`agent-service` 是对话推理执行层：维护会话上下文、驱动 LLM 多轮推理与 MCP 工具调用，并通过 HTTP `/chat` 输出最终回复。  
-不负责消息接入与投递（由 `adapter-service`/`hub-service` 处理）。
+`agent-service` 是对话推理执行层：维护 `AgentRun` 上下文、驱动 LLM 多轮推理与 MCP 工具调用，并通过 HTTP 接口返回回复。  
+不负责消息接入与投递（由 `adapter-service` / `hub-service` 处理）。
 
 ## 2. 接口契约
 ### 2.1 对外提供（HTTP）
 - `GET /healthz`
   - 响应：`{"status":"ok"}`
 
+- `POST /agent-runs`
+  - 请求体（`CreateAgentRunRequest`）：
+    - `metadata: dict[str, Any]`（可选，默认 `{}`）
+  - 响应体（`CreateAgentRunResponse`）：
+    - `agent_id: str`（服务端生成 UUIDv4）
+    - `metadata: dict[str, Any]`（原样返回）
+  - 语义：
+    - 每次调用都创建新的 `AgentRun`（不做幂等去重）。
+    - 创建时即注入 `SYSTEM_PROMPT` 与一次性 `<session_start ...>` 上下文头。
+
 - `POST /chat`
   - 请求体（`ChatRequest`）：
-    - `session_id: str`（最小长度 1）
-    - `user_message: str`（最小长度 1）
+    - `agent_id: str`（必填，必须已创建）
+    - `messages: list[ChatMessage]`（最少 1 条）
+    - `ChatMessage` 固定字段：
+      - `user_id: str`
+      - `event_time: str`
+      - `content: str`
   - 响应体（`ChatResponse`）：
     - `reply: str`
   - 处理语义：
-    - 同一 `session_id` 复用同一个 `Session` 对象（会话历史持久于进程内内存）。
-    - 同一 `session_id` 请求串行执行（会话级锁），不同会话可并行。
+    - 严格先创建后聊天：`agent_id` 不存在时直接返回 `404`。
+    - 路由入口先把消息列表渲染为 XML，再作为一次 `user` 输入交给 `AgentRun`。
+    - XML 根节点：`<chat_messages ...>`，根属性直接由 `AgentRun.metadata` 动态展开（有哪个字段就带哪个字段）；同时会补充 `agent_id`。
+    - XML 子节点：`<message user_id="..." event_time="...">文本内容</message>`，按输入顺序保留，属性和值统一做 XML 转义。
+    - 同一 `agent_id` 串行执行，不同 `agent_id` 可并行。
   - 失败语义：
-    - 任意未捕获异常 -> `500`，`detail` 为异常字符串。
+    - `agent_id` 不存在：`404`，`detail=agent_run not found`
+    - 运行期未捕获异常：`500`，`detail` 为异常字符串
 
 ### 2.2 对外消费（LLM API）
 - 客户端：`openai.OpenAI`
 - 请求参数（`chat.completions.create`）：
   - `model`
-  - `messages`（会话消息历史）
+  - `messages`（`AgentRun` 累积上下文）
   - `temperature`
   - `tool_choice="auto"`
   - `tools`（来自 MCP 注册结果）
@@ -42,67 +60,52 @@
 - 运行阶段：按工具名调用 `call_tool`，返回 JSON 字符串写回 `tool` 消息。
 - 鉴权：如配置了 `mcp_auth_token`，通过 `Authorization: Bearer <token>` 发送。
 
-### 2.4 异常码说明
-- 模块未定义独立业务错误码体系；对外 HTTP 失败统一为 `500`。
-
 ## 3. 核心数据模型
-### 3.1 会话模型（`Session`）
-- `_session_id`：会话标识。
-- `_messages`：符合 OpenAI Chat 格式的消息列表。
-- 写入规则：
-  - `assistant` 角色可附 `tool_calls`
-  - `tool` 角色可附 `tool_call_id`
+### 3.1 运行上下文模型（`AgentRun`）
+- `agent_id`：上下文隔离标识（由服务端创建）。
+- `metadata`：创建时写入并冻结快照（只读暴露）。
+- 初始化时固定注入：
+  - `system`: `SYSTEM_PROMPT`
+  - `system`: `<session_start agent_id="..." ...>`
+- 后续每次 `run`：
+  - 通过 `Context.add_message` 追加 `user`（XML 文本）
+  - 调用 `AgentCore`
+  - 通过 `Context.add_message` 追加 `assistant` 回复
 
-### 3.2 LLM 响应模型（`LlmResponse`）
+### 3.2 会话上下文模型（`Context`）
+- `messages: list[Message]`：OpenAI Chat 消息历史。
+- `add_message(...)`：统一封装 `assistant.tool_calls` 与 `tool.tool_call_id` 的写入规则。
+- 设计目标：把消息结构拼装逻辑收口到单一类，避免 `AgentRun` / `AgentCore` 重复实现导致字段漂移。
+
+### 3.3 会话运行注册表（`AgentRunRegistry`）
+- 结构：`dict[agent_id, AgentRun]`
+- 语义：
+  - `create(metadata)`：总是生成新 UUIDv4 并注册
+  - `get(agent_id)`：命中返回 `AgentRun`，否则 `None`
+
+### 3.4 LLM 响应模型（`LlmResponse`）
 - `content: str`
 - `tool_calls: List[ToolCall]`
 - `finish_reason`：控制状态机分支的关键字段
 
-### 3.3 MCP 工具绑定（`McpToolBinding`）
-- `remote_name`
-- `description`
-- `input_schema`（会做 schema 清洗，移除不支持键如 `propertyNames`）
-
-### 3.4 会话上下文注册表（`session_contexts`）
-- 结构：`dict[session_id, (Session, Lock)]`
-- 语义：
-  - 注册表锁只负责“首次创建”
-  - 会话锁负责单会话串行
-
 ## 4. 核心业务流程
 ```mermaid
 flowchart TD
-    A[POST /chat] --> B[记录 chat_received]
-    B --> C{session_id 是否存在}
-    C -->|否| D[创建 Session]
-    D --> E[注入 system prompt]
-    E --> F[注入 session_start 标记]
-    C -->|是| G[复用已有 Session]
-    F --> H[获取会话锁]
-    G --> H
-    H --> I[AgentCore.run]
+    A[POST /agent-runs] --> B[创建 AgentRun]
+    B --> C[注入 SYSTEM_PROMPT]
+    C --> D[注入 session_start]
+    D --> E[返回 agent_id]
 
-    I --> J[追加 user 消息]
-    J --> K{turn < max_turns}
-    K -->|否| L[抛超轮次错误]
-    K -->|是| M[调用 LLM generate]
-    M --> N[写入 assistant 消息]
-    N --> O{finish_reason}
-    O -->|stop| P[返回 content]
-    O -->|tool_calls| Q[遍历 tool_calls]
-    O -->|其他| R[抛 unexpected reason]
-
-    Q --> S[解析 tool arguments]
-    S --> T[调用 MCP tool]
-    T --> U{工具是否成功}
-    U -->|是| V[写入 tool 消息: result]
-    U -->|否| W[写入 tool 消息: error json]
-    V --> K
-    W --> K
-
-    P --> X[记录 chat_completed]
-    L --> Y[记录 chat_failed 并返回 500]
-    R --> Y
+    F[POST /chat] --> G{agent_id 存在?}
+    G -->|否| H[返回 404]
+    G -->|是| I[messages 渲染 XML]
+    I --> J[AgentRun.run]
+    J --> K[追加 user(XML)]
+    K --> L[AgentCore.run]
+    L --> M[LLM stop?]
+    M -->|是| N[返回 reply]
+    M -->|tool_calls| O[执行 MCP 工具并回写 tool 消息]
+    O --> L
 ```
 
 ## 5. 配置项与运行依赖
@@ -127,39 +130,15 @@ flowchart TD
 
 ## 6. 非功能性设计
 ### 6.1 错误处理
-- 路由层在 `/chat` 做统一异常边界，保证失败时返回 `500` 并记录会话级异常日志。
-- 工具调用失败不会中断回合，而是转成 `tool` 消息中的错误 JSON，让模型决定降级策略。
+- 路由层在 `/chat` 维持统一异常边界：未知异常统一 `500`。
+- 工具调用失败不会中断回合，而是写入 `tool` 错误消息交给模型决定后续策略。
 
 ### 6.2 日志
 - 统一前缀：`agent_service.*`
-- 覆盖关键事件：应用启动、请求接收、会话绑定、回合响应、工具调用、请求失败。
-- 框架日志静默，减少噪声。
+- 关键事件：`agent_run_created`、`chat_received`、`chat_completed`、`chat_failed`、`agent_run.run_*`
+- 关键字段：`agent_id`、`message_count`、`message_len`、`reply_len`、`elapsed_ms`
 
-### 6.3 性能关键点
-- 会话内串行锁保障上下文一致性，避免并发写历史导致污染。
-- 不同会话并行执行，吞吐受限于外部 LLM/MCP 调用与 Python 线程池模型。
-- 工具列表在启动时缓存，避免每轮请求重复拉取。
-
-## 7. 架构边界与集成点
-### 7.1 所在层级
-- 智能体执行层（Agent Execution Layer）。
-
-### 7.2 强依赖
-- LLM API：不可用时无法生成回复。
-- MCP Gateway：启动阶段注册失败会导致服务初始化失败。
-
-### 7.3 弱依赖
-- `healthz` 仅提供进程存活信息，不覆盖下游可用性。
-
-### 7.4 故障影响
-- `agent-service` 不可用：`hub-service` 调用 `/chat` 失败，主链路无法产出回复。
-- MCP 工具异常：可能降级为无工具回答，或回合内持续错误后触发失败。
-- 单进程重启：会话内存丢失，多轮上下文断档。
-
-## 8. 设计权衡与已知不足
-- 会话状态仅保存在进程内内存：实现简单，但不支持跨实例共享，也没有重启恢复。
-- `/chat` 失败统一 `500`：调用方简单，但可观测维度不足（无错误分类码）。
-- `max_turns` 到达即失败：防无限循环有效，但复杂工具链任务可能被硬截断。
-- MCP 工具 schema 只做最小清洗，跨提供方兼容性依然依赖上游 schema 质量。
-- 当前 `config.yml` 方式要求明文敏感配置，需结合部署侧密钥管理策略降低泄露风险。
-
+## 7. 设计权衡与已知不足
+- `AgentRun` 状态仅存内存：实现简单，但不支持跨实例共享与重启恢复。
+- `/agent-runs` 每次都新建：调用链最清晰，但没有去重/回收机制，长期运行可能增长。
+- `/chat` 严格 404 语义：契约清晰，但 hub 必须保证先创建再聊天。

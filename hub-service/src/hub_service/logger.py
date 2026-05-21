@@ -22,6 +22,7 @@ EVENT_LABELS = {
     "hub.reply_enqueued": "回复动作已入队",
 }
 FIELD_LABELS = {
+    "agent_id": "Agent",
     "session_id": "会话",
     "message_id": "消息",
     "event_id": "事件",
@@ -32,12 +33,13 @@ FIELD_LABELS = {
     "status": "状态",
     "reason": "原因",
     "elapsed_ms": "耗时",
-    "user_message_len": "用户消息长度",
+    "message_count": "消息数",
     "reply_len": "回复长度",
     "status_code": "状态码",
     "url": "地址",
 }
 DEFAULT_HIGHLIGHT_KEYS = (
+    "agent_id",
     "session_id",
     "message_id",
     "event_id",
@@ -54,9 +56,9 @@ EVENT_HIGHLIGHT_KEYS = {
     "hub.event_retry": ("message_id", "elapsed_ms"),
     "hub.event_skipped": ("message_id", "message_type", "reason"),
     "hub.event_submitted": ("message_id", "session_id", "event_id"),
-    "hub.session_run_started": ("session_id", "user_message_len"),
-    "hub.session_run_failed": ("session_id", "elapsed_ms"),
-    "hub.session_run_completed": ("session_id", "reply_len", "elapsed_ms"),
+    "hub.session_run_started": ("agent_id", "session_id", "message_count"),
+    "hub.session_run_failed": ("agent_id", "session_id", "elapsed_ms"),
+    "hub.session_run_completed": ("agent_id", "session_id", "reply_len", "elapsed_ms"),
     "hub.downstream_called": ("session_id", "elapsed_ms", "status"),
     "hub.reply_enqueued": ("session_id", "reply_len", "elapsed_ms"),
 }

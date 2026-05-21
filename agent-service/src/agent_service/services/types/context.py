@@ -1,30 +1,23 @@
-from typing import List, cast
+from typing import cast
 
 from .llm import Message, ToolCall
 
 
-class Session:
-    def __init__(self, session_id: str):
-        self._session_id: str = session_id
-        self._messages: List[Message] = []
+class Context:
+    def __init__(self, messages: list[Message] | None = None) -> None:
+        self.messages: list[Message] = messages or []
 
     def add_message(
         self,
         role: str,
         content: str,
-        tool_calls: List[ToolCall] | None = None,
+        tool_calls: list[ToolCall] | None = None,
         tool_call_id: str | None = None,
     ) -> None:
+        # 把 OpenAI 消息结构写入集中到 Context，避免调用方各自拼装导致字段漂移。
         message_dict: dict[str, object] = {"role": role, "content": content}
         if role == "assistant" and tool_calls is not None:
             message_dict["tool_calls"] = tool_calls
         if role == "tool" and tool_call_id is not None:
             message_dict["tool_call_id"] = tool_call_id
-
-        self._messages.append(cast(Message, message_dict))
-
-    def get_messages(self) -> List[Message]:
-        return self._messages
-
-    def get_session_id(self) -> str:
-        return self._session_id
+        self.messages.append(cast(Message, message_dict))

@@ -4,6 +4,7 @@ import asyncio
 from collections.abc import Awaitable, Callable
 
 from ..logger import elapsed_ms, get_logger, log_exception, log_info, start_timer
+from ..router.schemas import AgentInboundMessage
 from .outbound_client import OutboundClient
 
 IdleCallback = Callable[[str, "SessionRunner"], Awaitable[None]]
@@ -13,29 +14,31 @@ class SessionRunner:
     def __init__(
         self,
         session_id: str,
+        agent_id: str,
         outbound_client: OutboundClient,
         debounce_seconds: float,
         on_idle: IdleCallback,
     ) -> None:
         self._logger = get_logger("session_runner")
         self._session_id = session_id
+        self._agent_id = agent_id
         self._outbound_client = outbound_client
         self._debounce_seconds = debounce_seconds
         self._on_idle = on_idle
-        self._pending_messages: list[str] = []
+        self._pending_messages: list[AgentInboundMessage] = []
         self._debounce_deadline: float | None = None
         self._debounce_task: asyncio.Task[None] | None = None
         self._running = False
         self._stopping = False
         self._lock = asyncio.Lock()
 
-    async def submit_message(self, content: str) -> None:
+    async def submit_message(self, message: AgentInboundMessage) -> None:
         loop = asyncio.get_running_loop()
         async with self._lock:
             if self._stopping:
                 return
 
-            self._pending_messages.append(content)
+            self._pending_messages.append(message)
             self._debounce_deadline = loop.time() + self._debounce_seconds
 
             if self._running:
@@ -93,37 +96,40 @@ class SessionRunner:
                     should_notify_idle = self._is_idle_locked()
                     break
 
-                merged_message = "\n".join(self._pending_messages)
+                batched_messages = self._pending_messages.copy()
                 self._pending_messages.clear()
                 self._running = True
                 self._debounce_deadline = None
                 self._debounce_task = None
                 should_notify_idle = False
 
-            await self._run_once(merged_message)
+            await self._run_once(batched_messages)
             return
 
         if should_notify_idle:
             await self._on_idle(self._session_id, self)
 
-    async def _run_once(self, user_message: str) -> None:
+    async def _run_once(self, messages: list[AgentInboundMessage]) -> None:
         run_started_at = start_timer()
         log_info(
             self._logger,
             "hub.session_run_started",
             session_id=self._session_id,
-            user_message_len=len(user_message),
+            agent_id=self._agent_id,
+            message_count=len(messages),
         )
         try:
             reply = await self._outbound_client.call_agent(
                 session_id=self._session_id,
-                user_message=user_message,
+                agent_id=self._agent_id,
+                messages=messages,
             )
             await self._outbound_client.send_reply(session_id=self._session_id, content=reply)
             log_info(
                 self._logger,
                 "hub.session_run_completed",
                 session_id=self._session_id,
+                agent_id=self._agent_id,
                 reply_len=len(reply),
                 elapsed_ms=elapsed_ms(run_started_at),
             )
@@ -132,6 +138,7 @@ class SessionRunner:
                 self._logger,
                 "hub.session_run_failed",
                 session_id=self._session_id,
+                agent_id=self._agent_id,
                 elapsed_ms=elapsed_ms(run_started_at),
             )
         finally:
