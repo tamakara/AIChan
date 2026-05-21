@@ -1,8 +1,8 @@
 # adapter-service
 
 ## 1. 模块一句话定位
-`adapter-service` 是 QQ 协议适配层：连接 OneBot v11 反向 WebSocket，把入站事件标准化后写入 `qq.events`，并消费 `qq.actions` 执行发送动作。  
-不负责会话编排与 LLM 调用（这些由 `hub-service`、`agent-service` 负责）。
+`adapter-service` 是 QQ 协议适配层：连接 OneBot v11 反向 WebSocket，把入站消息事件规范化并按配置做业务过滤后写入 `qq.events`，并消费 `qq.actions` 执行发送动作。  
+不负责会话编排与 agent 调度（这些由 `hub-service` 负责）。
 
 ## 2. 接口契约
 ### 2.1 对外提供（HTTP/WS）
@@ -58,6 +58,10 @@
 - 写入流：`redis.events_stream`（默认 `qq.events`）
 - 消息结构（`EventStreamMessage`）：
   - `event_id`、`session_id`、`user_id`、`content`、`source`、`message_type`、`raw_event`、`created_at`
+- 产出规则：
+  - 只接收 OneBot 消息事件并做结构化清洗。
+  - 按 `adapter.allowed_message_types` 过滤 `message_type`。
+  - 清洗后空文本事件会在适配层直接丢弃。
 
 ### 2.5 异常码说明
 - 未定义独立业务错误码体系，错误通过 HTTP 状态码与日志表达。
@@ -66,7 +70,7 @@
 ### 3.1 标准化事件（`FilteredEventPayload` / `EventStreamMessage`）
 - `session_id`：会话路由键（`group_` / `private_`）
 - `user_id`：抽象用户标识（`qq_` 前缀）
-- `content`：清洗后的纯文本（去除 CQ 码后再 trim）
+- `content`：清洗后的纯文本（先 `extract_plain_text`，再去 CQ 码和首尾空白）
 - `raw_event`：原始事件保留，供下游诊断和再推理
 
 ### 3.2 动作消息（`ActionStreamMessage`）
@@ -89,10 +93,14 @@ flowchart TD
     B --> C{收到消息类型}
 
     C -->|事件 post_type| D[AdapterService.clean_event]
-    D --> E{是否 accepted}
+    D --> E{是否是受支持消息事件}
     E -->|否| F[忽略并返回]
-    E -->|是| G[构建 EventStreamMessage]
-    G --> H[XADD 到 qq.events]
+    E -->|是| G{message_type 在 adapter 白名单?}
+    G -->|否| F
+    G -->|是| H{清洗后 content 非空?}
+    H -->|否| F
+    H -->|是| I[构建 EventStreamMessage]
+    I --> J[XADD 到 qq.events]
 
     C -->|动作响应 echo/status/retcode| I[_resolve_action]
     I --> J[按 echo 唤醒 pending Future]
@@ -118,7 +126,7 @@ flowchart TD
 
 ### 5.2 配置项（当前代码）
 - `server.host`、`server.port`
-- `adapter.onebot_ws_action_timeout_seconds`
+- `adapter.onebot_ws_action_timeout_seconds`、`adapter.allowed_message_types`
 - `redis.host`、`redis.port`、`redis.db`、`redis.password`
 - `redis.events_stream`、`redis.actions_stream`
 - `redis.actions_group`、`redis.actions_consumer`、`redis.actions_block_ms`
@@ -163,9 +171,8 @@ flowchart TD
 - `adapter-mcp` 不可用：agent 的历史消息检索能力下降，但主消息流仍可运行。
 
 ## 8. 设计权衡与已知不足
-- 当前显式忽略所有群聊事件：显著降噪并聚焦私聊提醒场景，但牺牲群聊机器人能力。
+- 业务过滤在 adapter 收口，能减少下游压力；但若未来做多渠道统一策略，可能需要把策略再次上收到 hub。
 - `NapcatConnectionState` 仅持有单 WS 引用：实现简单，但多连接/多实例下缺少路由与一致性策略。
 - 动作失败重试依赖 PEL，未设置死信队列与最大重试次数：故障消息可能长期回放。
 - `send_action` 只按 `echo` 匹配响应，未对返回体做更细语义校验（除了 `status`）。
 - HTTP `healthz` 不检查 Redis/WS/OneBot 真实可用性，探针成功不等于链路可用。
-

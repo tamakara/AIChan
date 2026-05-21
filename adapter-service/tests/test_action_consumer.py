@@ -38,7 +38,7 @@ def test_action_consumer_ack_on_success() -> None:
         redis_stream=redis_stream,  # type: ignore[arg-type]
         napcat_gateway=napcat_gateway,  # type: ignore[arg-type]
         napcat_connection_state=state,
-        adapter_service=AdapterService(),
+        adapter_service=AdapterService(allowed_message_types={"private"}),
     )
 
     asyncio.run(
@@ -70,7 +70,7 @@ def test_action_consumer_no_ack_when_runtime_failed() -> None:
         redis_stream=redis_stream,  # type: ignore[arg-type]
         napcat_gateway=napcat_gateway,  # type: ignore[arg-type]
         napcat_connection_state=state,
-        adapter_service=AdapterService(),
+        adapter_service=AdapterService(allowed_message_types={"private"}),
     )
 
     asyncio.run(

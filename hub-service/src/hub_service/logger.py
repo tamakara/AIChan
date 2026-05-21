@@ -52,7 +52,7 @@ EVENT_HIGHLIGHT_KEYS = {
     "hub_app.stopped": ("elapsed_ms",),
     "hub.event_dropped": ("message_id", "reason"),
     "hub.event_retry": ("message_id", "elapsed_ms"),
-    "hub.event_skipped": ("message_id", "message_type"),
+    "hub.event_skipped": ("message_id", "message_type", "reason"),
     "hub.event_submitted": ("message_id", "session_id", "event_id"),
     "hub.session_run_started": ("session_id", "user_message_len"),
     "hub.session_run_failed": ("session_id", "elapsed_ms"),

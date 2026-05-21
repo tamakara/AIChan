@@ -89,6 +89,6 @@ uv run --package agent-service agent-service
 
 ## 已知风险
 - 会话状态主要在内存中，重启会丢上下文。
-- 群聊事件当前被直接过滤，功能边界较窄。
+- 消息过滤由 `adapter-service` 白名单配置控制，默认仅处理私聊。
 - Redis / LLM / OneBot 任一层抖动都会放大成端到端延迟。
 

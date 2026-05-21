@@ -31,7 +31,7 @@ def _private_message_event() -> dict:
 def test_private_event_published_to_stream() -> None:
     redis_stream = StubRedisStream()
     gateway = NapcatWsGateway(
-        adapter_service=AdapterService(),
+        adapter_service=AdapterService(allowed_message_types={"private"}),
         redis_stream=redis_stream,  # type: ignore[arg-type]
         action_timeout_seconds=3.0,
     )

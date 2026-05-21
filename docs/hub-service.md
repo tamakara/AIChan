@@ -1,7 +1,7 @@
 # hub-service
 
 ## 1. 模块一句话定位
-`hub-service` 是会话编排中枢：从 `qq.events` 消费消息事件，按 `session_id` 做防抖与串行调度，调用 `agent-service` 生成回复，并把回复写入 `qq.actions`。  
+`hub-service` 是会话编排中枢：从 `qq.events` 消费消息事件，做最小保底校验后按 `session_id` 分配给对应 `SessionRunner` 做防抖合并与串行调用 `agent-service`，最终把回复写回 `qq.actions`。  
 不负责 QQ 协议接入、不负责消息发送落地（发送由 `adapter-service` 执行）。
 
 ## 2. 接口契约
@@ -29,7 +29,8 @@
 - 消息字段（`EventStreamMessage`）：
   - `event_id`、`session_id`、`user_id`、`content`、`source`、`message_type`、`raw_event`、`created_at`
 - 消费规则：
-  - `message_type != private`：直接 ACK 并跳过（当前仅处理私聊）。
+  - `content` 去空白后为空：ACK 并记录 `hub.event_skipped`（保底防御，业务过滤不在 hub）。
+  - 其余合法消息：提交到 `SessionRegistry`，成功提交后 ACK 并记录 `hub.event_submitted`。
   - 非法消息（字段不合法）：记录 `hub.event_dropped`，ACK 丢弃。
   - 运行期异常：记录 `hub.event_retry`，不 ACK（保留在 PEL，后续重试）。
 
@@ -50,17 +51,20 @@
 ### 3.1 事件输入模型（`EventStreamMessage`）
 - 业务主键：`event_id`
 - 会话归并键：`session_id`
-- 决策字段：`message_type`（`private/group`，决定是否进入调度）
+- 决策字段：`message_type`（由 adapter 过滤策略决定哪些类型会进入 hub）
+- 文本字段：`content`（hub 仅做空消息保底校验）
 - 审计上下文：`raw_event`（保留源事件原始信息）
 
-### 3.2 会话状态模型（`SessionState`，内存态）
-- `running: bool`：当前会话是否在执行一轮 agent 调用。
-- `pending_messages: list[str]`：等待被合并的消息队列。
+### 3.2 会话运行模型（`SessionRunner`，内存态）
+- `pending_messages: list[str]`：当前会话缓冲区。
+- `running: bool`：当前会话是否正在执行 agent 调用。
 - `debounce_deadline: float | None`：防抖截止时间（事件循环时钟）。
-- `debounce_task: Task | None`：当前会话的防抖任务句柄。
+- `debounce_task: Task | None`：当前会话等待防抖窗口的任务句柄。
 
-### 3.3 动作输出模型（`ActionStreamMessage`）
-- `action_type` 当前固定 `send_message`，表示 hub 只产出“回复动作”，不承担更复杂动作编排。
+### 3.3 会话注册表（`SessionRegistry`）
+- 维护 `session_id -> SessionRunner` 映射。
+- 同一时刻同一 `session_id` 只会绑定一个 runner，确保串行处理。
+- runner 空闲后自动从注册表移除，避免空会话长期占用内存对象。
 
 ## 4. 核心业务流程
 ```mermaid
@@ -70,32 +74,32 @@ flowchart TD
     C --> D{循环拉取事件}
     D -->|先读 pending| E[read_pending_events]
     D -->|无 pending 再读新消息| F[read_new_events]
-    E --> G[逐条处理]
+    E --> G[逐条解析 EventStreamMessage]
     F --> G
 
-    G --> H{message_type 是否 private}
+    G --> H{content 去空白后非空?}
     H -->|否| I[ACK 并记录 hub.event_skipped]
-    H -->|是| J[SessionCoordinator.submit_event]
-    J --> K[ACK 并记录 hub.event_submitted]
+    H -->|是| K[SessionRegistry.submit_event]
+    K --> L[ACK 并记录 hub.event_submitted]
 
-    J --> L[按 session_id 进入防抖状态机]
-    L --> M{窗口内是否有新消息}
-    M -->|是| N[刷新 debounce_deadline]
-    M -->|否| O[合并 pending_messages 为 user_message]
-    O --> P[调用 agent-service /chat]
-    P --> Q{调用是否成功}
-    Q -->|成功| R[写入 qq.actions send_message]
-    Q -->|失败| S[记录 hub.session_run_failed]
-    R --> T[记录 hub.session_run_completed]
-    S --> U{本会话是否仍有新 pending}
-    T --> U
-    U -->|有| L
-    U -->|无| V[清理会话状态]
+    K --> M[按 session_id 获取或创建 SessionRunner]
+    M --> N[消息写入 runner 缓冲区]
+    N --> O[等待防抖窗口稳定]
+    O --> P[批量合并缓冲消息]
+    P --> Q[调用 agent-service /chat]
+    Q --> R{调用是否成功}
+    R -->|成功| S[写入 qq.actions send_message]
+    R -->|失败| T[记录 hub.session_run_failed]
+    S --> U[记录 hub.session_run_completed]
+    T --> V{缓冲区是否有新增消息}
+    U --> V
+    V -->|有| O
+    V -->|无| W[runner 进入空闲并释放]
 
-    G --> W{消息结构是否合法}
-    W -->|否| X[记录 hub.event_dropped 并 ACK]
-    G --> Y{运行期异常}
-    Y -->|是| Z[记录 hub.event_retry<br/>sleep 1s 且不 ACK]
+    G --> X{消息结构是否合法}
+    X -->|否| Y[记录 hub.event_dropped 并 ACK]
+    G --> Z{运行期异常}
+    Z -->|是| AA[记录 hub.event_retry<br/>sleep 1s 且不 ACK]
 ```
 
 ## 5. 配置项与运行依赖
@@ -126,12 +130,12 @@ flowchart TD
 ### 6.2 日志
 - 统一 logger 前缀：`hub_service.*`
 - 框架日志（`uvicorn/httpx/websockets`）被静默，业务日志采用中文摘要 + 关键字段高亮。
-- 关键事件覆盖：启动、停止、消费过滤、调度成功/失败、下游调用耗时、动作入队耗时。
+- 关键事件覆盖：启动、停止、过滤跳过、调度成功/失败、下游调用耗时、动作入队耗时。
 
 ### 6.3 性能关键点
 - 会话级串行 + 防抖合并：降低短时间多条消息造成的 LLM 调用放大。
 - `xreadgroup` 批量读取（每批 20）+ 阻塞读取新消息，减少空轮询压力。
-- 状态全在内存，路径短但不具备跨实例共享能力。
+- `SessionRunner` 按活跃会话创建，空闲会话自动释放，避免全局单状态锁竞争。
 
 ## 7. 架构边界与集成点
 ### 7.1 所在层级
@@ -150,9 +154,8 @@ flowchart TD
 - `adapter-service` 不可用：`qq.actions` 堆积，回复无法实际发送。
 
 ## 8. 设计权衡与已知不足
-- 仅处理 `private`，`group` 消息直接 ACK 丢弃：行为清晰，但当前不支持群聊机器人。
+- hub 不做业务消息类型过滤，若 adapter 放行了不需要的消息类型，会放大 hub 调度压力。
 - 会话状态内存化：实现简单、低延迟，但多副本下无法共享会话态，存在跨实例顺序不一致风险。
 - 失败恢复依赖 PEL 重试，没有显式重试上限/死信队列：可保“至少一次”，但潜在坏消息会长期回放。
 - 下游调用 `timeout=None`：避免长响应误超时，但缺少硬超时会放大尾部请求占用。
 - 对外无业务诊断接口（仅 `healthz`）：排障主要依赖日志与 Redis 观测。
-

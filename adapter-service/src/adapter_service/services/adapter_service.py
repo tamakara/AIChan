@@ -13,29 +13,29 @@ CQ_CODE_PATTERN = re.compile(r"\[CQ:[^\]]+\]")
 
 
 class AdapterService:
+    def __init__(self, allowed_message_types: set[str]) -> None:
+        self._allowed_message_types = allowed_message_types
+
     def clean_event(self, raw_event: dict[str, Any]) -> CleanResult:
         try:
             event = MESSAGE_EVENT_ADAPTER.validate_python(raw_event)
         except ValidationError:
             return CleanResult(accepted=False, ignore_reason="unsupported_event_type")
 
-        if isinstance(event, GroupMessageEvent):
-            # 业务策略收口：提醒中枢首版仅处理私聊，群聊统一在网关层过滤，
-            # 可避免群消息进入后续链路造成无效 agent 触发与噪音扩散。
-            return CleanResult(accepted=False, ignore_reason="group_message_ignored")
-
         plain_text = self._extract_plain_text(event)
-        if not plain_text:
-            return CleanResult(accepted=False, ignore_reason="empty_text_after_clean")
-
         user_id = int(event.get_user_id())
-        message_type = "group" if isinstance(event, GroupMessageEvent) else "private"
-
-        if message_type == "group":
+        if isinstance(event, GroupMessageEvent):
+            message_type = "group"
             group_id = int(event.group_id)
             session_id = self.to_group_session_id(group_id)
         else:
+            message_type = "private"
             session_id = self.to_private_session_id(user_id)
+
+        if message_type not in self._allowed_message_types:
+            return CleanResult(accepted=False, ignore_reason="message_type_filtered")
+        if not plain_text:
+            return CleanResult(accepted=False, ignore_reason="empty_text_after_clean")
 
         payload = FilteredEventPayload(
             session_id=session_id,

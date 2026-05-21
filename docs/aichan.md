@@ -37,7 +37,7 @@ AICHAN 是一个由 `adapter-service`、`hub-service`、`agent-service` 组成�
 - `user_id`：抽象用户标识，格式为 `qq_*`。
 - `event_id`：进入系统的事件标识。
 - `action_id`：待发送动作标识。
-- `message_type`：`private` / `group`，决定是否进入 hub 调度。
+- `message_type`：`private` / `group`，由 adapter 白名单决定是否进入 hub。
 - `tool_calls`：agent 侧的工具调用指令集合。
 
 ## 4. 核心业务流程
@@ -47,17 +47,18 @@ flowchart LR
     O -->|事件| C[adapter-service]
     C -->|XADD qq.events| R[(Redis Streams)]
     R -->|XREADGROUP qq.events| H[hub-service]
-    H -->|POST /chat| A[agent-service]
+    H -->|空内容保底校验| HS[SessionRegistry + SessionRunner]
+    HS -->|POST /chat| A[agent-service]
     A -->|SSE 调用工具| M[MCP Gateway]
     M -->|docker://adapter-service:latest| T[adapter-mcp]
-    A -->|reply| H
-    H -->|XADD qq.actions| R
+    A -->|reply| HS
+    HS -->|XADD qq.actions| R
     R -->|XREADGROUP qq.actions| C
     C -->|OneBot action| O
     O -->|回复| U
 
-    C -.->|WS 断开时查询与动作失败| O
-    H -.->|仅处理 private 消息| X[丢弃 group 事件]
+    C -.->|协议规范化 + 业务过滤| R
+    C -.->|按 adapter.allowed_message_types 放行| X[filter]
 ```
 
 ## 5. 配置项与运行依赖
@@ -79,6 +80,7 @@ flowchart LR
 ## 6. 非功能性设计
 - 系统采用“接入层 - 编排层 - 推理层”拆分，减少服务之间的强耦合。
 - 事件与动作使用 Redis Stream 解耦，默认语义接近至少一次投递。
+- `adapter-service` 负责协议规范化与业务过滤，`hub-service` 只保留最小保底校验并专注会话编排。
 - 会话状态主要在 `hub-service` 和 `agent-service` 的进程内内存中，简单但不利于多副本共享。
 - 日志按服务名前缀收口，便于按链路排障。
 
@@ -98,8 +100,7 @@ flowchart LR
 - LLM 异常会让系统退化为“只能接入，不能生成回复”。
 
 ## 8. 设计权衡与已知不足
-- 当前以私聊提醒为主，群聊在适配层被直接过滤，功能边界清晰但场景受限。
+- 默认白名单仅 `private`，群聊是否处理取决于 `adapter.allowed_message_types` 配置。
 - `qq.events` / `qq.actions` 是当前专用命名，简单直接，但未来若扩展多平台需要重新引入接入源标识。
 - `hub-service` 与 `agent-service` 都依赖进程内会话状态，多副本和重启恢复能力弱。
 - `adapter-mcp` 与业务 HTTP 服务共用代码仓库，部署上通过镜像入口和 `command` 覆盖分离。
-

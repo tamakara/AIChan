@@ -4,6 +4,8 @@ server:
 
 adapter:
   onebot_ws_action_timeout_seconds: 5
+  allowed_message_types:
+    - private
 
 redis:
   host: redis

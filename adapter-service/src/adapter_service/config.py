@@ -1,6 +1,6 @@
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Literal, Mapping
 
 from pydantic import BaseModel, ConfigDict, StrictInt, StrictStr, ValidationError, field_validator
 import yaml
@@ -19,6 +19,7 @@ class AdapterSettings(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     onebot_ws_action_timeout_seconds: float
+    allowed_message_types: tuple[Literal["private", "group"], ...]
 
     @field_validator("onebot_ws_action_timeout_seconds", mode="before")
     @classmethod
@@ -27,6 +28,16 @@ class AdapterSettings(BaseModel):
         if isinstance(value, bool) or not isinstance(value, (int, float)):
             raise TypeError("必须是数字")
         return float(value)
+
+    @field_validator("allowed_message_types", mode="before")
+    @classmethod
+    def _validate_allowed_message_types(cls, value: Any) -> tuple[str, ...]:
+        # 过滤白名单必须显式配置，避免渠道行为在不同环境出现隐式漂移。
+        if not isinstance(value, (list, tuple)):
+            raise TypeError("必须是数组")
+        if not value:
+            raise ValueError("至少包含一个 message_type")
+        return tuple(str(item) for item in value)
 
 
 class RedisSettings(BaseModel):

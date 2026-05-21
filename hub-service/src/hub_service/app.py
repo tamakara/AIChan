@@ -3,7 +3,7 @@ from fastapi import FastAPI
 from .config import get_settings
 from .logger import elapsed_ms, get_logger, log_info, start_timer
 from .router import create_router
-from .services import EventConsumerWorker, HubRedisStream, OutboundClient, SessionCoordinator
+from .services import EventConsumerWorker, HubRedisStream, OutboundClient, SessionRegistry
 
 
 def create_app() -> FastAPI:
@@ -23,13 +23,13 @@ def create_app() -> FastAPI:
         agent_service_url=settings.hub.agent_url,
         redis_stream=redis_stream,
     )
-    session_coordinator = SessionCoordinator(
+    session_registry = SessionRegistry(
         outbound_client=outbound_client,
         debounce_seconds=settings.hub.debounce_seconds,
     )
     event_consumer = EventConsumerWorker(
         redis_stream=redis_stream,
-        session_coordinator=session_coordinator,
+        session_registry=session_registry,
     )
 
     app = FastAPI(
@@ -51,7 +51,7 @@ def create_app() -> FastAPI:
         shutdown_started_at = start_timer()
         log_info(logger, "hub_app.stopping")
         await event_consumer.stop()
-        await session_coordinator.shutdown()
+        await session_registry.shutdown()
         await outbound_client.aclose()
         await redis_stream.shutdown()
         log_info(logger, "hub_app.stopped", elapsed_ms=elapsed_ms(shutdown_started_at))

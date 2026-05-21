@@ -5,7 +5,7 @@ from adapter_service.services.adapter_service import AdapterService
 
 @pytest.fixture
 def service() -> AdapterService:
-    return AdapterService()
+    return AdapterService(allowed_message_types={"private"})
 
 
 def test_id_mapping_roundtrip(service: AdapterService) -> None:
@@ -40,7 +40,7 @@ def test_private_text_clean_pass(service: AdapterService) -> None:
     assert result.payload.content == "??  ??"
 
 
-def test_group_without_at_ignored(service: AdapterService) -> None:
+def test_group_without_at_is_filtered(service: AdapterService) -> None:
     raw = {
         "time": 1710000000,
         "self_id": 10001,
@@ -67,10 +67,10 @@ def test_group_without_at_ignored(service: AdapterService) -> None:
     }
     result = service.clean_event(raw)
     assert result.accepted is False
-    assert result.ignore_reason == "group_message_ignored"
+    assert result.ignore_reason == "message_type_filtered"
 
 
-def test_group_with_at_still_ignored(service: AdapterService) -> None:
+def test_group_with_at_is_filtered(service: AdapterService) -> None:
     raw = {
         "time": 1710000000,
         "self_id": 10001,
@@ -100,7 +100,58 @@ def test_group_with_at_still_ignored(service: AdapterService) -> None:
     }
     result = service.clean_event(raw)
     assert result.accepted is False
-    assert result.ignore_reason == "group_message_ignored"
+    assert result.ignore_reason == "message_type_filtered"
+
+
+def test_empty_text_after_clean_is_filtered(service: AdapterService) -> None:
+    raw = {
+        "time": 1710000000,
+        "self_id": 10001,
+        "post_type": "message",
+        "message_type": "private",
+        "sub_type": "friend",
+        "message_id": 14,
+        "user_id": 20002,
+        "message": [{"type": "image", "data": {"file": "a.png"}}],
+        "raw_message": "[CQ:image,file=a.png]",
+        "font": 14,
+        "sender": {"user_id": 20002, "nickname": "alice", "sex": "unknown", "age": 0},
+    }
+    result = service.clean_event(raw)
+    assert result.accepted is False
+    assert result.ignore_reason == "empty_text_after_clean"
+
+
+def test_group_message_can_be_enabled_by_adapter_whitelist() -> None:
+    service = AdapterService(allowed_message_types={"private", "group"})
+    raw = {
+        "time": 1710000000,
+        "self_id": 10001,
+        "post_type": "message",
+        "message_type": "group",
+        "sub_type": "normal",
+        "message_id": 15,
+        "group_id": 30003,
+        "user_id": 20002,
+        "message": [{"type": "text", "data": {"text": "hello"}}],
+        "raw_message": "hello",
+        "font": 14,
+        "sender": {
+            "user_id": 20002,
+            "nickname": "alice",
+            "card": "",
+            "sex": "unknown",
+            "age": 0,
+            "area": "",
+            "level": "",
+            "role": "member",
+            "title": "",
+        },
+    }
+    result = service.clean_event(raw)
+    assert result.accepted is True
+    assert result.payload is not None
+    assert result.payload.session_id == "group_30003"
 
 
 def test_build_send_message_action_group(service: AdapterService) -> None:

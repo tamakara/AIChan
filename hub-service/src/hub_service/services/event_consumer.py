@@ -6,7 +6,7 @@ from pydantic import ValidationError
 
 from ..logger import elapsed_ms, get_logger, log_exception, log_info, start_timer
 from .redis_stream import HubRedisStream
-from .session_coordinator import SessionCoordinator
+from .session_registry import SessionRegistry
 from .stream_models import EventStreamMessage
 
 
@@ -14,11 +14,11 @@ class EventConsumerWorker:
     def __init__(
         self,
         redis_stream: HubRedisStream,
-        session_coordinator: SessionCoordinator,
+        session_registry: SessionRegistry,
     ) -> None:
         self._logger = get_logger("event_consumer")
         self._redis_stream = redis_stream
-        self._session_coordinator = session_coordinator
+        self._session_registry = session_registry
         self._stopping = False
         self._task: asyncio.Task[None] | None = None
 
@@ -56,16 +56,18 @@ class EventConsumerWorker:
             handled_started_at = start_timer()
             try:
                 event = EventStreamMessage.from_stream_fields(fields)
-                if event.message_type != "private":
+                if not event.content.strip():
+                    # hub 只保留最小保底校验，避免空内容进入 session 运行器造成无效调度。
                     await self._redis_stream.ack_event(message_id)
                     log_info(
                         self._logger,
                         "hub.event_skipped",
                         message_id=message_id,
                         message_type=event.message_type,
+                        reason="empty_content",
                     )
                     continue
-                await self._session_coordinator.submit_event(event)
+                await self._session_registry.submit_event(event)
                 await self._redis_stream.ack_event(message_id)
                 log_info(
                     self._logger,

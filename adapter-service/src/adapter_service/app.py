@@ -23,7 +23,9 @@ def create_app() -> FastAPI:
     )
 
     redis_stream = AdapterRedisStream(settings.redis)
-    adapter_service = AdapterService()
+    adapter_service = AdapterService(
+        allowed_message_types=set(settings.adapter.allowed_message_types),
+    )
     napcat_connection_state = NapcatConnectionState()
     napcat_ws_gateway = NapcatWsGateway(
         adapter_service=adapter_service,
