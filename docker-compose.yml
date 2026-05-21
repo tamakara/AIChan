@@ -50,12 +50,11 @@ services:
       adapter-service:
         condition: service_started
     environment:
-      - NAPCAT_UID=${NAPCAT_UID:-1000}
-      - NAPCAT_GID=${NAPCAT_GID:-1000}
-      - WEBUI_TOKEN=${NAPCAT_WEBUI_TOKEN:-napcat}
+      - NAPCAT_UID=1000
+      - NAPCAT_GID=1000
     volumes:
-      # 固化 OneBot 反向 WS 配置，自动连接 adapter-service。
-      - ./napcat/config/onebot11.json:/app/napcat/config/onebot11.json
+      # 固化 NapCat 全量配置（含 onebot11/webui），避免 WebUI token 在重启后漂移。
+      - ./napcat/config:/app/napcat/config
       # 持久化 QQ 登录态，避免容器重启后重复扫码。
       - ./napcat/ntqq:/app/.config/QQ
     ports:
@@ -74,4 +73,3 @@ services:
       - ./hub-service/config.yml:/app/hub-service/config.yml:ro
     ports:
       - "8020:8020"
-
