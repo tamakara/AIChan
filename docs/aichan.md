@@ -76,9 +76,10 @@ flowchart LR
 ### 5.3 配置形态
 - 三个业务服务都只读取各自目录下的 `config.yml`。
 - 运行时没有环境变量别名层，配置语义全部由 YAML 决定。
-- `napcat` 通过挂载 `napcat/config/` 固化全量配置：
+- `napcat` 只挂载默认配置文件（`napcat.json`、`onebot11.json`、`webui.json`）：
   - `onebot11.json` 固化反向 WS 地址，默认自动连接 `ws://adapter-service:8010/onebot/v11/ws`。
-  - `webui.json` 固化 WebUI 令牌，避免容器重启后 token 漂移。
+  - `webui.json` 固化 WebUI 令牌；若 `token=napcat` 或为空，启动时会被自动随机化。
+- `napcat/cache/qrcode.png` 与容器内二维码文件路径绑定，便于宿主机扫码登录。
 
 ## 6. 非功能性设计
 - 系统采用“接入层 - 编排层 - 推理层”拆分，减少服务之间的强耦合。

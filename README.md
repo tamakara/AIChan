@@ -27,7 +27,9 @@ docker compose up -d --build
 ```text
 http://localhost:6099/webui
 ```
-默认口令：`aichan`（由 `napcat/config/webui.json` 固化）。
+WebUI 口令以 `napcat/config/webui.json` 中的 `token` 字段为准。  
+注意：若配置为默认弱口令 `napcat` 或空字符串，NapCat 启动时会自动改写为随机口令。
+登录二维码同步到 `napcat/cache/qrcode.png`，可在宿主机直接打开扫码。
 3. 验证 OneBot 连接是否成功：
 ```bash
 docker compose logs -f napcat adapter-service

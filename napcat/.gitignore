@@ -1,6 +1,12 @@
 # Runtime data generated after login
 ntqq/**
 !ntqq/.gitkeep
+config/napcat_*.json
+config/onebot11_*.json
+config/napcat_protocol_*.json
 
 # Local logs
 *.log
+
+# QR code image generated at runtime
+cache/qrcode.png

@@ -53,8 +53,12 @@ services:
       - NAPCAT_UID=1000
       - NAPCAT_GID=1000
     volumes:
-      # 固化 NapCat 全量配置（含 onebot11/webui），避免 WebUI token 在重启后漂移。
-      - ./napcat/config:/app/napcat/config
+      # 只挂载默认配置文件，避免账号级运行时配置回写到仓库。
+      - ./napcat/config/napcat.json:/app/napcat/config/napcat.json
+      - ./napcat/config/onebot11.json:/app/napcat/config/onebot11.json
+      - ./napcat/config/webui.json:/app/napcat/config/webui.json
+      # 持久化登录二维码，便于宿主机直接查看。
+      - ./napcat/cache/qrcode.png:/app/napcat/cache/qrcode.png
       # 持久化 QQ 登录态，避免容器重启后重复扫码。
       - ./napcat/ntqq:/app/.config/QQ
     ports:

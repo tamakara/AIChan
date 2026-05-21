@@ -138,10 +138,16 @@ flowchart TD
 - FastAPI / websockets / redis asyncio / nonebot-adapter-onebot / httpx / mcp
 
 ### 5.4 项目内置 NapCat 接入
-- 仓库内 `docker-compose.yml` 已内置 `napcat` 服务，并挂载 `napcat/config/onebot11.json`。
+- 仓库内 `docker-compose.yml` 已内置 `napcat` 服务，并仅挂载默认配置文件：
+  - `napcat/config/napcat.json`
+  - `napcat/config/onebot11.json`
+  - `napcat/config/webui.json`
 - 该配置默认启用 `websocketClients`，目标地址固定为 `ws://adapter-service:8010/onebot/v11/ws`，启动后会自动发起反向 WS 连接。
 - 登录方式：访问 `http://localhost:6099/webui` 扫码登录 QQ。
-- WebUI 口令默认 `napcat`，可通过 `NAPCAT_WEBUI_TOKEN` 覆盖。
+- WebUI 口令以 `napcat/config/webui.json` 的 `token` 字段为准。
+- 若 `token` 被设置为默认弱口令 `napcat` 或空字符串，NapCat 启动时会自动改写为随机口令。
+- 可用 `docker compose exec -T napcat sh -lc "sed -n '1,40p' /app/napcat/config/webui.json"` 查看运行中实际口令。
+- 登录二维码会写入 `napcat/cache/qrcode.png`（与容器内 `/app/napcat/cache/qrcode.png` 对应）。
 
 ## 6. 非功能性设计
 ### 6.1 错误处理
