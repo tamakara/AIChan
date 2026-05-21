@@ -1,0 +1,21 @@
+{
+  "network": {
+    "httpServers": [],
+    "httpClients": [],
+    "websocketServers": [],
+    "websocketClients": [
+      {
+        "name": "aichan-adapter",
+        "enable": true,
+        "url": "ws://adapter-service:8010/onebot/v11/ws",
+        "reportSelfMessage": false,
+        "reconnectInterval": 5000,
+        "token": "",
+        "messagePostFormat": "array"
+      }
+    ]
+  },
+  "musicSignUrl": "",
+  "enableLocalFile2Url": true,
+  "parseMultMsg": false
+}

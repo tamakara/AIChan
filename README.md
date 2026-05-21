@@ -54,17 +54,22 @@ sequenceDiagram
 uv sync --all-packages
 ```
 
-2. 启动基础设施：
+2. 构建并启动全套服务（含 NapCat）：
 ```bash
-docker compose up -d redis mcp-gateway
+docker compose up -d --build
 ```
 
-3. 启动业务服务：
+3. 打开 NapCat WebUI 扫码登录 QQ：
 ```bash
-uv run --package adapter-service adapter-service
-uv run --package hub-service hub-service
-uv run --package agent-service agent-service
+http://localhost:6099/webui
 ```
+默认口令：`napcat`（可通过环境变量 `NAPCAT_WEBUI_TOKEN` 覆盖）。
+
+4. 验证连接：
+```bash
+docker compose logs -f napcat adapter-service
+```
+看到 `adapter-service` 日志里的 `OneBot WS 已连接` 即接入成功。
 
 ## 配置
 - 每个服务只读取各自目录下的 `config.yml`

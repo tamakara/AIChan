@@ -43,6 +43,24 @@ services:
     ports:
       - "8010:8010"
 
+  napcat:
+    image: mlikiowa/napcat-docker:latest
+    restart: unless-stopped
+    depends_on:
+      adapter-service:
+        condition: service_started
+    environment:
+      - NAPCAT_UID=${NAPCAT_UID:-1000}
+      - NAPCAT_GID=${NAPCAT_GID:-1000}
+      - WEBUI_TOKEN=${NAPCAT_WEBUI_TOKEN:-napcat}
+    volumes:
+      # 固化 OneBot 反向 WS 配置，自动连接 adapter-service。
+      - ./napcat/config/onebot11.json:/app/napcat/config/onebot11.json
+      # 持久化 QQ 登录态，避免容器重启后重复扫码。
+      - ./napcat/ntqq:/app/.config/QQ
+    ports:
+      - "6099:6099"
+
   hub-service:
     build:
       context: ./hub-service

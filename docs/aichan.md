@@ -63,7 +63,7 @@ flowchart LR
 
 ## 5. 配置项与运行依赖
 ### 5.1 运行编排
-- `docker-compose.yml` 负责组合 `redis`、`mcp-gateway`、`agent-service`、`adapter-service`、`hub-service`。
+- `docker-compose.yml` 负责组合 `redis`、`mcp-gateway`、`agent-service`、`adapter-service`、`hub-service`、`napcat`。
 - `uv workspace` 负责本地开发时的多包依赖管理。
 
 ### 5.2 外部依赖
@@ -76,6 +76,7 @@ flowchart LR
 ### 5.3 配置形态
 - 三个业务服务都只读取各自目录下的 `config.yml`。
 - 运行时没有环境变量别名层，配置语义全部由 YAML 决定。
+- `napcat` 通过挂载 `napcat/config/onebot11.json` 固化反向 WS 地址，默认自动连接 `ws://adapter-service:8010/onebot/v11/ws`。
 
 ## 6. 非功能性设计
 - 系统采用“接入层 - 编排层 - 推理层”拆分，减少服务之间的强耦合。

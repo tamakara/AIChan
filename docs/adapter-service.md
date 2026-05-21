@@ -137,6 +137,12 @@ flowchart TD
 - Redis（Stream + Consumer Group）
 - FastAPI / websockets / redis asyncio / nonebot-adapter-onebot / httpx / mcp
 
+### 5.4 项目内置 NapCat 接入
+- 仓库内 `docker-compose.yml` 已内置 `napcat` 服务，并挂载 `napcat/config/onebot11.json`。
+- 该配置默认启用 `websocketClients`，目标地址固定为 `ws://adapter-service:8010/onebot/v11/ws`，启动后会自动发起反向 WS 连接。
+- 登录方式：访问 `http://localhost:6099/webui` 扫码登录 QQ。
+- WebUI 口令默认 `napcat`，可通过 `NAPCAT_WEBUI_TOKEN` 覆盖。
+
 ## 6. 非功能性设计
 ### 6.1 错误处理
 - 动作消费者采用最小边界：
