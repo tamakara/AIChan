@@ -1,11 +1,48 @@
-# uv / virtual env
+# Python / uv
 .venv/
 .uv-cache/
-
-# Python cache
 __pycache__/
 *.py[cod]
+*.pyo
+
+# Python tooling cache / reports
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
+*.whl
+
+# Local env / secrets
+.env
+.env.*
+!.env.example
+
+# Logs / temp / database
+*.log
+*.tmp
+*.temp
+*.sqlite
+*.sqlite3
+*.db
+*.db-shm
+*.db-wal
 
 # OS / editor
 .DS_Store
 Thumbs.db
+.idea/
+.vscode/
+
+# Docker overrides
+docker-compose.override.yml
+
+# NapCat runtime data (QQ 登录态与缓存)
+napcat/ntqq/**
+!napcat/ntqq/.gitkeep
