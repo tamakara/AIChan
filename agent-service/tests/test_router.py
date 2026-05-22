@@ -132,13 +132,12 @@ def test_chat_uses_existing_agent_and_injects_context() -> None:
     )
 
     assert response.status_code == 200
-    assert response.json()["reply"].startswith("echo:<message")
+    assert response.json()["reply"].startswith('echo:<messages mode="start"><message')
     assert len(llm_client.calls) == 1
 
     called_messages = llm_client.calls[0]
     called_message = str(called_messages[-1]["content"])
-    assert "<chat_messages" not in called_message
-    assert called_message == '<message user_id="qq_1" event_time="1710000000">hello</message>'
+    assert called_message == '<messages mode="start"><message user_id="qq_1" event_time="1710000000">hello</message></messages>'
 
     # Agent 给模型传入的是运行前快照：两条 system + 本轮 user。
     assert len(called_messages) == 3
@@ -199,6 +198,31 @@ def test_chat_reuses_existing_agent() -> None:
 
     assert second_call_roles == ["system", "system", "user", "assistant", "user"]
     assert f"echo:{first_user_xml}" in second_call_contents
+
+
+def test_chat_uses_append_mode_messages_wrapper_when_requested() -> None:
+    llm_client = StubLlmClient()
+    client = build_client(llm_client=llm_client)
+    agent_id = _create_agent(client, {"session_id": "private_1"})
+
+    response = client.post(
+        "/chat",
+        json={
+            "agent_id": agent_id,
+            "message_mode": "append",
+            "messages": [
+                {
+                    "user_id": "qq_1",
+                    "content": "again",
+                    "event_time": "1710000001",
+                }
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+    called_message = str(llm_client.calls[0][-1]["content"])
+    assert called_message == '<messages mode="append"><message user_id="qq_1" event_time="1710000001">again</message></messages>'
 
 
 def test_chat_returns_500_when_agent_fails() -> None:

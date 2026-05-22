@@ -49,6 +49,7 @@ def create_router(
         try:
             user_message = render_messages_xml(
                 messages=req.messages,
+                message_mode=req.message_mode,
             )
             reply = agent.run(
                 user_message=user_message,

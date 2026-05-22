@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 import httpx
 
@@ -45,11 +45,13 @@ class OutboundClient:
         session_id: str,
         agent_id: str,
         messages: list[AgentInboundMessage],
+        message_mode: Literal["start", "append"],
     ) -> str:
         started_at = start_timer()
         payload = AgentChatRequest(
             agent_id=agent_id,
             messages=messages,
+            message_mode=message_mode,
         )
         data = await self._post_json(f"{self._agent_service_url}/chat", payload.model_dump())
         response = AgentChatResponse.model_validate(data)

@@ -1,4 +1,4 @@
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -29,6 +29,7 @@ class ChatRequest(BaseModel):
 
     agent_id: str = Field(min_length=1)
     messages: list[ChatMessage] = Field(min_length=1)
+    message_mode: Literal["start", "append"] = "start"
 
 
 class ChatResponse(BaseModel):

@@ -7,7 +7,7 @@ from hub_service.services.stream_models import EventStreamMessage
 class StubOutboundClient:
     def __init__(self) -> None:
         self.create_calls: list[tuple[str, dict[str, str]]] = []
-        self.agent_calls: list[tuple[str, str, list[dict[str, str]]]] = []
+        self.agent_calls: list[tuple[str, str, str, list[dict[str, str]]]] = []
         self.reply_calls: list[tuple[str, str]] = []
         self.reply_times: list[float] = []
         self.call_delays: list[float] = []
@@ -16,11 +16,12 @@ class StubOutboundClient:
         self.create_calls.append((session_id, metadata))
         return f"agent-{session_id}"
 
-    async def call_agent(self, session_id: str, agent_id: str, messages) -> str:
+    async def call_agent(self, session_id: str, agent_id: str, messages, message_mode: str) -> str:
         self.agent_calls.append(
             (
                 session_id,
                 agent_id,
+                message_mode,
                 [message.model_dump() for message in messages],
             )
         )
@@ -80,7 +81,8 @@ def test_debounce_merges_messages_for_same_session() -> None:
     assert len(outbound.agent_calls) == 1
     assert outbound.agent_calls[0][0] == "private_1"
     assert outbound.agent_calls[0][1] == "agent-private_1"
-    assert [item["content"] for item in outbound.agent_calls[0][2]] == ["a", "b"]
+    assert outbound.agent_calls[0][2] == "start"
+    assert [item["content"] for item in outbound.agent_calls[0][3]] == ["a", "b"]
     assert outbound.reply_calls == [("private_1", "reply:a\nb")]
     assert state["runner_count"] == 0
 
@@ -107,8 +109,10 @@ def test_running_session_collects_next_round_messages() -> None:
     asyncio.run(run())
 
     assert outbound.create_calls == [("private_1", {"session_id": "private_1"})]
-    assert [item["content"] for item in outbound.agent_calls[0][2]] == ["first"]
-    assert [item["content"] for item in outbound.agent_calls[1][2]] == ["second", "third"]
+    assert outbound.agent_calls[0][2] == "start"
+    assert outbound.agent_calls[1][2] == "append"
+    assert [item["content"] for item in outbound.agent_calls[0][3]] == ["first"]
+    assert [item["content"] for item in outbound.agent_calls[1][3]] == ["second", "third"]
     assert outbound.agent_calls[0][1] == outbound.agent_calls[1][1]
     assert outbound.reply_calls == [("private_1", "reply:second\nthird")]
     assert state["runner_count"] == 0
@@ -158,8 +162,10 @@ def test_running_session_discards_stale_reply_and_only_sends_rerun_result() -> N
     asyncio.run(run())
 
     assert len(outbound.agent_calls) == 2
-    assert [item["content"] for item in outbound.agent_calls[0][2]] == ["first"]
-    assert [item["content"] for item in outbound.agent_calls[1][2]] == ["second"]
+    assert outbound.agent_calls[0][2] == "start"
+    assert outbound.agent_calls[1][2] == "append"
+    assert [item["content"] for item in outbound.agent_calls[0][3]] == ["first"]
+    assert [item["content"] for item in outbound.agent_calls[1][3]] == ["second"]
     assert outbound.reply_calls == [("private_1", "reply:second")]
 
 
@@ -183,6 +189,8 @@ def test_grace_window_can_catch_followup_message_and_rerun() -> None:
     asyncio.run(run())
 
     assert len(outbound.agent_calls) == 2
+    assert outbound.agent_calls[0][2] == "start"
+    assert outbound.agent_calls[1][2] == "append"
     assert outbound.reply_calls == [("private_1", "reply:second")]
 
 
@@ -206,6 +214,9 @@ def test_reply_is_forced_when_max_wait_exceeded() -> None:
     asyncio.run(run())
 
     assert len(outbound.agent_calls) >= 1
+    assert outbound.agent_calls[0][2] == "start"
+    if len(outbound.agent_calls) >= 2:
+        assert outbound.agent_calls[1][2] == "start"
     assert outbound.reply_calls[0] == ("private_1", "reply:first")
     assert any(content == "reply:second" for _, content in outbound.reply_calls)
 
@@ -234,5 +245,6 @@ def test_max_wait_budget_is_accumulated_across_reruns() -> None:
     asyncio.run(run())
 
     assert len(outbound.agent_calls) == 3
+    assert [call[2] for call in outbound.agent_calls] == ["start", "append", "append"]
     assert outbound.reply_calls == [("private_1", "reply:third")]
     assert outbound.reply_times[0] - state["started_at"] < 0.14

@@ -74,6 +74,7 @@ def test_call_agent_uses_slim_messages_payload() -> None:
                     event_time="1710000000",
                 )
             ],
+            message_mode="start",
         )
     )
 
@@ -83,6 +84,7 @@ def test_call_agent_uses_slim_messages_payload() -> None:
     assert called_payload == {
         "agent_id": "agent-1",
         "messages": [{"user_id": "qq_1", "content": "hello", "event_time": "1710000000"}],
+        "message_mode": "start",
     }
 
 
@@ -106,6 +108,7 @@ def test_call_agent_invalid_response_raises() -> None:
                         event_time="1710000000",
                     )
                 ],
+                message_mode="append",
             )
         )
 

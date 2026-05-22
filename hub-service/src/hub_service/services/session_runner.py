@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable
+from typing import Literal
 
 from ..logger import elapsed_ms, get_logger, log_exception, log_info, start_timer
 from ..router.schemas import AgentInboundMessage
@@ -125,12 +126,14 @@ class SessionRunner:
         run_started_at = start_timer()
         messages = [message for _, message in items]
         batch_max_seq = items[-1][0]
+        message_mode = self._resolve_message_mode()
         log_info(
             self._logger,
             "hub.session_run_started",
             session_id=self._session_id,
             agent_id=self._agent_id,
             message_count=len(messages),
+            message_mode=message_mode,
         )
         try:
             # 回复链路的总等待预算从首次调用 agent 开始，后续重跑不重置预算。
@@ -139,6 +142,7 @@ class SessionRunner:
                 session_id=self._session_id,
                 agent_id=self._agent_id,
                 messages=messages,
+                message_mode=message_mode,
             )
             should_send, reason = await self._decide_reply_delivery(batch_max_seq=batch_max_seq)
             if should_send:
@@ -186,6 +190,12 @@ class SessionRunner:
 
             if should_notify_idle:
                 await self._on_idle(self._session_id, self)
+
+    def _resolve_message_mode(self) -> Literal["start", "append"]:
+        # 首轮输入使用 start，重跑输入使用 append，让模型能区分“新轮次”与“补充消息”。
+        if self._reply_cycle_started_at is None:
+            return "start"
+        return "append"
 
     def _start_reply_cycle_if_needed(self) -> None:
         if self._reply_cycle_started_at is not None:

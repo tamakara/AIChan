@@ -22,6 +22,7 @@
   - 请求体（`AgentChatRequest`）：
     - `agent_id: str`
     - `messages: list[AgentInboundMessage]`（最少 1 条）
+    - `message_mode: "start" | "append"`（首轮为 `start`，同一回复链路重跑为 `append`）
     - `AgentInboundMessage` 固定字段：
       - `user_id: str`
       - `event_time: str`
@@ -73,6 +74,7 @@
   - 防抖窗口内合并为一个 `messages` 批次
   - 每条消息入队时分配单调递增 `seq`，用于判断“当前回复是否已过时”
   - 单次回复链路总等待上限从首次调用 agent 起计时，重跑期间不重置
+  - 首次调用 agent 使用 `message_mode=start`，重跑调用使用 `message_mode=append`
 
 ### 3.3 会话注册表（`SessionRegistry`）
 - `session_id -> SessionRunner`（活跃 runner 映射）

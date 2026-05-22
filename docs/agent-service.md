@@ -23,6 +23,7 @@
   - 请求体（`ChatRequest`）：
     - `agent_id: str`（必填，必须已创建）
     - `messages: list[ChatMessage]`（最少 1 条）
+    - `message_mode: "start" | "append"`（可选，默认 `"start"`）
     - `ChatMessage` 固定字段：
       - `user_id: str`
       - `event_time: str`
@@ -32,7 +33,9 @@
   - 处理语义：
     - 严格先创建后聊天：`agent_id` 不存在时直接返回 `404`。
     - 路由入口先把消息列表渲染为 XML，再作为一次 `user` 输入交给 `Agent`。
-    - 消息体仅包含 `<message user_id="..." event_time="...">文本内容</message>` 片段，按输入顺序保留，属性和值统一做 XML 转义。
+    - 统一使用 `<messages mode="...">...</messages>` 包裹消息。
+    - `message_mode="start"` 时渲染为 `<messages mode="start">`，`message_mode="append"` 时渲染为 `<messages mode="append">`。
+    - 包裹内使用 `<message user_id="..." event_time="...">文本内容</message>` 片段，按输入顺序保留，属性和值统一做 XML 转义。
     - 会话级标识（`session_id`、`agent_id`）只在创建 `Agent` 时通过 `<session_start ...>` 注入，不在每轮消息体重复携带。
     - 同一 `agent_id` 串行执行，不同 `agent_id` 可并行。
   - 失败语义：
@@ -78,7 +81,7 @@
 - `messages: list[Message]`：OpenAI Chat 消息历史。
 - `add_message(...)`：统一封装 `assistant.tool_calls` 与 `tool.tool_call_id` 的写入规则。
 - 设计目标：把“长期上下文写入”职责收口在 `Agent + Context`，避免多处写入导致并发与重复消息问题。
-- 消息 XML 标签由 `services/tag_builder.py::render_messages_xml/build_message_tag` 统一构建与转义。
+- 消息 XML 标签由 `services/tag_builder.py::render_messages_xml/build_message_tag` 统一构建与转义（含 `messages mode="..."` 顶层包裹）。
 
 ### 3.3 会话运行注册表（`AgentRegistry`）
 - 结构：`dict[agent_id, Agent]`

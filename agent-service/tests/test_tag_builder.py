@@ -18,12 +18,12 @@ def test_render_messages_xml_preserves_order_and_fields() -> None:
         ],
     )
 
-    assert xml.startswith('<message user_id="qq_1" event_time="1710000000">')
+    assert xml.startswith('<messages mode="start"><message user_id="qq_1" event_time="1710000000">')
     assert xml.count("<message ") == 2
     assert xml.index('user_id="qq_1"') < xml.index('user_id="qq_2"')
     assert ">hello</message>" in xml
     assert ">world</message>" in xml
-    assert "<chat_messages" not in xml
+    assert xml.endswith("</messages>")
 
 
 def test_render_messages_xml_escapes_attr_and_text() -> None:
@@ -37,8 +37,25 @@ def test_render_messages_xml_escapes_attr_and_text() -> None:
         ],
     )
 
+    assert xml.startswith('<messages mode="start">')
     assert 'user_id="qq_&quot;1"' in xml
     assert ">x &lt; y &amp; \"z\"</message>" in xml
+    assert xml.endswith("</messages>")
+
+
+def test_render_messages_xml_uses_append_mode_wrapper() -> None:
+    xml = render_messages_xml(
+        messages=[
+            ChatMessage(
+                user_id="qq_1",
+                content="again",
+                event_time="1710000001",
+            )
+        ],
+        message_mode="append",
+    )
+
+    assert xml == '<messages mode="append"><message user_id="qq_1" event_time="1710000001">again</message></messages>'
 
 
 def test_build_session_start_tag_with_session_id() -> None:
