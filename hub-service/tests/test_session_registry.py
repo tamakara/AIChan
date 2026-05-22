@@ -63,7 +63,6 @@ def test_debounce_merges_messages_for_same_session() -> None:
     registry = SessionRegistry(
         outbound_client=outbound,
         debounce_seconds=0.05,
-        post_run_grace_seconds=0.05,
         max_wait_seconds=1.0,
     )
     state: dict[str, int] = {}
@@ -92,7 +91,6 @@ def test_running_session_collects_next_round_messages() -> None:
     registry = SessionRegistry(
         outbound_client=outbound,
         debounce_seconds=0.01,
-        post_run_grace_seconds=0.01,
         max_wait_seconds=1.0,
     )
     state: dict[str, int] = {}
@@ -123,7 +121,6 @@ def test_different_sessions_are_dispatched_independently() -> None:
     registry = SessionRegistry(
         outbound_client=outbound,
         debounce_seconds=0.01,
-        post_run_grace_seconds=0.01,
         max_wait_seconds=1.0,
     )
 
@@ -148,7 +145,6 @@ def test_running_session_discards_stale_reply_and_only_sends_rerun_result() -> N
     registry = SessionRegistry(
         outbound_client=outbound,
         debounce_seconds=0.01,
-        post_run_grace_seconds=0.02,
         max_wait_seconds=1.0,
     )
 
@@ -169,13 +165,12 @@ def test_running_session_discards_stale_reply_and_only_sends_rerun_result() -> N
     assert outbound.reply_calls == [("private_1", "reply:second")]
 
 
-def test_grace_window_can_catch_followup_message_and_rerun() -> None:
+def test_followup_after_reply_starts_next_round() -> None:
     outbound = StubOutboundClient()
     outbound.call_delays = [0.02, 0.02]
     registry = SessionRegistry(
         outbound_client=outbound,
         debounce_seconds=0.01,
-        post_run_grace_seconds=0.08,
         max_wait_seconds=1.0,
     )
 
@@ -190,8 +185,8 @@ def test_grace_window_can_catch_followup_message_and_rerun() -> None:
 
     assert len(outbound.agent_calls) == 2
     assert outbound.agent_calls[0][2] == "start"
-    assert outbound.agent_calls[1][2] == "append"
-    assert outbound.reply_calls == [("private_1", "reply:second")]
+    assert outbound.agent_calls[1][2] == "start"
+    assert outbound.reply_calls == [("private_1", "reply:first"), ("private_1", "reply:second")]
 
 
 def test_reply_is_forced_when_max_wait_exceeded() -> None:
@@ -200,7 +195,6 @@ def test_reply_is_forced_when_max_wait_exceeded() -> None:
     registry = SessionRegistry(
         outbound_client=outbound,
         debounce_seconds=0.01,
-        post_run_grace_seconds=0.2,
         max_wait_seconds=0.05,
     )
 
@@ -227,7 +221,6 @@ def test_max_wait_budget_is_accumulated_across_reruns() -> None:
     registry = SessionRegistry(
         outbound_client=outbound,
         debounce_seconds=0.005,
-        post_run_grace_seconds=0.05,
         max_wait_seconds=0.08,
     )
     state: dict[str, float] = {}

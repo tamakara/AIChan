@@ -26,7 +26,6 @@ def create_app() -> FastAPI:
     session_registry = SessionRegistry(
         outbound_client=outbound_client,
         debounce_seconds=settings.hub.debounce_seconds,
-        post_run_grace_seconds=settings.hub.post_run_grace_seconds,
         max_wait_seconds=settings.hub.max_wait_seconds,
     )
     event_consumer = EventConsumerWorker(

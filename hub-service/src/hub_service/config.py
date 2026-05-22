@@ -21,7 +21,6 @@ class HubSettings(BaseModel):
 
     agent_url: StrictStr
     debounce_seconds: float
-    post_run_grace_seconds: float = 2.0
     max_wait_seconds: float = 12.0
 
     @field_validator("debounce_seconds", mode="before")
@@ -32,10 +31,10 @@ class HubSettings(BaseModel):
             raise TypeError("必须是数字")
         return float(value)
 
-    @field_validator("post_run_grace_seconds", "max_wait_seconds", mode="before")
+    @field_validator("max_wait_seconds", mode="before")
     @classmethod
     def _validate_positive_seconds(cls, value: Any) -> float:
-        # 这两个时间窗直接决定回复是否被丢弃或强制发送，必须是正数才能形成明确边界。
+        # 总等待上限直接决定强制发送边界，必须是正数才能形成明确时序约束。
         if isinstance(value, bool) or not isinstance(value, (int, float)):
             raise TypeError("必须是数字")
         seconds = float(value)

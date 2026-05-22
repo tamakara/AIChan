@@ -18,7 +18,6 @@ class SessionRunner:
         agent_id: str,
         outbound_client: OutboundClient,
         debounce_seconds: float,
-        post_run_grace_seconds: float,
         max_wait_seconds: float,
         on_idle: IdleCallback,
     ) -> None:
@@ -27,7 +26,6 @@ class SessionRunner:
         self._agent_id = agent_id
         self._outbound_client = outbound_client
         self._debounce_seconds = debounce_seconds
-        self._post_run_grace_seconds = post_run_grace_seconds
         self._max_wait_seconds = max_wait_seconds
         self._on_idle = on_idle
         self._pending_messages: list[tuple[int, AgentInboundMessage]] = []
@@ -209,40 +207,30 @@ class SessionRunner:
         self._reply_cycle_deadline_at = None
 
     async def _decide_reply_delivery(self, *, batch_max_seq: int) -> tuple[bool, str]:
-        while True:
-            async with self._lock:
-                deadline_at = self._reply_cycle_deadline_at
-                started_at = self._reply_cycle_started_at
-                latest_seq = self._latest_message_seq
-            if deadline_at is None or started_at is None:
-                return True, "no_cycle_deadline"
+        async with self._lock:
+            deadline_at = self._reply_cycle_deadline_at
+            started_at = self._reply_cycle_started_at
+            latest_seq = self._latest_message_seq
+        if deadline_at is None or started_at is None:
+            return True, "no_cycle_deadline"
 
-            now = asyncio.get_running_loop().time()
-            if now >= deadline_at:
-                # 触达总等待上限后必须立即发送，避免会话在高频消息下长期无回复。
-                log_info(
-                    self._logger,
-                    "hub.session_reply_forced_send",
-                    session_id=self._session_id,
-                    agent_id=self._agent_id,
-                    elapsed_ms=int((now - started_at) * 1000),
-                )
-                return True, "max_wait_exceeded"
+        now = asyncio.get_running_loop().time()
+        if now >= deadline_at:
+            # 触达总等待上限后必须立即发送，避免会话在高频消息下长期无回复。
+            log_info(
+                self._logger,
+                "hub.session_reply_forced_send",
+                session_id=self._session_id,
+                agent_id=self._agent_id,
+                elapsed_ms=int((now - started_at) * 1000),
+            )
+            return True, "max_wait_exceeded"
 
-            if latest_seq > batch_max_seq:
-                return False, "new_message_arrived"
-
-            baseline_seq = latest_seq
-            wait_seconds = min(self._post_run_grace_seconds, max(0.0, deadline_at - now))
-            if wait_seconds <= 0:
-                continue
-
-            # 短暂静默窗口用于吸收“刚生成完又补一句”的输入，窗口内有新消息就放弃旧回复。
-            await asyncio.sleep(wait_seconds)
-            async with self._lock:
-                latest_seq_after_wait = self._latest_message_seq
-            if latest_seq_after_wait <= baseline_seq:
-                return True, "grace_window_passed"
+        # 去掉发送前补消息窗口后，这里只保留一次“是否过时”判定：
+        # 已有更新消息就丢弃当前回复重跑；无更新就立即发送。
+        if latest_seq > batch_max_seq:
+            return False, "new_message_arrived"
+        return True, "no_new_message"
 
     def _is_idle_locked(self) -> bool:
         if self._running:

@@ -109,10 +109,7 @@ flowchart TD
     R -->|是| P[强制发送本轮回复]
     R -->|否| S{latest_seq > batch_max_seq?}
     S -->|是| T[丢弃本轮回复并重跑]
-    S -->|否| U[等待 post_run_grace_seconds]
-    U --> V{窗口内有新消息?}
-    V -->|是| T
-    V -->|否| P
+    S -->|否| P
 
     P --> W[写入 qq.actions]
 ```
@@ -125,7 +122,6 @@ flowchart TD
 ### 5.2 配置项（当前代码）
 - `server.host`、`server.port`、`server.log_level`
 - `hub.agent_url`、`hub.debounce_seconds`
-- `hub.post_run_grace_seconds`：发送前补消息窗口，默认 `2.0`
 - `hub.max_wait_seconds`：单次回复链路总等待上限，默认 `12.0`
 - `redis.host`、`redis.port`、`redis.db`、`redis.password`
 - `redis.events_stream`、`redis.events_group`、`redis.events_consumer`、`redis.events_block_ms`
