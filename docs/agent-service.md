@@ -32,8 +32,8 @@
   - 处理语义：
     - 严格先创建后聊天：`agent_id` 不存在时直接返回 `404`。
     - 路由入口先把消息列表渲染为 XML，再作为一次 `user` 输入交给 `AgentRun`。
-    - XML 根节点：`<chat_messages ...>`，根属性直接由 `AgentRun.metadata` 动态展开（有哪个字段就带哪个字段）；同时会补充 `agent_id`。
-    - XML 子节点：`<message user_id="..." event_time="...">文本内容</message>`，按输入顺序保留，属性和值统一做 XML 转义。
+    - 消息体仅包含 `<message user_id="..." event_time="...">文本内容</message>` 片段，按输入顺序保留，属性和值统一做 XML 转义。
+    - 会话级标识（`session_id`、`agent_id`）只在创建 `AgentRun` 时通过 `<session_start ...>` 注入，不在每轮消息体重复携带。
     - 同一 `agent_id` 串行执行，不同 `agent_id` 可并行。
   - 失败语义：
     - `agent_id` 不存在：`404`，`detail=agent_run not found`

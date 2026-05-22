@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from typing import Any
 from typing import TYPE_CHECKING
 from xml.sax.saxutils import escape
 
@@ -8,9 +7,10 @@ if TYPE_CHECKING:
     from ..router.schemas import ChatMessage
 
 
-def render_messages_xml(metadata: dict[str, Any], messages: list[ChatMessage]) -> str:
-    # XML 统一在服务端构建，确保 LLM 看到的是稳定结构而不是调用方拼接的半结构化文本。
-    xml_parts = [f"<chat_messages{_build_root_attrs(metadata)}>"]
+def render_messages_xml(messages: list[ChatMessage]) -> str:
+    # 会话级身份信息已在 session_start 注入，消息体只保留 message 片段，
+    # 避免同一语义在两处重复声明导致上下文漂移。
+    xml_parts: list[str] = []
     for message in messages:
         xml_parts.append(
             (
@@ -20,7 +20,6 @@ def render_messages_xml(metadata: dict[str, Any], messages: list[ChatMessage]) -
                 "</message>"
             )
         )
-    xml_parts.append("</chat_messages>")
     return "".join(xml_parts)
 
 
@@ -30,14 +29,3 @@ def _escape_attr(value: str) -> str:
 
 def _escape_text(value: str) -> str:
     return escape(value)
-
-
-def _build_root_attrs(metadata: dict[str, Any]) -> str:
-    attrs: list[str] = []
-    for key, value in metadata.items():
-        if not isinstance(key, str) or not key:
-            continue
-        if value is None:
-            continue
-        attrs.append(f' {_escape_attr(key)}="{_escape_attr(str(value))}"')
-    return "".join(attrs)

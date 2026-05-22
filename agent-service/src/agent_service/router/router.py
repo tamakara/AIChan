@@ -39,9 +39,6 @@ def create_router(
         if agent_run is None:
             raise HTTPException(status_code=404, detail="agent_run not found")
 
-        metadata = agent_run.metadata
-        metadata["agent_id"] = agent_run.get_agent_id()
-
         log_info(
             logger,
             "agent.chat_received",
@@ -51,7 +48,6 @@ def create_router(
 
         try:
             user_message = render_messages_xml(
-                metadata=metadata,
                 messages=req.messages,
             )
             reply = agent_run.run(

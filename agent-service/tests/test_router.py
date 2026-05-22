@@ -132,13 +132,13 @@ def test_chat_uses_existing_agent_run_and_injects_context() -> None:
     )
 
     assert response.status_code == 200
-    assert response.json()["reply"].startswith("echo:<chat_messages")
+    assert response.json()["reply"].startswith("echo:<message")
     assert len(llm_client.calls) == 1
 
     called_messages = llm_client.calls[0]
     called_message = str(called_messages[-1]["content"])
-    assert "<chat_messages session_id=\"private_1\" agent_id=" in called_message
-    assert "<message user_id=\"qq_1\" event_time=\"1710000000\">hello</message>" in called_message
+    assert "<chat_messages" not in called_message
+    assert called_message == '<message user_id="qq_1" event_time="1710000000">hello</message>'
 
     # AgentRun 给模型传入的是运行前快照：两条 system + 本轮 user。
     assert len(called_messages) == 3

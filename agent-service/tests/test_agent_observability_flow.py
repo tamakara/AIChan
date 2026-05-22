@@ -88,7 +88,10 @@ def test_agent_run_reports_full_observability_flow() -> None:
     )
     agent_run = registry.create(metadata={"session_id": "private_1"})
 
-    reply = agent_run.run(user_message="<chat_messages/>", message_count=2)
+    reply = agent_run.run(
+        user_message='<message user_id="qq_1" event_time="1710000000">hello</message>',
+        message_count=2,
+    )
 
     assert reply == "done"
     assert len(observability.started) == 1
@@ -117,7 +120,10 @@ def test_agent_run_reports_failed_tool_span_but_can_continue() -> None:
     )
     agent_run = registry.create(metadata={"session_id": "private_2"})
 
-    reply = agent_run.run(user_message="<chat_messages/>", message_count=1)
+    reply = agent_run.run(
+        user_message='<message user_id="qq_1" event_time="1710000000">hello</message>',
+        message_count=1,
+    )
 
     assert reply == "fallback"
     assert len(observability.tools) == 1
