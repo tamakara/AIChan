@@ -6,6 +6,8 @@ server:
 hub:
   agent_url: http://agent-service:8000
   debounce_seconds: 1.0
+  post_run_grace_seconds: 2.0
+  max_wait_seconds: 12.0
 
 redis:
   host: redis

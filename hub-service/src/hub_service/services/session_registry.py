@@ -13,9 +13,13 @@ class SessionRegistry:
         self,
         outbound_client: OutboundClient,
         debounce_seconds: float,
+        post_run_grace_seconds: float,
+        max_wait_seconds: float,
     ) -> None:
         self._outbound_client = outbound_client
         self._debounce_seconds = debounce_seconds
+        self._post_run_grace_seconds = post_run_grace_seconds
+        self._max_wait_seconds = max_wait_seconds
         self._runners: dict[str, SessionRunner] = {}
         self._session_agent_ids: dict[str, str] = {}
         self._lock = asyncio.Lock()
@@ -38,6 +42,8 @@ class SessionRegistry:
                     agent_id=agent_id,
                     outbound_client=self._outbound_client,
                     debounce_seconds=self._debounce_seconds,
+                    post_run_grace_seconds=self._post_run_grace_seconds,
+                    max_wait_seconds=self._max_wait_seconds,
                     on_idle=self._on_runner_idle,
                 )
                 self._runners[event.session_id] = runner

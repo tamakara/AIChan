@@ -62,13 +62,17 @@
 - 审计上下文：`raw_event`（`event_time` 必须从 `raw_event.time` 提取）
 
 ### 3.2 会话运行模型（`SessionRunner`）
-- `pending_messages: list[AgentInboundMessage]`
+- `pending_messages: list[tuple[seq, AgentInboundMessage]]`
 - `running: bool`
 - `debounce_deadline: float | None`
 - `debounce_task: Task | None`
+- `reply_cycle_started_at: float | None`
+- `reply_cycle_deadline_at: float | None`
 - 语义：
   - 同一 `session_id` 串行
   - 防抖窗口内合并为一个 `messages` 批次
+  - 每条消息入队时分配单调递增 `seq`，用于判断“当前回复是否已过时”
+  - 单次回复链路总等待上限从首次调用 agent 起计时，重跑期间不重置
 
 ### 3.3 会话注册表（`SessionRegistry`）
 - `session_id -> SessionRunner`（活跃 runner 映射）
@@ -95,11 +99,20 @@ flowchart TD
     J --> L[提交给 SessionRunner]
     K --> L
 
-    L --> M[防抖合并 messages]
+    L --> M[防抖合并 messages + 记录 batch_max_seq]
     M --> N[POST /chat(agent_id + messages)]
     N --> O{成功?}
-    O -->|是| P[写入 qq.actions]
     O -->|否| Q[记录 session_run_failed]
+    O -->|是| R{超过 max_wait_seconds?}
+    R -->|是| P[强制发送本轮回复]
+    R -->|否| S{latest_seq > batch_max_seq?}
+    S -->|是| T[丢弃本轮回复并重跑]
+    S -->|否| U[等待 post_run_grace_seconds]
+    U --> V{窗口内有新消息?}
+    V -->|是| T
+    V -->|否| P
+
+    P --> W[写入 qq.actions]
 ```
 
 ## 5. 配置项与运行依赖
@@ -110,6 +123,8 @@ flowchart TD
 ### 5.2 配置项（当前代码）
 - `server.host`、`server.port`、`server.log_level`
 - `hub.agent_url`、`hub.debounce_seconds`
+- `hub.post_run_grace_seconds`：发送前补消息窗口，默认 `2.0`
+- `hub.max_wait_seconds`：单次回复链路总等待上限，默认 `12.0`
 - `redis.host`、`redis.port`、`redis.db`、`redis.password`
 - `redis.events_stream`、`redis.events_group`、`redis.events_consumer`、`redis.events_block_ms`
 - `redis.actions_stream`
@@ -127,7 +142,7 @@ flowchart TD
 
 ### 6.2 日志
 - 统一前缀：`hub_service.*`
-- 关键事件：`event_skipped`、`event_submitted`、`session_run_started/completed/failed`、`downstream_called`
+- 关键事件：`event_skipped`、`event_submitted`、`session_run_started/completed/failed`、`session_reply_discarded`、`session_reply_forced_send`、`downstream_called`
 - 会话调度日志核心字段：`session_id`、`agent_id`、`message_count`
 
 ## 7. 设计权衡与已知不足
