@@ -83,33 +83,103 @@
   - 再创建 runner
 - 后续同会话复用同一 `agent_id`
 
-## 4. 核心业务流程
+## 4. 连发处理与防抖流程
+### 4.1 全链路总览（事件 -> 防抖 -> 重跑/发送）
 ```mermaid
 flowchart TD
-    A[消费 qq.events] --> B[解析 EventStreamMessage]
-    B --> C{content 非空?}
+    A[消费 qq.events] --> B[解析并校验 EventStreamMessage]
+    B --> C{content 非空且 raw_event.time 合法?}
     C -->|否| D[ACK + event_skipped]
-    C -->|是| E{raw_event.time 合法?}
-    E -->|否| F[ACK + event_skipped]
-    E -->|是| G[SessionRegistry.submit_event]
+    C -->|是| E[SessionRegistry.submit_event]
 
-    G --> H{session 是否已有 agent_id?}
-    H -->|否| I[POST /agents]
-    I --> J[保存 session -> agent_id]
-    H -->|是| K[复用 agent_id]
-    J --> L[提交给 SessionRunner]
-    K --> L
+    E --> F{session 是否已有 runner/agent?}
+    F -->|否| G[POST /agents 并创建 SessionRunner]
+    F -->|是| H[复用既有 SessionRunner]
+    G --> I[SessionRunner.submit_message]
+    H --> I
 
-    L --> M[防抖合并 messages + 记录 batch_max_seq]
-    M --> N[POST /chat(agent_id + messages)]
-    N --> O{成功?}
-    O -->|否| Q[记录 session_run_failed]
-    O -->|是| S{latest_seq > batch_max_seq?}
-    S -->|是| T[丢弃本轮回复并重跑]
-    S -->|否| P
-
-    P --> W[写入 qq.actions]
+    I --> J[消息入队 + 分配 seq + debounce_deadline=now+debounce]
+    J --> K[等待防抖静默窗口]
+    K --> L{窗口内是否继续来消息?}
+    L -->|是| J
+    L -->|否| M[提取批次 items + 记录 batch_max_seq]
+    M --> N[POST /chat]
+    N --> O{调用成功?}
+    O -->|否| P[session_run_failed]
+    O -->|是| Q{latest_seq > batch_max_seq?}
+    Q -->|是| R[丢弃本轮回复]
+    Q -->|否| S[发送回复到 qq.actions]
+    R --> T{仍有 pending 消息?}
+    T -->|是| U[重置 debounce_deadline=now+debounce 后重跑]
+    T -->|否| V[会话空闲，回收 runner]
+    U --> K
+    S --> W{仍有 pending 消息?}
+    W -->|是| U
+    W -->|否| V
 ```
+
+### 4.2 SessionRunner 状态机（单会话）
+- `pending_messages`：当前会话待处理消息队列（每条消息附带单调递增 `seq`）。
+- `running`：是否正在执行一轮 agent 调用。
+- `debounce_deadline`：下一次允许启动运行的最早时间点。
+- `reply_cycle_active`：是否处于同一回复链路中（决定 `message_mode=start/append`）。
+
+状态切换规则：
+- 收到消息时：
+  - 追加到 `pending_messages`。
+  - `latest_seq` 更新为当前消息的 `seq`。
+  - `debounce_deadline` 总是刷新为 `now + debounce_seconds`。
+  - 若当前 `running=True`，只更新队列和截止时间，不会打断当前 agent 调用。
+- 防抖到期且可运行时：
+  - 复制 `pending_messages` 形成本轮批次并清空队列。
+  - 设置 `running=True` 后调用 agent。
+- 运行完成后的发送决策：
+  - 若 `latest_seq > batch_max_seq`：说明运行期间来了新消息，本轮回复过时，直接丢弃。
+  - 否则发送本轮回复。
+- 需要重跑时：
+  - 只要 `pending_messages` 非空，都会重置 `debounce_deadline=now+debounce_seconds`。
+  - 这保证“每次重跑前都要重新走完整防抖窗口”，窗口内有新消息会继续重置计时。
+
+### 4.3 连发场景时序图（含重跑前再次防抖）
+```mermaid
+sequenceDiagram
+    autonumber
+    participant U as User
+    participant R as SessionRunner
+    participant A as AgentService
+
+    U->>R: msg#1 到达
+    R->>R: 入队(seq=1)\ndeadline=t0+debounce
+    Note over R: 防抖等待中
+
+    R->>A: 到期后发起 run#1（mode=start）
+    U->>R: msg#2 在 run#1 进行中到达
+    R->>R: 入队(seq=2)\ndeadline=当前+debounce
+    Note over R: run 中不打断，只标记后续重跑
+
+    A-->>R: run#1 reply 返回
+    R->>R: 检查 latest_seq(2) > batch_max_seq(1)\n=> 丢弃 run#1 reply
+    R->>R: 因 pending 非空，重置 deadline=now+debounce
+    Note over R: 重跑前再次完整防抖
+
+    U->>R: msg#3 在重跑防抖窗口到达
+    R->>R: 入队(seq=3)\ndeadline 再次后移
+
+    R->>A: 防抖再次到期后发起 run#2（mode=append）
+    A-->>R: run#2 reply 返回
+    R->>R: latest_seq(3) == batch_max_seq(3)
+    R-->>U: 发送最终回复（仅最新轮次）
+```
+
+### 4.4 关键判定点
+- `latest_seq > batch_max_seq` 的含义：
+  - 本轮请求发送给 agent 的输入批次已经“落后于当前最新消息”，回复必须丢弃。
+- `mode=start` 与 `mode=append`：
+  - `start`：当前回复链路的首轮调用。
+  - `append`：同一回复链路内，因新消息触发的重跑轮次。
+- 丢弃策略边界：
+  - 不取消进行中的 agent 调用。
+  - 只在调用返回后做“发送/丢弃”决策。
 
 ## 5. 配置项与运行依赖
 ### 5.1 配置文件
