@@ -69,13 +69,14 @@
   - `system`: `<session_start agent_id="..." ...>`
 - 后续每次 `run`：
   - 通过 `Context.add_message` 追加 `user`（XML 文本）
-  - 调用 `AgentCore`
-  - 通过 `Context.add_message` 追加 `assistant` 回复
+  - 由 `AgentRun` 负责多轮循环、工具调用与观测埋点
+  - 每轮直接调用 `LlmClient.generate` 获取模型输出
+  - `AgentRun` 统一把 `assistant/tool` 写回 `Context`
 
 ### 3.2 会话上下文模型（`Context`）
 - `messages: list[Message]`：OpenAI Chat 消息历史。
 - `add_message(...)`：统一封装 `assistant.tool_calls` 与 `tool.tool_call_id` 的写入规则。
-- 设计目标：把消息结构拼装逻辑收口到单一类，避免 `AgentRun` / `AgentCore` 重复实现导致字段漂移。
+- 设计目标：把“长期上下文写入”职责收口在 `AgentRun + Context`，避免多处写入导致并发与重复消息问题。
 
 ### 3.3 会话运行注册表（`AgentRunRegistry`）
 - 结构：`dict[agent_id, AgentRun]`
@@ -87,6 +88,12 @@
 - `content: str`
 - `tool_calls: List[ToolCall]`
 - `finish_reason`：控制状态机分支的关键字段
+
+### 3.5 可观测性模型（`Observability`）
+- `NoopObservability`：关闭观测时启用，所有方法空实现。
+- `LangfuseObservability`：开启观测时启用，统一封装 trace/generation/tool span 上报。
+- 根 trace 名称固定：`agent.chat.run`。
+- 根 trace metadata 固定包含：`agent_id`、`message_count`、`max_turns`、`run_id`、`agent_run_metadata`。
 
 ## 4. 核心业务流程
 ```mermaid
@@ -101,7 +108,7 @@ flowchart TD
     G -->|是| I[messages 渲染 XML]
     I --> J[AgentRun.run]
     J --> K[追加 user(XML)]
-    K --> L[AgentCore.run]
+    K --> L[LlmClient.generate]
     L --> M[LLM stop?]
     M -->|是| N[返回 reply]
     M -->|tool_calls| O[执行 MCP 工具并回写 tool 消息]
@@ -122,6 +129,13 @@ flowchart TD
 - `agent.openai_base_url`
 - `agent.mcp_sse_url`
 - `agent.mcp_auth_token`
+- `agent.langfuse.enabled`
+- `agent.langfuse.host`
+- `agent.langfuse.public_key`
+- `agent.langfuse.secret_key`
+- `agent.langfuse.flush_at`
+- `agent.langfuse.flush_interval`
+- `agent.langfuse.request_timeout`
 
 ### 5.3 运行依赖
 - OpenAI 兼容 Chat Completions API
@@ -132,11 +146,19 @@ flowchart TD
 ### 6.1 错误处理
 - 路由层在 `/chat` 维持统一异常边界：未知异常统一 `500`。
 - 工具调用失败不会中断回合，而是写入 `tool` 错误消息交给模型决定后续策略。
+- Langfuse SDK 异常统一降级吞掉，仅记录本地日志，不中断主链路回复。
 
 ### 6.2 日志
 - 统一前缀：`agent_service.*`
 - 关键事件：`agent_run_created`、`chat_received`、`chat_completed`、`chat_failed`、`agent_run.run_*`
 - 关键字段：`agent_id`、`message_count`、`message_len`、`reply_len`、`elapsed_ms`
+
+### 6.3 Langfuse 观测语义
+- 每次 `/chat` 对应一个 root trace（`agent.chat.run`）。
+- 每轮 LLM 调用记录 generation：输入为完整 `context.messages`，输出包含 `content/tool_calls/finish_reason`。
+- 每次 MCP 工具调用记录 tool span：`tool_name`、`tool_args`、`status`、`error`、`duration_ms`。
+- `AgentRun` 成功/失败时分别写 root trace 终态，并在应用 shutdown 阶段执行一次带超时保护的 `flush`。
+- 当前仅覆盖 `agent-service` 内部观测，不跨 `hub-service` / `adapter-service` 透传 trace id。
 
 ## 7. 设计权衡与已知不足
 - `AgentRun` 状态仅存内存：实现简单，但不支持跨实例共享与重启恢复。

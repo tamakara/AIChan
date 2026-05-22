@@ -10,3 +10,11 @@ agent:
   openai_base_url: https://api.v3.cm/v1
   mcp_sse_url: http://mcp-gateway:9000/sse
   mcp_auth_token: ""
+  langfuse:
+    enabled: true
+    host: https://us.cloud.langfuse.com
+    public_key: "pk-lf-e4c024fa-db84-432a-a284-07dc7de6aa44"
+    secret_key: "sk-lf-cc887c45-7975-4af6-aab7-dee9ece0a9d1"
+    flush_at: 16
+    flush_interval: 0.5
+    request_timeout: 5.0

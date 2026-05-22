@@ -1,5 +1,4 @@
 from fastapi import APIRouter, HTTPException
-from typing import Any
 
 from ..logger import elapsed_ms, get_logger, log_exception, log_info, start_timer
 from ..services import AgentRunRegistry, render_messages_xml
@@ -39,7 +38,7 @@ def create_router(
         agent_run = agent_run_registry.get(req.agent_id)
         if agent_run is None:
             raise HTTPException(status_code=404, detail="agent_run not found")
-        
+
         metadata = agent_run.metadata
         metadata["agent_id"] = agent_run.get_agent_id()
 
@@ -57,6 +56,7 @@ def create_router(
             )
             reply = agent_run.run(
                 user_message=user_message,
+                message_count=len(req.messages),
             )
             log_info(
                 logger,
@@ -76,4 +76,3 @@ def create_router(
         return ChatResponse(reply=reply)
 
     return router
-

@@ -3,7 +3,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 import yaml
-from pydantic import BaseModel, ConfigDict, StrictInt, StrictStr, ValidationError
+from pydantic import BaseModel, ConfigDict, StrictBool, StrictInt, StrictStr, ValidationError
 
 CONFIG_PATH = Path.cwd() / "agent-service" / "config.yml"
 
@@ -13,6 +13,18 @@ class ServerSettings(BaseModel):
 
     host: StrictStr
     port: StrictInt
+
+
+class LangfuseSettings(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    enabled: StrictBool
+    host: StrictStr
+    public_key: StrictStr
+    secret_key: StrictStr
+    flush_at: StrictInt
+    flush_interval: float
+    request_timeout: float
 
 
 class AgentSettings(BaseModel):
@@ -26,6 +38,7 @@ class AgentSettings(BaseModel):
     openai_base_url: StrictStr
     mcp_sse_url: StrictStr
     mcp_auth_token: StrictStr
+    langfuse: LangfuseSettings
 
 
 class Settings(BaseModel):

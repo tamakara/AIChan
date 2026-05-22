@@ -4,14 +4,26 @@ from openai import OpenAI
 from openai import APIStatusError
 
 from ..logger import get_logger, log_error, log_exception
+from .observability import Observability
 from .types import Message, LlmResponse, ToolCall
 
 
 class LlmClient:
-    def __init__(self, model_name: str, api_key: str, base_url: str):
+    def __init__(
+        self,
+        model_name: str,
+        api_key: str,
+        base_url: str,
+        observability: Observability,
+    ):
         self._logger = get_logger("llm_client")
         self._model_name = model_name
+        self._observability = observability
         self._client = OpenAI(api_key=api_key, base_url=base_url)
+
+    @property
+    def model_name(self) -> str:
+        return self._model_name
 
     def generate(
         self,

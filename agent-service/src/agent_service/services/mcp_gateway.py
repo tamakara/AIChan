@@ -9,6 +9,7 @@ from mcp.client.session import ClientSession
 from mcp.client.sse import sse_client
 
 from ..logger import elapsed_ms, get_logger, log_info, start_timer
+from .observability import Observability
 
 
 @dataclass(frozen=True)
@@ -22,10 +23,16 @@ class McpGateway:
     # 工具 schema 规范化：移除当前上游不接受的字段，避免注册阶段 schema 透传失败。
     _UNSUPPORTED_SCHEMA_KEYS = {"propertyNames"}
 
-    def __init__(self, sse_url: str, auth_token: str | None = None):
+    def __init__(
+        self,
+        sse_url: str,
+        auth_token: str | None = None,
+        observability: Observability | None = None,
+    ):
         self._logger = get_logger("mcp_gateway")
         self._sse_url = sse_url
         self._auth_token = auth_token
+        self._observability = observability
         self._mcp_tools: Dict[str, McpToolBinding] = {}
         self._tools_schema: List[Dict[str, Any]] = []
 
