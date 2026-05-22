@@ -18,7 +18,6 @@ class SessionRunner:
         agent_id: str,
         outbound_client: OutboundClient,
         debounce_seconds: float,
-        max_wait_seconds: float,
         on_idle: IdleCallback,
     ) -> None:
         self._logger = get_logger("session_runner")
@@ -26,7 +25,6 @@ class SessionRunner:
         self._agent_id = agent_id
         self._outbound_client = outbound_client
         self._debounce_seconds = debounce_seconds
-        self._max_wait_seconds = max_wait_seconds
         self._on_idle = on_idle
         self._pending_messages: list[tuple[int, AgentInboundMessage]] = []
         self._debounce_deadline: float | None = None
@@ -35,8 +33,7 @@ class SessionRunner:
         self._stopping = False
         self._message_seq = 0
         self._latest_message_seq = 0
-        self._reply_cycle_started_at: float | None = None
-        self._reply_cycle_deadline_at: float | None = None
+        self._reply_cycle_active = False
         self._lock = asyncio.Lock()
 
     async def submit_message(self, message: AgentInboundMessage) -> None:
@@ -134,7 +131,7 @@ class SessionRunner:
             message_mode=message_mode,
         )
         try:
-            # 回复链路的总等待预算从首次调用 agent 开始，后续重跑不重置预算。
+            # 标记回复链路已开始，后续因消息更新触发重跑时统一使用 append 语义。
             self._start_reply_cycle_if_needed()
             reply = await self._outbound_client.call_agent(
                 session_id=self._session_id,
@@ -177,10 +174,10 @@ class SessionRunner:
             async with self._lock:
                 self._running = False
                 if self._pending_messages and not self._stopping:
-                    if self._debounce_deadline is None:
-                        self._debounce_deadline = (
-                            asyncio.get_running_loop().time() + self._debounce_seconds
-                        )
+                    # 只要进入重跑，就重新开启完整防抖窗口；避免“运行中早到消息”导致立即重跑。
+                    self._debounce_deadline = (
+                        asyncio.get_running_loop().time() + self._debounce_seconds
+                    )
                     self._schedule_debounce_locked()
                 else:
                     self._reset_reply_cycle()
@@ -191,42 +188,22 @@ class SessionRunner:
 
     def _resolve_message_mode(self) -> Literal["start", "append"]:
         # 首轮输入使用 start，重跑输入使用 append，让模型能区分“新轮次”与“补充消息”。
-        if self._reply_cycle_started_at is None:
+        if not self._reply_cycle_active:
             return "start"
         return "append"
 
     def _start_reply_cycle_if_needed(self) -> None:
-        if self._reply_cycle_started_at is not None:
+        if self._reply_cycle_active:
             return
-        now = asyncio.get_running_loop().time()
-        self._reply_cycle_started_at = now
-        self._reply_cycle_deadline_at = now + self._max_wait_seconds
+        self._reply_cycle_active = True
 
     def _reset_reply_cycle(self) -> None:
-        self._reply_cycle_started_at = None
-        self._reply_cycle_deadline_at = None
+        self._reply_cycle_active = False
 
     async def _decide_reply_delivery(self, *, batch_max_seq: int) -> tuple[bool, str]:
         async with self._lock:
-            deadline_at = self._reply_cycle_deadline_at
-            started_at = self._reply_cycle_started_at
             latest_seq = self._latest_message_seq
-        if deadline_at is None or started_at is None:
-            return True, "no_cycle_deadline"
 
-        now = asyncio.get_running_loop().time()
-        if now >= deadline_at:
-            # 触达总等待上限后必须立即发送，避免会话在高频消息下长期无回复。
-            log_info(
-                self._logger,
-                "hub.session_reply_forced_send",
-                session_id=self._session_id,
-                agent_id=self._agent_id,
-                elapsed_ms=int((now - started_at) * 1000),
-            )
-            return True, "max_wait_exceeded"
-
-        # 去掉发送前补消息窗口后，这里只保留一次“是否过时”判定：
         # 已有更新消息就丢弃当前回复重跑；无更新就立即发送。
         if latest_seq > batch_max_seq:
             return False, "new_message_arrived"

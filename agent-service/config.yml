@@ -3,7 +3,7 @@ server:
   port: 8000
 
 agent:
-  model: gemini-3.1-flash-lite
+  model: gemini-3.5-flash
   max_turns: 50
   temperature: 1.0
   openai_api_key: sk-FVXkc4rTrgVFEfbB1cD65aF6Ad1f4501Ac88346e09Ea5433

@@ -8,8 +8,8 @@ class StubOutboundClient:
     def __init__(self) -> None:
         self.create_calls: list[tuple[str, dict[str, str]]] = []
         self.agent_calls: list[tuple[str, str, str, list[dict[str, str]]]] = []
+        self.agent_call_started_ats: list[float] = []
         self.reply_calls: list[tuple[str, str]] = []
-        self.reply_times: list[float] = []
         self.call_delays: list[float] = []
 
     async def create_agent(self, session_id: str, metadata: dict[str, str]) -> str:
@@ -17,6 +17,7 @@ class StubOutboundClient:
         return f"agent-{session_id}"
 
     async def call_agent(self, session_id: str, agent_id: str, messages, message_mode: str) -> str:
+        self.agent_call_started_ats.append(asyncio.get_running_loop().time())
         self.agent_calls.append(
             (
                 session_id,
@@ -31,18 +32,7 @@ class StubOutboundClient:
         return f"reply:{merged}"
 
     async def send_reply(self, session_id: str, content: str) -> None:
-        self.reply_times.append(asyncio.get_running_loop().time())
         self.reply_calls.append((session_id, content))
-
-
-async def _wait_until(predicate, timeout_seconds: float = 0.5) -> None:
-    deadline = asyncio.get_running_loop().time() + timeout_seconds
-    while True:
-        if predicate():
-            return
-        if asyncio.get_running_loop().time() >= deadline:
-            raise AssertionError("condition wait timeout")
-        await asyncio.sleep(0.001)
 
 
 def _event(session_id: str, content: str, message_type: str = "private") -> EventStreamMessage:
@@ -63,7 +53,6 @@ def test_debounce_merges_messages_for_same_session() -> None:
     registry = SessionRegistry(
         outbound_client=outbound,
         debounce_seconds=0.05,
-        max_wait_seconds=1.0,
     )
     state: dict[str, int] = {}
 
@@ -91,7 +80,6 @@ def test_running_session_collects_next_round_messages() -> None:
     registry = SessionRegistry(
         outbound_client=outbound,
         debounce_seconds=0.01,
-        max_wait_seconds=1.0,
     )
     state: dict[str, int] = {}
 
@@ -121,7 +109,6 @@ def test_different_sessions_are_dispatched_independently() -> None:
     registry = SessionRegistry(
         outbound_client=outbound,
         debounce_seconds=0.01,
-        max_wait_seconds=1.0,
     )
 
     async def run() -> None:
@@ -145,7 +132,6 @@ def test_running_session_discards_stale_reply_and_only_sends_rerun_result() -> N
     registry = SessionRegistry(
         outbound_client=outbound,
         debounce_seconds=0.01,
-        max_wait_seconds=1.0,
     )
 
     async def run() -> None:
@@ -171,7 +157,6 @@ def test_followup_after_reply_starts_next_round() -> None:
     registry = SessionRegistry(
         outbound_client=outbound,
         debounce_seconds=0.01,
-        max_wait_seconds=1.0,
     )
 
     async def run() -> None:
@@ -189,55 +174,26 @@ def test_followup_after_reply_starts_next_round() -> None:
     assert outbound.reply_calls == [("private_1", "reply:first"), ("private_1", "reply:second")]
 
 
-def test_reply_is_forced_when_max_wait_exceeded() -> None:
+def test_rerun_waits_full_debounce_after_run_completion() -> None:
     outbound = StubOutboundClient()
-    outbound.call_delays = [0.08, 0.02]
+    outbound.call_delays = [0.08, 0.01]
     registry = SessionRegistry(
         outbound_client=outbound,
-        debounce_seconds=0.01,
-        max_wait_seconds=0.05,
+        debounce_seconds=0.05,
     )
 
     async def run() -> None:
         await registry.submit_event(_event("private_1", "first"))
-        await asyncio.sleep(0.05)
+        # 第二条消息在首轮运行中提前到达；重跑仍应在首轮结束后完整等待一次防抖窗口。
+        await asyncio.sleep(0.06)
         await registry.submit_event(_event("private_1", "second"))
         await asyncio.sleep(0.35)
         await registry.shutdown()
 
     asyncio.run(run())
 
-    assert len(outbound.agent_calls) >= 1
+    assert len(outbound.agent_calls) == 2
     assert outbound.agent_calls[0][2] == "start"
-    if len(outbound.agent_calls) >= 2:
-        assert outbound.agent_calls[1][2] == "start"
-    assert outbound.reply_calls[0] == ("private_1", "reply:first")
-    assert any(content == "reply:second" for _, content in outbound.reply_calls)
-
-
-def test_max_wait_budget_is_accumulated_across_reruns() -> None:
-    outbound = StubOutboundClient()
-    outbound.call_delays = [0.03, 0.03, 0.03]
-    registry = SessionRegistry(
-        outbound_client=outbound,
-        debounce_seconds=0.005,
-        max_wait_seconds=0.08,
-    )
-    state: dict[str, float] = {}
-
-    async def run() -> None:
-        state["started_at"] = asyncio.get_running_loop().time()
-        await registry.submit_event(_event("private_1", "first"))
-        await _wait_until(lambda: len(outbound.agent_calls) >= 1)
-        await registry.submit_event(_event("private_1", "second"))
-        await _wait_until(lambda: len(outbound.agent_calls) >= 2)
-        await registry.submit_event(_event("private_1", "third"))
-        await asyncio.sleep(0.45)
-        await registry.shutdown()
-
-    asyncio.run(run())
-
-    assert len(outbound.agent_calls) == 3
-    assert [call[2] for call in outbound.agent_calls] == ["start", "append", "append"]
-    assert outbound.reply_calls == [("private_1", "reply:third")]
-    assert outbound.reply_times[0] - state["started_at"] < 0.14
+    assert outbound.agent_calls[1][2] == "append"
+    assert outbound.agent_call_started_ats[1] - outbound.agent_call_started_ats[0] >= 0.12
+    assert outbound.reply_calls == [("private_1", "reply:second")]

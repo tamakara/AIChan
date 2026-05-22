@@ -19,7 +19,6 @@ EVENT_LABELS = {
     "hub.session_run_failed": "会话调度失败",
     "hub.session_run_completed": "会话调度完成",
     "hub.session_reply_discarded": "会话回复已丢弃",
-    "hub.session_reply_forced_send": "会话回复触发强制发送",
     "hub.downstream_called": "下游请求完成",
     "hub.reply_enqueued": "回复动作已入队",
 }
@@ -63,7 +62,6 @@ EVENT_HIGHLIGHT_KEYS = {
     "hub.session_run_failed": ("agent_id", "session_id", "elapsed_ms"),
     "hub.session_run_completed": ("agent_id", "session_id", "reply_len", "elapsed_ms"),
     "hub.session_reply_discarded": ("agent_id", "session_id", "reason", "elapsed_ms"),
-    "hub.session_reply_forced_send": ("agent_id", "session_id", "elapsed_ms"),
     "hub.downstream_called": ("session_id", "elapsed_ms", "status"),
     "hub.reply_enqueued": ("session_id", "reply_len", "elapsed_ms"),
 }
