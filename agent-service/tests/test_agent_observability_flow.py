@@ -3,7 +3,7 @@ import json
 from openai.types.chat import ChatCompletionMessageFunctionToolCall
 from openai.types.chat.chat_completion_message_function_tool_call import Function
 
-from agent_service.services.agent_run import AgentRunRegistry
+from agent_service.services.agent import AgentRegistry
 from agent_service.services.observability import RunTrace
 from agent_service.services.types.llm import LlmResponse
 
@@ -16,12 +16,12 @@ class SpyObservability:
         self.success: list[dict] = []
         self.errors: list[dict] = []
 
-    def start_run(self, *, agent_id: str, message_count: int, max_turns: int, agent_run_metadata: dict):
+    def start_run(self, *, agent_id: str, message_count: int, max_turns: int, agent_metadata: dict):
         payload = {
             "agent_id": agent_id,
             "message_count": message_count,
             "max_turns": max_turns,
-            "agent_run_metadata": agent_run_metadata,
+            "agent_metadata": agent_metadata,
         }
         self.started.append(payload)
         return RunTrace(run_id="run_1", trace_name="agent.chat.run")
@@ -71,7 +71,7 @@ def _tool_call(tool_name: str) -> ChatCompletionMessageFunctionToolCall:
     )
 
 
-def test_agent_run_reports_full_observability_flow() -> None:
+def test_agent_reports_full_observability_flow() -> None:
     observability = SpyObservability()
     llm = StubLlmClient(
         responses=[
@@ -79,16 +79,16 @@ def test_agent_run_reports_full_observability_flow() -> None:
             LlmResponse(content="done", tool_calls=[], finish_reason="stop"),
         ]
     )
-    registry = AgentRunRegistry(  # type: ignore[arg-type]
+    registry = AgentRegistry(  # type: ignore[arg-type]
         llm_client=llm,
         mcp_gateway=StubMcpGateway(),
         max_turns=3,
         temperature=0.0,
         observability=observability,
     )
-    agent_run = registry.create(metadata={"session_id": "private_1"})
+    agent = registry.create(metadata={"session_id": "private_1"})
 
-    reply = agent_run.run(
+    reply = agent.run(
         user_message='<message user_id="qq_1" event_time="1710000000">hello</message>',
         message_count=2,
     )
@@ -103,7 +103,7 @@ def test_agent_run_reports_full_observability_flow() -> None:
     assert observability.errors == []
 
 
-def test_agent_run_reports_failed_tool_span_but_can_continue() -> None:
+def test_agent_reports_failed_tool_span_but_can_continue() -> None:
     observability = SpyObservability()
     llm = StubLlmClient(
         responses=[
@@ -111,16 +111,16 @@ def test_agent_run_reports_failed_tool_span_but_can_continue() -> None:
             LlmResponse(content="fallback", tool_calls=[], finish_reason="stop"),
         ]
     )
-    registry = AgentRunRegistry(  # type: ignore[arg-type]
+    registry = AgentRegistry(  # type: ignore[arg-type]
         llm_client=llm,
         mcp_gateway=StubMcpGateway(),
         max_turns=3,
         temperature=0.0,
         observability=observability,
     )
-    agent_run = registry.create(metadata={"session_id": "private_2"})
+    agent = registry.create(metadata={"session_id": "private_2"})
 
-    reply = agent_run.run(
+    reply = agent.run(
         user_message='<message user_id="qq_1" event_time="1710000000">hello</message>',
         message_count=1,
     )
@@ -129,3 +129,4 @@ def test_agent_run_reports_failed_tool_span_but_can_continue() -> None:
     assert len(observability.tools) == 1
     assert observability.tools[0]["status"] == "failed"
     assert len(observability.success) == 1
+

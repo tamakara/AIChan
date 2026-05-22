@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 
-from .services import AgentRunRegistry, LlmClient, McpGateway, create_observability
+from .services import AgentRegistry, LlmClient, McpGateway, create_observability
 from .config import get_settings
 from .logger import get_logger, log_info
 from .router import create_router
@@ -33,7 +33,7 @@ def create_app() -> FastAPI:
     )
     mcp_gateway.register_mcp_server()
 
-    agent_run_registry = AgentRunRegistry(
+    agent_registry = AgentRegistry(
         llm_client=llm_client,
         mcp_gateway=mcp_gateway,
         max_turns=settings.agent.max_turns,
@@ -44,11 +44,11 @@ def create_app() -> FastAPI:
     app = FastAPI(
         title="agent-service FastAPI service",
         version="0.1.0",
-        description="HTTP API wrapper around AgentRun.",
+        description="HTTP API wrapper around Agent.",
     )
     app.include_router(
         create_router(
-            agent_run_registry=agent_run_registry,
+            agent_registry=agent_registry,
         )
     )
 
@@ -65,3 +65,4 @@ def create_app() -> FastAPI:
 
 
 app = create_app()
+

@@ -104,7 +104,7 @@ def test_langfuse_observability_records_root_generation_tool_and_finish() -> Non
         agent_id="agent_1",
         message_count=2,
         max_turns=5,
-        agent_run_metadata={"session_id": "private_1"},
+        agent_metadata={"session_id": "private_1"},
     )
     observability.llm_generation(
         run=run,
@@ -134,7 +134,7 @@ def test_langfuse_observability_records_root_generation_tool_and_finish() -> Non
     assert root.name == "agent.chat.run"
     assert root.metadata["agent_id"] == "agent_1"
     assert root.metadata["message_count"] == 2
-    assert root.metadata["agent_run_metadata"] == {"session_id": "private_1"}
+    assert root.metadata["agent_metadata"] == {"session_id": "private_1"}
     assert len(root.children) == 2
     assert root.children[0].as_type == "generation"
     assert root.children[1].as_type == "tool"
@@ -149,7 +149,7 @@ def test_langfuse_observability_failures_are_swallowed() -> None:
         agent_id="agent_1",
         message_count=1,
         max_turns=3,
-        agent_run_metadata={},
+        agent_metadata={},
     )
     observability.llm_generation(
         run=run,
@@ -175,3 +175,4 @@ def test_langfuse_observability_failures_are_swallowed() -> None:
     observability.flush(timeout_seconds=0.1)
 
     assert isinstance(run, RunTrace)
+

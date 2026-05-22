@@ -37,7 +37,7 @@ class StubRedisStream:
         self.actions.append((session_id, content))
 
 
-def test_create_agent_run_calls_new_endpoint() -> None:
+def test_create_agent_calls_new_endpoint() -> None:
     redis_stream = StubRedisStream()
     client = OutboundClient(
         agent_service_url="http://agent-service:8000",
@@ -47,11 +47,11 @@ def test_create_agent_run_calls_new_endpoint() -> None:
         [DummyResponse({"agent_id": "agent-1", "metadata": {"session_id": "private_1"}})]
     )
 
-    created_agent_id = asyncio.run(client.create_agent_run("private_1", {"session_id": "private_1"}))
+    created_agent_id = asyncio.run(client.create_agent("private_1", {"session_id": "private_1"}))
 
     assert created_agent_id == "agent-1"
     called_url, called_payload = client._client.calls[0]  # type: ignore[attr-defined]
-    assert called_url == "http://agent-service:8000/agent-runs"
+    assert called_url == "http://agent-service:8000/agents"
     assert called_payload == {"metadata": {"session_id": "private_1"}}
 
 

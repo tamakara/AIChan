@@ -35,7 +35,7 @@ class Observability(Protocol):
         agent_id: str,
         message_count: int,
         max_turns: int,
-        agent_run_metadata: dict[str, Any],
+        agent_metadata: dict[str, Any],
     ) -> RunTrace: ...
 
     def llm_generation(
@@ -90,7 +90,7 @@ class NoopObservability:
         agent_id: str,
         message_count: int,
         max_turns: int,
-        agent_run_metadata: dict[str, Any],
+        agent_metadata: dict[str, Any],
     ) -> RunTrace:
         return RunTrace(run_id=str(uuid4()), trace_name=TRACE_NAME)
 
@@ -168,7 +168,7 @@ class LangfuseObservability:
         agent_id: str,
         message_count: int,
         max_turns: int,
-        agent_run_metadata: dict[str, Any],
+        agent_metadata: dict[str, Any],
     ) -> RunTrace:
         run_id = str(uuid4())
         context_manager: Any | None = None
@@ -178,7 +178,7 @@ class LangfuseObservability:
                 "message_count": message_count,
                 "max_turns": max_turns,
                 "run_id": run_id,
-                "agent_run_metadata": _to_jsonable(agent_run_metadata),
+                "agent_metadata": _to_jsonable(agent_metadata),
             }
             context_manager = self._client.start_as_current_observation(
                 name=TRACE_NAME,
@@ -396,3 +396,4 @@ def _to_jsonable(value: Any) -> Any:
     if callable(model_dump):
         return _to_jsonable(model_dump(mode="json", exclude_none=True))
     return str(value)
+

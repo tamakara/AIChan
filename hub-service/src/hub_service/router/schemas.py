@@ -17,13 +17,13 @@ class AgentInboundMessage(BaseModel):
     event_time: str = Field(min_length=1)
 
 
-class AgentRunCreateRequest(BaseModel):
+class AgentCreateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
-class AgentRunCreateResponse(BaseModel):
+class AgentCreateResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     agent_id: str

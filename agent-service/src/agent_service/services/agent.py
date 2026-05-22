@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-from html import escape
 from threading import Lock
 from typing import Any
 from uuid import uuid4
@@ -11,11 +10,12 @@ from .llm_client import LlmClient
 from .mcp_gateway import McpGateway
 from .observability import Observability
 from .prompts import SYSTEM_PROMPT
+from .tag_builder import build_session_start_tag
 from .types.context import Context
 from .types.llm import Message
 
 
-class AgentRun:
+class Agent:
     def __init__(
         self,
         agent_id: str,
@@ -26,7 +26,7 @@ class AgentRun:
         metadata: dict[str, Any],
         observability: Observability,
     ) -> None:
-        self._logger = get_logger("agent_run")
+        self._logger = get_logger("agent")
         self._agent_id = agent_id
         self._metadata = dict(metadata)
         self._llm_client = llm_client
@@ -39,7 +39,7 @@ class AgentRun:
         self._context.add_message(role="system", content=SYSTEM_PROMPT)
         self._context.add_message(
             role="system",
-            content=_build_session_start_tag(
+            content=build_session_start_tag(
                 agent_id=agent_id,
                 metadata=self._metadata,
             ),
@@ -51,7 +51,7 @@ class AgentRun:
             # 把日志与消息写入放在同一把会话锁内，确保日志时间线与上下文状态严格一致。
             log_info(
                 self._logger,
-                "agent_run.run_started",
+                "agent.run_started",
                 agent_id=self._agent_id,
                 max_turns=self._max_turns,
                 message_len=len(user_message),
@@ -60,7 +60,7 @@ class AgentRun:
                 agent_id=self._agent_id,
                 message_count=message_count,
                 max_turns=self._max_turns,
-                agent_run_metadata=self._metadata,
+                agent_metadata=self._metadata,
             )
             self._context.add_message(role="user", content=user_message)
             try:
@@ -104,7 +104,7 @@ class AgentRun:
                             )
                             log_info(
                                 self._logger,
-                                "agent_run.run_completed",
+                                "agent.run_completed",
                                 agent_id=self._agent_id,
                                 reply_len=len(reply),
                                 elapsed_ms=duration_ms,
@@ -177,7 +177,7 @@ class AgentRun:
                 )
                 log_exception(
                     self._logger,
-                    "agent_run.run_failed",
+                    "agent.run_failed",
                     agent_id=self._agent_id,
                     elapsed_ms=duration_ms,
                 )
@@ -194,7 +194,7 @@ class AgentRun:
         return self._context.messages
 
 
-class AgentRunRegistry:
+class AgentRegistry:
     def __init__(
         self,
         llm_client: LlmClient,
@@ -208,13 +208,13 @@ class AgentRunRegistry:
         self._max_turns = max_turns
         self._temperature = temperature
         self._observability = observability
-        self._agent_runs: dict[str, AgentRun] = {}
+        self._agents: dict[str, Agent] = {}
         self._lock = Lock()
 
-    def create(self, metadata: dict[str, Any]) -> AgentRun:
+    def create(self, metadata: dict[str, Any]) -> Agent:
         with self._lock:
             agent_id = str(uuid4())
-            agent_run = AgentRun(
+            agent = Agent(
                 agent_id=agent_id,
                 llm_client=self._llm_client,
                 mcp_gateway=self._mcp_gateway,
@@ -223,21 +223,10 @@ class AgentRunRegistry:
                 metadata=metadata,
                 observability=self._observability,
             )
-            self._agent_runs[agent_id] = agent_run
-            return agent_run
+            self._agents[agent_id] = agent
+            return agent
 
-    def get(self, agent_id: str) -> AgentRun | None:
+    def get(self, agent_id: str) -> Agent | None:
         with self._lock:
-            return self._agent_runs.get(agent_id)
+            return self._agents.get(agent_id)
 
-
-def _build_session_start_tag(agent_id: str, metadata: dict[str, Any]) -> str:
-    session_id = metadata.get("session_id")
-    if isinstance(session_id, str) and session_id:
-        return (
-            '<session_start '
-            f'agent_id="{escape(agent_id, quote=True)}" '
-            f'session_id="{escape(session_id, quote=True)}"'
-            ">"
-        )
-    return f'<session_start agent_id="{escape(agent_id, quote=True)}">'

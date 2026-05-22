@@ -1,4 +1,4 @@
-from agent_service.services.agent_run import AgentRunRegistry
+from agent_service.services.agent import AgentRegistry
 from agent_service.services.observability import NoopObservability
 from agent_service.services.types.llm import LlmResponse
 
@@ -21,8 +21,8 @@ class StubMcpGateway:
         return '{"ok": true}'
 
 
-def _build_registry() -> AgentRunRegistry:
-    return AgentRunRegistry(  # type: ignore[arg-type]
+def _build_registry() -> AgentRegistry:
+    return AgentRegistry(  # type: ignore[arg-type]
         llm_client=StubLlmClient(),
         mcp_gateway=StubMcpGateway(),
         max_turns=3,
@@ -41,16 +41,17 @@ def test_registry_create_generates_unique_agent_id() -> None:
 
 def test_registry_get_hit_and_miss() -> None:
     registry = _build_registry()
-    agent_run = registry.create(metadata={})
+    agent = registry.create(metadata={})
 
-    assert registry.get(agent_run.get_agent_id()) is agent_run
+    assert registry.get(agent.get_agent_id()) is agent
     assert registry.get("missing") is None
 
 
-def test_agent_run_keeps_metadata_snapshot() -> None:
+def test_agent_keeps_metadata_snapshot() -> None:
     registry = _build_registry()
     metadata = {"session_id": "private_1"}
-    agent_run = registry.create(metadata=metadata)
+    agent = registry.create(metadata=metadata)
     metadata["session_id"] = "mutated"
 
-    assert agent_run.metadata == {"session_id": "private_1"}
+    assert agent.metadata == {"session_id": "private_1"}
+

@@ -11,10 +11,10 @@
   - 语义：仅表示进程存活。
 
 ### 2.2 对外消费（HTTP）
-- `POST {hub.agent_url}/agent-runs`
-  - 请求体（`AgentRunCreateRequest`）：
+- `POST {hub.agent_url}/agents`
+  - 请求体（`AgentCreateRequest`）：
     - `metadata: dict[str, Any]`（hub 当前最小传入 `{"session_id": "<session_id>"}`）
-  - 响应体（`AgentRunCreateResponse`）：
+  - 响应体（`AgentCreateResponse`）：
     - `agent_id: str`
     - `metadata: dict[str, Any]`
 
@@ -74,7 +74,7 @@
 - `session_id -> SessionRunner`（活跃 runner 映射）
 - `session_id -> agent_id`（内存常驻映射，当前版本不回收）
 - 首次看到新 `session_id`：
-  - 先调用 `/agent-runs` 创建 `agent_id`
+  - 先调用 `/agents` 创建 `agent_id`
   - 再创建 runner
 - 后续同会话复用同一 `agent_id`
 
@@ -89,7 +89,7 @@ flowchart TD
     E -->|是| G[SessionRegistry.submit_event]
 
     G --> H{session 是否已有 agent_id?}
-    H -->|否| I[POST /agent-runs]
+    H -->|否| I[POST /agents]
     I --> J[保存 session -> agent_id]
     H -->|是| K[复用 agent_id]
     J --> L[提交给 SessionRunner]
@@ -116,7 +116,7 @@ flowchart TD
 
 ### 5.3 运行依赖
 - Redis（Stream + Consumer Group）
-- `agent-service`（`/agent-runs` + `/chat`）
+- `agent-service`（`/agents` + `/chat`）
 - FastAPI / uvicorn / httpx / redis-py asyncio
 
 ## 6. 非功能性设计
@@ -134,3 +134,4 @@ flowchart TD
 - `session -> agent` 映射当前仅内存常驻，不做 TTL / 回收。
 - 状态内存化不支持跨实例共享与重启恢复。
 - 下游调用 `timeout=None`，避免误超时但缺少硬超时保护。
+

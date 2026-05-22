@@ -10,10 +10,10 @@ EVENT_LABELS = {
     "agent.chat_received": "收到会话请求",
     "agent.chat_completed": "会话处理完成",
     "agent.chat_failed": "会话处理失败",
-    "agent.agent_run_created": "AgentRun 已创建",
-    "agent_run.run_started": "AgentRun 执行开始",
-    "agent_run.run_completed": "AgentRun 执行完成",
-    "agent_run.run_failed": "AgentRun 执行失败",
+    "agent.agent_created": "Agent 已创建",
+    "agent.run_started": "Agent 执行开始",
+    "agent.run_completed": "Agent 执行完成",
+    "agent.run_failed": "Agent 执行失败",
     "agent.observability_start_failed": "观测启动失败",
     "agent.observability_generation_failed": "观测记录 generation 失败",
     "agent.observability_tool_failed": "观测记录工具调用失败",
@@ -58,13 +58,13 @@ DEFAULT_HIGHLIGHT_KEYS = (
 )
 EVENT_HIGHLIGHT_KEYS = {
     "agent_app.boot": ("model", "max_turns", "mcp_sse_url"),
-    "agent.agent_run_created": ("agent_id", "session_id"),
+    "agent.agent_created": ("agent_id", "session_id"),
     "agent.chat_received": ("agent_id", "session_id", "message_count"),
     "agent.chat_completed": ("agent_id", "session_id", "reply_len", "elapsed_ms"),
     "agent.chat_failed": ("agent_id", "session_id", "elapsed_ms"),
-    "agent_run.run_started": ("agent_id", "max_turns", "message_len"),
-    "agent_run.run_completed": ("agent_id", "reply_len", "elapsed_ms"),
-    "agent_run.run_failed": ("agent_id", "elapsed_ms"),
+    "agent.run_started": ("agent_id", "max_turns", "message_len"),
+    "agent.run_completed": ("agent_id", "reply_len", "elapsed_ms"),
+    "agent.run_failed": ("agent_id", "elapsed_ms"),
     "agent.observability_start_failed": ("agent_id",),
     "agent.observability_generation_failed": ("run_id", "turn"),
     "agent.observability_tool_failed": ("run_id", "tool_name"),
@@ -165,3 +165,4 @@ def _silence_framework_loggers() -> None:
         framework_logger.handlers.clear()
         framework_logger.propagate = False
         framework_logger.setLevel(logging.CRITICAL + 1)
+

@@ -10,7 +10,7 @@ class StubOutboundClient:
         self.agent_calls: list[tuple[str, str, list[dict[str, str]]]] = []
         self.reply_calls: list[tuple[str, str]] = []
 
-    async def create_agent_run(self, session_id: str, metadata: dict[str, str]) -> str:
+    async def create_agent(self, session_id: str, metadata: dict[str, str]) -> str:
         self.create_calls.append((session_id, metadata))
         return f"agent-{session_id}"
 

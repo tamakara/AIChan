@@ -1,18 +1,18 @@
 from fastapi import APIRouter, HTTPException
 
 from ..logger import elapsed_ms, get_logger, log_exception, log_info, start_timer
-from ..services import AgentRunRegistry, render_messages_xml
+from ..services import AgentRegistry, render_messages_xml
 from .schemas import (
     ChatRequest,
     ChatResponse,
-    CreateAgentRunRequest,
-    CreateAgentRunResponse,
+    CreateAgentRequest,
+    CreateAgentResponse,
     HealthResponse,
 )
 
 
 def create_router(
-    agent_run_registry: AgentRunRegistry,
+    agent_registry: AgentRegistry,
 ) -> APIRouter:
     # 每次装配时创建独立路由对象，避免测试或重复初始化时重复注册同一路由。
     router = APIRouter()
@@ -22,22 +22,22 @@ def create_router(
     def healthz() -> HealthResponse:
         return HealthResponse(status="ok")
 
-    @router.post("/agent-runs", response_model=CreateAgentRunResponse)
-    def create_agent_run(req: CreateAgentRunRequest) -> CreateAgentRunResponse:
-        agent_run = agent_run_registry.create(metadata=req.metadata)
+    @router.post("/agents", response_model=CreateAgentResponse)
+    def create_agent(req: CreateAgentRequest) -> CreateAgentResponse:
+        agent = agent_registry.create(metadata=req.metadata)
         log_info(
             logger,
-            "agent.agent_run_created",
-            agent_id=agent_run.get_agent_id(),
+            "agent.agent_created",
+            agent_id=agent.get_agent_id(),
         )
-        return CreateAgentRunResponse(agent_id=agent_run.get_agent_id(), metadata=agent_run.metadata)
+        return CreateAgentResponse(agent_id=agent.get_agent_id(), metadata=agent.metadata)
 
     @router.post("/chat", response_model=ChatResponse)
     def chat(req: ChatRequest) -> ChatResponse:
         request_started_at = start_timer()
-        agent_run = agent_run_registry.get(req.agent_id)
-        if agent_run is None:
-            raise HTTPException(status_code=404, detail="agent_run not found")
+        agent = agent_registry.get(req.agent_id)
+        if agent is None:
+            raise HTTPException(status_code=404, detail="agent not found")
 
         log_info(
             logger,
@@ -50,7 +50,7 @@ def create_router(
             user_message = render_messages_xml(
                 messages=req.messages,
             )
-            reply = agent_run.run(
+            reply = agent.run(
                 user_message=user_message,
                 message_count=len(req.messages),
             )
@@ -72,3 +72,4 @@ def create_router(
         return ChatResponse(reply=reply)
 
     return router
+

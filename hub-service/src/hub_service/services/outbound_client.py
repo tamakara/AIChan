@@ -6,11 +6,11 @@ import httpx
 
 from ..logger import elapsed_ms, get_logger, log_info, start_timer
 from ..router.schemas import (
+    AgentCreateRequest,
+    AgentCreateResponse,
     AgentChatRequest,
     AgentChatResponse,
     AgentInboundMessage,
-    AgentRunCreateRequest,
-    AgentRunCreateResponse,
 )
 from .redis_stream import HubRedisStream
 
@@ -26,11 +26,11 @@ class OutboundClient:
         self._redis_stream = redis_stream
         self._client = httpx.AsyncClient(timeout=None)
 
-    async def create_agent_run(self, session_id: str, metadata: dict[str, Any]) -> str:
+    async def create_agent(self, session_id: str, metadata: dict[str, Any]) -> str:
         started_at = start_timer()
-        payload = AgentRunCreateRequest(metadata=metadata)
-        data = await self._post_json(f"{self._agent_service_url}/agent-runs", payload.model_dump())
-        response = AgentRunCreateResponse.model_validate(data)
+        payload = AgentCreateRequest(metadata=metadata)
+        data = await self._post_json(f"{self._agent_service_url}/agents", payload.model_dump())
+        response = AgentCreateResponse.model_validate(data)
         log_info(
             self._logger,
             "hub.downstream_called",

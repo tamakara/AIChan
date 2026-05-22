@@ -27,7 +27,7 @@ class SessionRegistry:
             if runner is None:
                 agent_id = self._session_agent_ids.get(event.session_id)
                 if agent_id is None:
-                    agent_id = await self._outbound_client.create_agent_run(
+                    agent_id = await self._outbound_client.create_agent(
                         session_id=event.session_id,
                         metadata={"session_id": event.session_id},
                     )

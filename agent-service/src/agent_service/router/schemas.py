@@ -11,13 +11,13 @@ class ChatMessage(BaseModel):
     event_time: str = Field(min_length=1)
 
 
-class CreateAgentRunRequest(BaseModel):
+class CreateAgentRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
-class CreateAgentRunResponse(BaseModel):
+class CreateAgentResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     agent_id: str
@@ -41,3 +41,4 @@ class HealthResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     status: str
+
