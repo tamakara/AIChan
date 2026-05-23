@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timezone
-from typing import Any, Literal
+from typing import Any
 from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -15,10 +15,7 @@ class EventStreamMessage(BaseModel):
 
     event_id: str
     session_id: str
-    user_id: str
-    content: str
-    source: Literal["qq"]
-    message_type: Literal["group", "private"]
+    event_xml: str
     raw_event: dict[str, Any]
     created_at: str
 
@@ -28,10 +25,7 @@ class EventStreamMessage(BaseModel):
         return cls(
             event_id=str(uuid4()),
             session_id=payload.session_id,
-            user_id=payload.user_id,
-            content=payload.content,
-            source=payload.source,
-            message_type=payload.message_type,
+            event_xml=payload.event_xml,
             raw_event=payload.raw_event,
             created_at=datetime.now(timezone.utc).isoformat(),
         )
@@ -40,10 +34,7 @@ class EventStreamMessage(BaseModel):
         return {
             "event_id": self.event_id,
             "session_id": self.session_id,
-            "user_id": self.user_id,
-            "content": self.content,
-            "source": self.source,
-            "message_type": self.message_type,
+            "event_xml": self.event_xml,
             "raw_event": json.dumps(self.raw_event, ensure_ascii=False),
             "created_at": self.created_at,
         }

@@ -73,5 +73,5 @@ services:
         condition: service_started
     volumes:
       - ./hub-service/config.yml:/app/hub-service/config.yml:ro
-    ports:
+    ports: 
       - "8020:8020"

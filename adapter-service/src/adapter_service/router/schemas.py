@@ -1,4 +1,4 @@
-from typing import Any, Literal
+from typing import Any
 
 from pydantic import BaseModel
 
@@ -25,10 +25,7 @@ class MessageHistoryResponse(BaseModel):
 
 class FilteredEventPayload(BaseModel):
     session_id: str
-    user_id: str
-    content: str
-    source: Literal["qq"] = "qq"
-    message_type: Literal["group", "private"]
+    event_xml: str
     raw_event: dict[str, Any]
 
 

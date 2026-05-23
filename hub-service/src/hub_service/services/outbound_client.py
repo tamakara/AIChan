@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Any
 
 import httpx
 
@@ -10,7 +10,6 @@ from ..router.schemas import (
     AgentCreateResponse,
     AgentChatRequest,
     AgentChatResponse,
-    AgentInboundMessage,
 )
 from .redis_stream import HubRedisStream
 
@@ -44,14 +43,12 @@ class OutboundClient:
         self,
         session_id: str,
         agent_id: str,
-        messages: list[AgentInboundMessage],
-        message_mode: Literal["start", "append"],
+        batch_xml: str,
     ) -> str:
         started_at = start_timer()
         payload = AgentChatRequest(
             agent_id=agent_id,
-            messages=messages,
-            message_mode=message_mode,
+            batch=batch_xml,
         )
         data = await self._post_json(f"{self._agent_service_url}/chat", payload.model_dump())
         response = AgentChatResponse.model_validate(data)

@@ -13,10 +13,7 @@ class EventStreamMessage(BaseModel):
 
     event_id: str
     session_id: str
-    user_id: str
-    content: str
-    source: Literal["qq"]
-    message_type: Literal["group", "private"]
+    event_xml: str
     raw_event: dict[str, Any]
     created_at: str
 
@@ -26,10 +23,7 @@ class EventStreamMessage(BaseModel):
         return cls(
             event_id=fields.get("event_id", ""),
             session_id=fields.get("session_id", ""),
-            user_id=fields.get("user_id", ""),
-            content=fields.get("content", ""),
-            source=fields.get("source", "qq"),  # type: ignore[arg-type]
-            message_type=fields.get("message_type", "private"),  # type: ignore[arg-type]
+            event_xml=fields.get("event_xml", ""),
             raw_event=raw_event if isinstance(raw_event, dict) else {},
             created_at=fields.get("created_at", ""),
         )

@@ -56,15 +56,14 @@ class EventConsumerWorker:
             handled_started_at = start_timer()
             try:
                 event = EventStreamMessage.from_stream_fields(fields)
-                if not event.content.strip():
-                    # hub 只保留最小保底校验，避免空内容进入 session 运行器造成无效调度。
+                if not event.event_xml.strip():
+                    # hub 只保留最小保底校验，避免空事件 XML 进入 session 运行器造成无效调度。
                     await self._redis_stream.ack_event(message_id)
                     log_info(
                         self._logger,
                         "hub.event_skipped",
                         message_id=message_id,
-                        message_type=event.message_type,
-                        reason="empty_content",
+                        reason="empty_event_xml",
                     )
                     continue
                 raw_event_time = event.raw_event.get("time")
@@ -75,7 +74,6 @@ class EventConsumerWorker:
                         self._logger,
                         "hub.event_skipped",
                         message_id=message_id,
-                        message_type=event.message_type,
                         reason="missing_event_time",
                     )
                     continue

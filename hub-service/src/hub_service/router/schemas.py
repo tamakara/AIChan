@@ -1,4 +1,4 @@
-from typing import Any, Literal
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -9,12 +9,10 @@ class HealthResponse(BaseModel):
     status: str = "ok"
 
 
-class AgentInboundMessage(BaseModel):
+class AgentInboundEvent(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    user_id: str = Field(min_length=1)
-    content: str = Field(min_length=1)
-    event_time: str = Field(min_length=1)
+    event_xml: str = Field(min_length=1)
 
 
 class AgentCreateRequest(BaseModel):
@@ -34,8 +32,7 @@ class AgentChatRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     agent_id: str = Field(min_length=1)
-    messages: list[AgentInboundMessage] = Field(min_length=1)
-    message_mode: Literal["start", "append"] = "start"
+    batch: str = Field(min_length=1)
 
 
 class AgentChatResponse(BaseModel):

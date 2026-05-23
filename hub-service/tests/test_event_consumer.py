@@ -41,10 +41,9 @@ def test_private_event_is_forwarded_and_acked() -> None:
                     {
                         "event_id": "ev1",
                         "session_id": "private_1",
-                        "user_id": "qq_1",
-                        "content": "hello",
-                        "source": "qq",
-                        "message_type": "private",
+                        "event_xml": '<message message_type="private" sub_type="friend" '
+                        'message_id="11" session_id="private_1" user_id="qq_1" '
+                        'time="1710000000">hello</message>',
                         "raw_event": "{\"time\":1710000000,\"k\":1}",
                         "created_at": "2026-01-01T00:00:00+00:00",
                     },
@@ -73,10 +72,9 @@ def test_group_event_is_forwarded_and_acked() -> None:
                     {
                         "event_id": "ev1",
                         "session_id": "group_1",
-                        "user_id": "qq_1",
-                        "content": "hello",
-                        "source": "qq",
-                        "message_type": "group",
+                        "event_xml": '<message message_type="group" sub_type="normal" '
+                        'message_id="11" session_id="group_1" user_id="qq_1" '
+                        'time="1710000000">hello</message>',
                         "raw_event": "{\"time\":1710000000,\"k\":1}",
                         "created_at": "2026-01-01T00:00:00+00:00",
                     },
@@ -105,10 +103,7 @@ def test_private_empty_content_is_acked_and_ignored() -> None:
                     {
                         "event_id": "ev1",
                         "session_id": "private_1",
-                        "user_id": "qq_1",
-                        "content": "   ",
-                        "source": "qq",
-                        "message_type": "private",
+                        "event_xml": "   ",
                         "raw_event": "{\"time\":1710000000,\"k\":1}",
                         "created_at": "2026-01-01T00:00:00+00:00",
                     },
@@ -137,10 +132,9 @@ def test_missing_raw_event_time_is_acked_and_ignored() -> None:
                     {
                         "event_id": "ev1",
                         "session_id": "private_1",
-                        "user_id": "qq_1",
-                        "content": "hello",
-                        "source": "qq",
-                        "message_type": "private",
+                        "event_xml": '<message message_type="private" sub_type="friend" '
+                        'message_id="11" session_id="private_1" user_id="qq_1" '
+                        'time="1710000000">hello</message>',
                         "raw_event": "{\"k\":1}",
                         "created_at": "2026-01-01T00:00:00+00:00",
                     },

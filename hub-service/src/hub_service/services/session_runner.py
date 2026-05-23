@@ -5,8 +5,9 @@ from collections.abc import Awaitable, Callable
 from typing import Literal
 
 from ..logger import elapsed_ms, get_logger, log_exception, log_info, start_timer
-from ..router.schemas import AgentInboundMessage
+from ..router.schemas import AgentInboundEvent
 from .outbound_client import OutboundClient
+from .tag_builder import build_batch_xml
 
 IdleCallback = Callable[[str, "SessionRunner"], Awaitable[None]]
 
@@ -26,7 +27,7 @@ class SessionRunner:
         self._outbound_client = outbound_client
         self._debounce_seconds = debounce_seconds
         self._on_idle = on_idle
-        self._pending_messages: list[tuple[int, AgentInboundMessage]] = []
+        self._pending_events: list[tuple[int, AgentInboundEvent]] = []
         self._debounce_deadline: float | None = None
         self._debounce_task: asyncio.Task[None] | None = None
         self._running = False
@@ -36,7 +37,7 @@ class SessionRunner:
         self._reply_cycle_active = False
         self._lock = asyncio.Lock()
 
-    async def submit_message(self, message: AgentInboundMessage) -> None:
+    async def submit_message(self, message: AgentInboundEvent) -> None:
         loop = asyncio.get_running_loop()
         async with self._lock:
             if self._stopping:
@@ -46,7 +47,7 @@ class SessionRunner:
             message_seq = self._message_seq
             self._latest_message_seq = message_seq
             # 为每条消息打单调序号，后续可用“批次最大序号”判断本轮回复是否已经过时。
-            self._pending_messages.append((message_seq, message))
+            self._pending_events.append((message_seq, message))
             self._debounce_deadline = loop.time() + self._debounce_seconds
 
             if self._running:
@@ -99,13 +100,13 @@ class SessionRunner:
                     self._debounce_task = None
                     should_notify_idle = False
                     break
-                if not self._pending_messages:
+                if not self._pending_events:
                     self._debounce_task = None
                     should_notify_idle = self._is_idle_locked()
                     break
 
-                batched_items = self._pending_messages.copy()
-                self._pending_messages.clear()
+                batched_items = self._pending_events.copy()
+                self._pending_events.clear()
                 self._running = True
                 self._debounce_deadline = None
                 self._debounce_task = None
@@ -117,17 +118,21 @@ class SessionRunner:
         if should_notify_idle:
             await self._on_idle(self._session_id, self)
 
-    async def _run_once(self, items: list[tuple[int, AgentInboundMessage]]) -> None:
+    async def _run_once(self, items: list[tuple[int, AgentInboundEvent]]) -> None:
         run_started_at = start_timer()
-        messages = [message for _, message in items]
-        batch_max_seq = items[-1][0]
+        events = [event for _, event in items]
         message_mode = self._resolve_message_mode()
+        batch_xml = build_batch_xml(
+            event_xmls=[event.event_xml for event in events],
+            batch_type=message_mode,
+        )
+        batch_max_seq = items[-1][0]
         log_info(
             self._logger,
             "hub.session_run_started",
             session_id=self._session_id,
             agent_id=self._agent_id,
-            message_count=len(messages),
+            message_count=len(events),
             message_mode=message_mode,
         )
         try:
@@ -136,8 +141,7 @@ class SessionRunner:
             reply = await self._outbound_client.call_agent(
                 session_id=self._session_id,
                 agent_id=self._agent_id,
-                messages=messages,
-                message_mode=message_mode,
+                batch_xml=batch_xml,
             )
             should_send, reason = await self._decide_reply_delivery(batch_max_seq=batch_max_seq)
             if should_send:
@@ -173,7 +177,7 @@ class SessionRunner:
             should_notify_idle = False
             async with self._lock:
                 self._running = False
-                if self._pending_messages and not self._stopping:
+                if self._pending_events and not self._stopping:
                     # 只要进入重跑，就重新开启完整防抖窗口；避免“运行中早到消息”导致立即重跑。
                     self._debounce_deadline = (
                         asyncio.get_running_loop().time() + self._debounce_seconds
@@ -212,7 +216,7 @@ class SessionRunner:
     def _is_idle_locked(self) -> bool:
         if self._running:
             return False
-        if self._pending_messages:
+        if self._pending_events:
             return False
         if self._debounce_task is not None and not self._debounce_task.done():
             return False

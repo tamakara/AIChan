@@ -1,14 +1,6 @@
-from typing import Any, Literal
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
-
-
-class ChatMessage(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    user_id: str = Field(min_length=1)
-    content: str = Field(min_length=1)
-    event_time: str = Field(min_length=1)
 
 
 class CreateAgentRequest(BaseModel):
@@ -28,8 +20,7 @@ class ChatRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     agent_id: str = Field(min_length=1)
-    messages: list[ChatMessage] = Field(min_length=1)
-    message_mode: Literal["start", "append"] = "start"
+    batch: str = Field(min_length=1)
 
 
 class ChatResponse(BaseModel):

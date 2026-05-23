@@ -36,8 +36,11 @@ def test_private_text_clean_pass(service: AdapterService) -> None:
     assert result.accepted is True
     assert result.payload is not None
     assert result.payload.session_id == "private_20002"
-    assert result.payload.user_id == "qq_20002"
-    assert result.payload.content == "??  ??"
+    assert (
+        result.payload.event_xml
+        == '<message message_type="private" sub_type="friend" message_id="11" '
+        'session_id="private_20002" user_id="qq_20002" time="1710000000">??  ??</message>'
+    )
 
 
 def test_group_without_at_is_filtered(service: AdapterService) -> None:
@@ -152,6 +155,138 @@ def test_group_message_can_be_enabled_by_adapter_whitelist() -> None:
     assert result.accepted is True
     assert result.payload is not None
     assert result.payload.session_id == "group_30003"
+    assert 'message_type="group"' in result.payload.event_xml
+    assert 'sub_type="normal"' in result.payload.event_xml
+    assert 'message_id="15"' in result.payload.event_xml
+    assert 'session_id="group_30003"' in result.payload.event_xml
+
+
+def test_private_poke_notice_event_pass(service: AdapterService) -> None:
+    raw = {
+        "time": 1710000000,
+        "self_id": 10001,
+        "post_type": "notice",
+        "notice_type": "notify",
+        "sub_type": "poke",
+        "user_id": 20002,
+        "target_id": 10001,
+    }
+    result = service.clean_event(raw)
+    assert result.accepted is True
+    assert result.payload is not None
+    assert result.payload.session_id == "private_20002"
+    assert (
+        result.payload.event_xml
+        == '<poke session_id="private_20002" user_id="qq_20002" target_id="qq_10001" />'
+    )
+
+
+def test_group_poke_notice_is_filtered_by_private_whitelist(service: AdapterService) -> None:
+    raw = {
+        "time": 1710000000,
+        "self_id": 10001,
+        "post_type": "notice",
+        "notice_type": "notify",
+        "sub_type": "poke",
+        "group_id": 30003,
+        "user_id": 20002,
+        "target_id": 10001,
+    }
+    result = service.clean_event(raw)
+    assert result.accepted is False
+    assert result.ignore_reason == "message_type_filtered"
+
+
+def test_group_poke_notice_can_be_enabled_by_adapter_whitelist() -> None:
+    service = AdapterService(allowed_message_types={"private", "group"})
+    raw = {
+        "time": 1710000000,
+        "self_id": 10001,
+        "post_type": "notice",
+        "notice_type": "notify",
+        "sub_type": "poke",
+        "group_id": 30003,
+        "user_id": 20002,
+        "target_id": 10001,
+    }
+    result = service.clean_event(raw)
+    assert result.accepted is True
+    assert result.payload is not None
+    assert result.payload.session_id == "group_30003"
+    assert (
+        result.payload.event_xml
+        == '<poke session_id="group_30003" user_id="qq_20002" target_id="qq_10001" />'
+    )
+
+
+def test_group_recall_notice_is_filtered_by_private_whitelist(service: AdapterService) -> None:
+    raw = {
+        "time": 1710000000,
+        "self_id": 10001,
+        "post_type": "notice",
+        "notice_type": "group_recall",
+        "group_id": 30003,
+        "operator_id": 40004,
+        "user_id": 20002,
+        "message_id": 16,
+    }
+    result = service.clean_event(raw)
+    assert result.accepted is False
+    assert result.ignore_reason == "message_type_filtered"
+
+
+def test_group_recall_notice_can_be_enabled_by_adapter_whitelist() -> None:
+    service = AdapterService(allowed_message_types={"private", "group"})
+    raw = {
+        "time": 1710000000,
+        "self_id": 10001,
+        "post_type": "notice",
+        "notice_type": "group_recall",
+        "group_id": 30003,
+        "operator_id": 40004,
+        "user_id": 20002,
+        "message_id": 16,
+    }
+    result = service.clean_event(raw)
+    assert result.accepted is True
+    assert result.payload is not None
+    assert result.payload.session_id == "group_30003"
+    assert (
+        result.payload.event_xml
+        == '<recall session_id="group_30003" user_id="qq_20002" message_id="16" />'
+    )
+
+
+def test_friend_recall_notice_event_pass(service: AdapterService) -> None:
+    raw = {
+        "time": 1710000000,
+        "self_id": 10001,
+        "post_type": "notice",
+        "notice_type": "friend_recall",
+        "user_id": 20002,
+        "message_id": 17,
+    }
+    result = service.clean_event(raw)
+    assert result.accepted is True
+    assert result.payload is not None
+    assert result.payload.session_id == "private_20002"
+    assert (
+        result.payload.event_xml
+        == '<recall session_id="private_20002" user_id="qq_20002" message_id="17" />'
+    )
+
+
+def test_notice_event_missing_time_is_filtered(service: AdapterService) -> None:
+    raw = {
+        "self_id": 10001,
+        "post_type": "notice",
+        "notice_type": "friend_recall",
+        "user_id": 20002,
+        "message_id": 17,
+    }
+    result = service.clean_event(raw)
+    assert result.accepted is False
+    assert result.ignore_reason == "missing_event_time"
 
 
 def test_build_send_message_action_group(service: AdapterService) -> None:

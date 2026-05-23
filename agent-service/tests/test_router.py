@@ -54,6 +54,10 @@ def _create_agent(client: TestClient, metadata: dict | None = None) -> str:
     return data["agent_id"]
 
 
+def _batch(inner: str, batch_type: str = "start") -> str:
+    return f'<batch type="{batch_type}">{inner}</batch>'
+
+
 def test_healthz() -> None:
     client = build_client(StubLlmClient())
     response = client.get("/healthz")
@@ -91,13 +95,11 @@ def test_chat_returns_404_when_agent_not_created() -> None:
         "/chat",
         json={
             "agent_id": "not-created",
-            "messages": [
-                {
-                    "user_id": "qq_1",
-                    "content": "hello",
-                    "event_time": "1710000000",
-                }
-            ],
+            "batch": _batch(
+                '<message message_type="private" sub_type="friend" '
+                'message_id="11" session_id="private_1" user_id="qq_1" '
+                'time="1710000000">hello</message>'
+            ),
         },
     )
 
@@ -121,23 +123,26 @@ def test_chat_uses_existing_agent_and_injects_context() -> None:
         "/chat",
         json={
             "agent_id": agent_id,
-            "messages": [
-                {
-                    "user_id": "qq_1",
-                    "content": "hello",
-                    "event_time": "1710000000",
-                }
-            ],
+            "batch": _batch(
+                '<message message_type="private" sub_type="friend" '
+                'message_id="11" session_id="private_1" user_id="qq_1" '
+                'time="1710000000">hello</message>'
+            ),
         },
     )
 
     assert response.status_code == 200
-    assert response.json()["reply"].startswith('echo:<messages mode="start"><message')
+    assert response.json()["reply"].startswith('echo:<batch type="start"><message')
     assert len(llm_client.calls) == 1
 
     called_messages = llm_client.calls[0]
     called_message = str(called_messages[-1]["content"])
-    assert called_message == '<messages mode="start"><message user_id="qq_1" event_time="1710000000">hello</message></messages>'
+    assert (
+        called_message
+        == '<batch type="start"><message message_type="private" sub_type="friend" '
+        'message_id="11" session_id="private_1" user_id="qq_1" '
+        'time="1710000000">hello</message></batch>'
+    )
 
     # Agent 给模型传入的是运行前快照：两条 system + 本轮 user。
     assert len(called_messages) == 3
@@ -164,26 +169,22 @@ def test_chat_reuses_existing_agent() -> None:
         "/chat",
         json={
             "agent_id": agent_id,
-            "messages": [
-                {
-                    "user_id": "qq_1",
-                    "content": "hello",
-                    "event_time": "1710000000",
-                }
-            ],
+            "batch": _batch(
+                '<message message_type="private" sub_type="friend" '
+                'message_id="11" session_id="private_1" user_id="qq_1" '
+                'time="1710000000">hello</message>'
+            ),
         },
     )
     second = client.post(
         "/chat",
         json={
             "agent_id": agent_id,
-            "messages": [
-                {
-                    "user_id": "qq_1",
-                    "content": "again",
-                    "event_time": "1710000001",
-                }
-            ],
+            "batch": _batch(
+                '<message message_type="private" sub_type="friend" '
+                'message_id="12" session_id="private_1" user_id="qq_1" '
+                'time="1710000001">again</message>'
+            ),
         },
     )
 
@@ -200,7 +201,7 @@ def test_chat_reuses_existing_agent() -> None:
     assert f"echo:{first_user_xml}" in second_call_contents
 
 
-def test_chat_uses_append_mode_messages_wrapper_when_requested() -> None:
+def test_chat_accepts_append_batch_type_when_requested() -> None:
     llm_client = StubLlmClient()
     client = build_client(llm_client=llm_client)
     agent_id = _create_agent(client, {"session_id": "private_1"})
@@ -209,20 +210,23 @@ def test_chat_uses_append_mode_messages_wrapper_when_requested() -> None:
         "/chat",
         json={
             "agent_id": agent_id,
-            "message_mode": "append",
-            "messages": [
-                {
-                    "user_id": "qq_1",
-                    "content": "again",
-                    "event_time": "1710000001",
-                }
-            ],
+            "batch": _batch(
+                '<message message_type="private" sub_type="friend" '
+                'message_id="12" session_id="private_1" user_id="qq_1" '
+                'time="1710000001">again</message>',
+                batch_type="append",
+            ),
         },
     )
 
     assert response.status_code == 200
     called_message = str(llm_client.calls[0][-1]["content"])
-    assert called_message == '<messages mode="append"><message user_id="qq_1" event_time="1710000001">again</message></messages>'
+    assert (
+        called_message
+        == '<batch type="append"><message message_type="private" sub_type="friend" '
+        'message_id="12" session_id="private_1" user_id="qq_1" '
+        'time="1710000001">again</message></batch>'
+    )
 
 
 def test_chat_returns_500_when_agent_fails() -> None:
@@ -235,13 +239,11 @@ def test_chat_returns_500_when_agent_fails() -> None:
         "/chat",
         json={
             "agent_id": agent_id,
-            "messages": [
-                {
-                    "user_id": "qq_1",
-                    "content": "hello",
-                    "event_time": "1710000000",
-                }
-            ],
+            "batch": _batch(
+                '<message message_type="private" sub_type="friend" '
+                'message_id="11" session_id="private_1" user_id="qq_1" '
+                'time="1710000000">hello</message>'
+            ),
         },
     )
 
@@ -249,11 +251,11 @@ def test_chat_returns_500_when_agent_fails() -> None:
     assert response.json()["detail"] == "stub failure"
 
 
-def test_chat_returns_422_when_messages_empty() -> None:
+def test_chat_returns_422_when_batch_empty() -> None:
     client = build_client(StubLlmClient())
     agent_id = _create_agent(client)
 
-    response = client.post("/chat", json={"agent_id": agent_id, "messages": []})
+    response = client.post("/chat", json={"agent_id": agent_id, "batch": ""})
 
     assert response.status_code == 422
 
@@ -266,12 +268,16 @@ def test_chat_returns_422_when_legacy_extra_fields_passed() -> None:
         "/chat",
         json={
             "agent_id": agent_id,
+            "batch": _batch(
+                '<message message_type="private" sub_type="friend" '
+                'message_id="11" session_id="private_1" user_id="qq_1" '
+                'time="1710000000">hello</message>'
+            ),
             "messages": [
                 {
                     "user_id": "qq_1",
-                    "content": "hello",
+                    "content": "legacy",
                     "event_time": "1710000000",
-                    "event_id": "legacy",
                 }
             ],
             "metadata": {"session_id": "legacy"},

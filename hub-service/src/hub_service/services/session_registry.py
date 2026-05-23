@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 
-from ..router.schemas import AgentInboundMessage
+from ..router.schemas import AgentInboundEvent
 from .outbound_client import OutboundClient
 from .session_runner import SessionRunner
 from .stream_models import EventStreamMessage
@@ -42,11 +42,7 @@ class SessionRegistry:
                 )
                 self._runners[event.session_id] = runner
             await runner.submit_message(
-                AgentInboundMessage(
-                    user_id=event.user_id,
-                    content=event.content,
-                    event_time=extract_event_time(event),
-                )
+                AgentInboundEvent(event_xml=event.event_xml)
             )
 
     async def shutdown(self) -> None:
@@ -69,17 +65,3 @@ class SessionRegistry:
             if self._runners.get(session_id) is runner:
                 if await runner.is_idle():
                     self._runners.pop(session_id, None)
-
-
-def extract_event_time(event: EventStreamMessage) -> str:
-    # 只接受 OneBot 原始事件时间，避免把接入层入流时间误判为用户发言时间。
-    time_value = event.raw_event.get("time")
-    if isinstance(time_value, bool):
-        raise ValueError("raw_event.time is required and must be an integer-like timestamp")
-    if isinstance(time_value, int):
-        return str(time_value)
-    if isinstance(time_value, float) and time_value.is_integer():
-        return str(int(time_value))
-    if isinstance(time_value, str) and time_value.strip().isdigit():
-        return str(int(time_value.strip()))
-    raise ValueError("raw_event.time is required and must be an integer-like timestamp")

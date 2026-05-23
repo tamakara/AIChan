@@ -4,6 +4,11 @@
 `hub-service` 是会话编排中枢：从 `qq.events` 消费事件，做最小保底校验后按 `session_id` 进入防抖与串行调度，调用 `agent-service` 生成回复，再写回 `qq.actions`。  
 不负责 QQ 协议接入与消息发送执行（发送由 `adapter-service` 完成）。
 
+协议说明：
+- 统一内部消息协议草案见 [message-protocol.md](message-protocol.md)。
+- 目标协议中，hub 负责把单条事件标签（`<message ...>` / `<poke ... />` / `<recall ... />`）按调度策略组装成 `<batch type="start|append">...</batch>`。
+- 当前实现已消费 `event_xml` 并透传组装后的 `<batch>` 给 `agent-service`。
+
 ## 2. 接口契约
 ### 2.1 对外提供（HTTP）
 - `GET /healthz`
@@ -21,12 +26,7 @@
 - `POST {hub.agent_url}/chat`
   - 请求体（`AgentChatRequest`）：
     - `agent_id: str`
-    - `messages: list[AgentInboundMessage]`（最少 1 条）
-    - `message_mode: "start" | "append"`（首轮为 `start`，同一回复链路重跑为 `append`）
-    - `AgentInboundMessage` 固定字段：
-      - `user_id: str`
-      - `event_time: str`
-      - `content: str`
+    - `batch: str`（最少 1 字符，内容是 `<batch type="start|append">...</batch>`）
   - 成功响应体（`AgentChatResponse`）：
     - `reply: str`
   - 失败语义：
@@ -38,9 +38,9 @@
 - 输入流：`redis.events_stream`（默认 `qq.events`）
 - 读取方式：`XREADGROUP`（group=`redis.events_group`，consumer=`redis.events_consumer`）
 - 消息字段（`EventStreamMessage`）：
-  - `event_id`、`session_id`、`user_id`、`content`、`source`、`message_type`、`raw_event`、`created_at`
+  - `event_id`、`session_id`、`event_xml`、`raw_event`、`created_at`
 - 消费规则：
-  - `content` 去空白后为空：ACK + `hub.event_skipped(reason=empty_content)`
+  - `event_xml` 去空白后为空：ACK + `hub.event_skipped(reason=empty_event_xml)`
   - `raw_event.time` 缺失或不可解析：ACK + `hub.event_skipped(reason=missing_event_time)`
   - 合法事件：提交 `SessionRegistry`，成功后 ACK + `hub.event_submitted`
   - 非法结构：`hub.event_dropped` 后 ACK
@@ -59,21 +59,21 @@
 ### 3.1 事件输入模型（`EventStreamMessage`）
 - 业务主键：`event_id`
 - 会话归并键：`session_id`
-- 文本字段：`content`（hub 只做空文本保底）
-- 审计上下文：`raw_event`（`event_time` 必须从 `raw_event.time` 提取）
+- 事件字段：`event_xml`（hub 只做空事件 XML 保底）
+- 审计上下文：`raw_event`（事件时间仅认 `raw_event.time`）
 
 ### 3.2 会话运行模型（`SessionRunner`）
-- `pending_messages: list[tuple[seq, AgentInboundMessage]]`
+- `pending_events: list[tuple[seq, AgentInboundEvent]]`
 - `running: bool`
 - `debounce_deadline: float | None`
 - `debounce_task: Task | None`
 - `reply_cycle_active: bool`
 - 语义：
   - 同一 `session_id` 串行
-  - 防抖窗口内合并为一个 `messages` 批次
+  - 防抖窗口内合并为一个 `batch` 批次
   - 每条消息入队时分配单调递增 `seq`，用于判断“当前回复是否已过时”
   - 若本轮回复因新消息被判定过时，重跑前会重新等待一次完整 `debounce_seconds`；等待期间有新消息会继续重置计时
-  - 回复链路内首次调用 agent 使用 `message_mode=start`，若因新消息导致重跑则使用 `message_mode=append`
+  - 回复链路内首次调用 agent 使用 `batch.type=start`，若因新消息导致重跑则使用 `batch.type=append`
 
 ### 3.3 会话注册表（`SessionRegistry`）
 - `session_id -> SessionRunner`（活跃 runner 映射）
@@ -88,7 +88,7 @@
 ```mermaid
 flowchart TD
     A[消费 qq.events] --> B[解析并校验 EventStreamMessage]
-    B --> C{content 非空且 raw_event.time 合法?}
+    B --> C{event_xml 非空且 raw_event.time 合法?}
     C -->|否| D[ACK + event_skipped]
     C -->|是| E[SessionRegistry.submit_event]
 
@@ -119,25 +119,25 @@ flowchart TD
 ```
 
 ### 4.2 SessionRunner 状态机（单会话）
-- `pending_messages`：当前会话待处理消息队列（每条消息附带单调递增 `seq`）。
+- `pending_events`：当前会话待处理事件队列（每条事件附带单调递增 `seq`）。
 - `running`：是否正在执行一轮 agent 调用。
 - `debounce_deadline`：下一次允许启动运行的最早时间点。
-- `reply_cycle_active`：是否处于同一回复链路中（决定 `message_mode=start/append`）。
+- `reply_cycle_active`：是否处于同一回复链路中（决定 `batch.type=start/append`）。
 
 状态切换规则：
 - 收到消息时：
-  - 追加到 `pending_messages`。
+  - 追加到 `pending_events`。
   - `latest_seq` 更新为当前消息的 `seq`。
   - `debounce_deadline` 总是刷新为 `now + debounce_seconds`。
   - 若当前 `running=True`，只更新队列和截止时间，不会打断当前 agent 调用。
 - 防抖到期且可运行时：
-  - 复制 `pending_messages` 形成本轮批次并清空队列。
+  - 复制 `pending_events` 形成本轮批次并清空队列。
   - 设置 `running=True` 后调用 agent。
 - 运行完成后的发送决策：
   - 若 `latest_seq > batch_max_seq`：说明运行期间来了新消息，本轮回复过时，直接丢弃。
   - 否则发送本轮回复。
 - 需要重跑时：
-  - 只要 `pending_messages` 非空，都会重置 `debounce_deadline=now+debounce_seconds`。
+  - 只要 `pending_events` 非空，都会重置 `debounce_deadline=now+debounce_seconds`。
   - 这保证“每次重跑前都要重新走完整防抖窗口”，窗口内有新消息会继续重置计时。
 
 ### 4.3 连发场景时序图（含重跑前再次防抖）
@@ -174,7 +174,7 @@ sequenceDiagram
 ### 4.4 关键判定点
 - `latest_seq > batch_max_seq` 的含义：
   - 本轮请求发送给 agent 的输入批次已经“落后于当前最新消息”，回复必须丢弃。
-- `mode=start` 与 `mode=append`：
+- `batch.type=start` 与 `batch.type=append`：
   - `start`：当前回复链路的首轮调用。
   - `append`：同一回复链路内，因新消息触发的重跑轮次。
 - 丢弃策略边界：
@@ -214,4 +214,3 @@ sequenceDiagram
 - 状态内存化不支持跨实例共享与重启恢复。
 - 下游调用 `timeout=None`，避免误超时但缺少硬超时保护。
 - 当用户持续高频连发且始终未达到防抖静默窗口时，会延后触发 agent 生成。
-

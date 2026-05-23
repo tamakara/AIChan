@@ -4,6 +4,11 @@
 `adapter-service` 是 QQ 协议适配层：连接 OneBot v11 反向 WebSocket，把入站消息事件规范化并按配置做业务过滤后写入 `qq.events`，并消费 `qq.actions` 执行发送动作。  
 不负责会话编排与 agent 调度（这些由 `hub-service` 负责）。
 
+协议说明：
+- 统一内部消息协议草案见 [message-protocol.md](message-protocol.md)。
+- 目标协议中，adapter 产出单条事件标签：`<message ...>`、`<poke ... />`、`<recall ... />`。
+- 当前实现已把 OneBot `message` 事件与 `notice` 事件（`poke`、`friend_recall`、`group_recall`）转换为 `event_xml` 入流。
+
 ## 2. 接口契约
 ### 2.1 对外提供（HTTP/WS）
 - `GET /healthz`
@@ -57,11 +62,15 @@
 ### 2.4 对外产出（Redis Stream）
 - 写入流：`redis.events_stream`（默认 `qq.events`）
 - 消息结构（`EventStreamMessage`）：
-  - `event_id`、`session_id`、`user_id`、`content`、`source`、`message_type`、`raw_event`、`created_at`
+  - `event_id`、`session_id`、`event_xml`、`raw_event`、`created_at`
 - 产出规则：
-  - 只接收 OneBot 消息事件并做结构化清洗。
+  - 接收 OneBot `message` 与指定 `notice` 事件并做结构化清洗。
   - 按 `adapter.allowed_message_types` 过滤 `message_type`。
-  - 清洗后空文本事件会在适配层直接丢弃。
+  - 清洗后空文本（仅 message）、缺失 `message_id`（仅 message）或缺失 `raw_event.time` 的事件会在适配层直接丢弃。
+  - 通过统一 XML 标签入流：
+    - `message`：`<message message_type="..." sub_type="..." message_id="..." session_id="..." user_id="..." time="...">...</message>`
+    - `poke`：`<poke session_id="..." user_id="..." target_id="..." />`
+    - `recall`：`<recall session_id="..." user_id="..." message_id="..." />`
 
 ### 2.5 异常码说明
 - 未定义独立业务错误码体系，错误通过 HTTP 状态码与日志表达。
@@ -69,8 +78,8 @@
 ## 3. 核心数据模型
 ### 3.1 标准化事件（`FilteredEventPayload` / `EventStreamMessage`）
 - `session_id`：会话路由键（`group_` / `private_`）
-- `user_id`：抽象用户标识（`qq_` 前缀）
-- `content`：清洗后的纯文本（先 `extract_plain_text`，再去 CQ 码和首尾空白）
+- `event_xml`：协议事件标签（`message` / `poke` / `recall`）
+- `message` 文本体：清洗后的纯文本（先 `extract_plain_text`，再去 CQ 码和首尾空白）
 - `raw_event`：原始事件保留，供下游诊断和再推理
 
 ### 3.2 动作消息（`ActionStreamMessage`）
@@ -97,9 +106,9 @@ flowchart TD
     E -->|否| F[忽略并返回]
     E -->|是| G{message_type 在 adapter 白名单?}
     G -->|否| F
-    G -->|是| H{清洗后 content 非空?}
+    G -->|是| H{清洗后文本/时间/ID 合法?}
     H -->|否| F
-    H -->|是| I[构建 EventStreamMessage]
+    H -->|是| I[构建 event_xml + EventStreamMessage]
     I --> J[XADD 到 qq.events]
 
     C -->|动作响应 echo/status/retcode| I[_resolve_action]

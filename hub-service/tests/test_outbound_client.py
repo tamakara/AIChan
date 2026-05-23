@@ -2,7 +2,6 @@ import asyncio
 
 import pytest
 
-from hub_service.router.schemas import AgentInboundMessage
 from hub_service.services.outbound_client import OutboundClient
 
 
@@ -55,7 +54,7 @@ def test_create_agent_calls_new_endpoint() -> None:
     assert called_payload == {"metadata": {"session_id": "private_1"}}
 
 
-def test_call_agent_uses_slim_messages_payload() -> None:
+def test_call_agent_uses_batch_payload() -> None:
     redis_stream = StubRedisStream()
     client = OutboundClient(
         agent_service_url="http://agent-service:8000",
@@ -67,14 +66,9 @@ def test_call_agent_uses_slim_messages_payload() -> None:
         client.call_agent(
             "private_1",
             "agent-1",
-            [
-                AgentInboundMessage(
-                    user_id="qq_1",
-                    content="hello",
-                    event_time="1710000000",
-                )
-            ],
-            message_mode="start",
+            '<batch type="start"><message message_type="private" sub_type="friend" '
+            'message_id="11" session_id="private_1" user_id="qq_1" '
+            'time="1710000000">hello</message></batch>',
         )
     )
 
@@ -83,8 +77,9 @@ def test_call_agent_uses_slim_messages_payload() -> None:
     assert called_url == "http://agent-service:8000/chat"
     assert called_payload == {
         "agent_id": "agent-1",
-        "messages": [{"user_id": "qq_1", "content": "hello", "event_time": "1710000000"}],
-        "message_mode": "start",
+        "batch": '<batch type="start"><message message_type="private" sub_type="friend" '
+        'message_id="11" session_id="private_1" user_id="qq_1" '
+        'time="1710000000">hello</message></batch>',
     }
 
 
@@ -101,14 +96,9 @@ def test_call_agent_invalid_response_raises() -> None:
             client.call_agent(
                 "private_1",
                 "agent-1",
-                [
-                    AgentInboundMessage(
-                        user_id="qq_1",
-                        content="hello",
-                        event_time="1710000000",
-                    )
-                ],
-                message_mode="append",
+                '<batch type="append"><message message_type="private" sub_type="friend" '
+                'message_id="11" session_id="private_1" user_id="qq_1" '
+                'time="1710000000">hello</message></batch>',
             )
         )
 

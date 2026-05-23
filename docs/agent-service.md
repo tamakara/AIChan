@@ -4,6 +4,11 @@
 `agent-service` 是对话推理执行层：维护 `Agent` 上下文、驱动 LLM 多轮推理与 MCP 工具调用，并通过 HTTP 接口返回回复。  
 不负责消息接入与投递（由 `adapter-service` / `hub-service` 处理）。
 
+协议说明：
+- 统一内部消息协议草案见 [message-protocol.md](message-protocol.md)。
+- 目标协议中，agent 只消费 `<batch type="...">...</batch>`，不再自行拼装消息 XML。
+- 当前实现已在 `/chat` 路由入口直接消费上游透传的 `batch` XML。
+
 ## 2. 接口契约
 ### 2.1 对外提供（HTTP）
 - `GET /healthz`
@@ -22,20 +27,12 @@
 - `POST /chat`
   - 请求体（`ChatRequest`）：
     - `agent_id: str`（必填，必须已创建）
-    - `messages: list[ChatMessage]`（最少 1 条）
-    - `message_mode: "start" | "append"`（可选，默认 `"start"`）
-    - `ChatMessage` 固定字段：
-      - `user_id: str`
-      - `event_time: str`
-      - `content: str`
+    - `batch: str`（必填，最少 1 字符，格式为 `<batch type="start|append">...</batch>`）
   - 响应体（`ChatResponse`）：
     - `reply: str`
   - 处理语义：
     - 严格先创建后聊天：`agent_id` 不存在时直接返回 `404`。
-    - 路由入口先把消息列表渲染为 XML，再作为一次 `user` 输入交给 `Agent`。
-    - 统一使用 `<messages mode="...">...</messages>` 包裹消息。
-    - `message_mode="start"` 时渲染为 `<messages mode="start">`，`message_mode="append"` 时渲染为 `<messages mode="append">`。
-    - 包裹内使用 `<message user_id="..." event_time="...">文本内容</message>` 片段，按输入顺序保留，属性和值统一做 XML 转义。
+    - 路由入口不再重建消息 XML，直接把 `batch` 原样作为一次 `user` 输入交给 `Agent`。
     - 会话级标识（`session_id`、`agent_id`）只在创建 `Agent` 时通过 `<session_start ...>` 注入，不在每轮消息体重复携带。
     - 同一 `agent_id` 串行执行，不同 `agent_id` 可并行。
   - 失败语义：
@@ -81,7 +78,7 @@
 - `messages: list[Message]`：OpenAI Chat 消息历史。
 - `add_message(...)`：统一封装 `assistant.tool_calls` 与 `tool.tool_call_id` 的写入规则。
 - 设计目标：把“长期上下文写入”职责收口在 `Agent + Context`，避免多处写入导致并发与重复消息问题。
-- 消息 XML 标签由 `services/tag_builder.py::render_messages_xml/build_message_tag` 统一构建与转义（含 `messages mode="..."` 顶层包裹）。
+- 当前版本仅保留 `session_start` 标签构建；业务事件 XML 由上游 `adapter/hub` 生成并透传。
 
 ### 3.3 会话运行注册表（`AgentRegistry`）
 - 结构：`dict[agent_id, Agent]`
@@ -110,7 +107,7 @@ flowchart TD
 
     F[POST /chat] --> G{agent_id 存在?}
     G -->|否| H[返回 404]
-    G -->|是| I[messages 渲染 XML]
+    G -->|是| I[直接消费 batch XML]
     I --> J[Agent.run]
     J --> K[追加 user(XML)]
     K --> L[LlmClient.generate]

@@ -1,7 +1,9 @@
+import re
+
 from fastapi import APIRouter, HTTPException
 
 from ..logger import elapsed_ms, get_logger, log_exception, log_info, start_timer
-from ..services import AgentRegistry, render_messages_xml
+from ..services import AgentRegistry
 from .schemas import (
     ChatRequest,
     ChatResponse,
@@ -38,22 +40,19 @@ def create_router(
         agent = agent_registry.get(req.agent_id)
         if agent is None:
             raise HTTPException(status_code=404, detail="agent not found")
+        event_count = _count_batch_events(req.batch)
 
         log_info(
             logger,
             "agent.chat_received",
             agent_id=req.agent_id,
-            message_count=len(req.messages),
+            message_count=event_count,
         )
 
         try:
-            user_message = render_messages_xml(
-                messages=req.messages,
-                message_mode=req.message_mode,
-            )
             reply = agent.run(
-                user_message=user_message,
-                message_count=len(req.messages),
+                user_message=req.batch,
+                message_count=event_count,
             )
             log_info(
                 logger,
@@ -73,4 +72,10 @@ def create_router(
         return ChatResponse(reply=reply)
 
     return router
+
+
+def _count_batch_events(batch_xml: str) -> int:
+    # 事件数只用于观测统计，按标签计数能避免批次内容格式变化导致统计失真。
+    count = len(re.findall(r"<(?:message|poke|recall)\b", batch_xml))
+    return count if count > 0 else 1
 
