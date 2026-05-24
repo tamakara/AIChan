@@ -4,7 +4,7 @@ import asyncio
 
 from pydantic import ValidationError
 
-from ..logger import elapsed_ms, get_logger, log_exception, log_info, log_warning, start_timer
+from ..logger import elapsed_ms, get_logger, log_exception, log_info, start_timer
 from .adapter_service import AdapterService
 from .connection_state import NapcatConnectionState
 from .errors import NapcatDownstreamError
@@ -63,7 +63,7 @@ class ActionConsumerWorker:
             handled_started_at = start_timer()
             try:
                 action = ActionStreamMessage.from_stream_fields(fields)
-                await self._handle_action(action)
+                action_type = await self._handle_action(action)
             except ValidationError:
                 # 非法消息直接 ACK，避免毒消息卡死整个消费分组。
                 log_exception(
@@ -73,6 +73,7 @@ class ActionConsumerWorker:
                     reason="invalid_stream_message",
                 )
                 await self._redis_stream.ack_action(message_id)
+                continue
             except ValueError:
                 # session_id 或动作参数不合法属于不可恢复输入错误，直接丢弃。
                 log_exception(
@@ -82,6 +83,7 @@ class ActionConsumerWorker:
                     reason="invalid_action_payload",
                 )
                 await self._redis_stream.ack_action(message_id)
+                continue
             except Exception:
                 # 运行期故障按未 ACK 留在 PEL，下一轮优先重试，保证至少一次投递。
                 log_exception(
@@ -97,29 +99,20 @@ class ActionConsumerWorker:
                 self._logger,
                 "adapter.action_handled",
                 session_id=action.session_id,
-                action_type=action.action_type,
+                action_type=action_type,
                 status="ok",
                 elapsed_ms=elapsed_ms(handled_started_at),
             )
 
-    async def _handle_action(self, action: ActionStreamMessage) -> None:
-        if action.action_type != "send_message":
-            log_warning(
-                self._logger,
-                "adapter.action_skipped",
-                action_type=action.action_type,
-                reason="unknown_action_type",
-            )
-            return
+    async def _handle_action(self, action: ActionStreamMessage) -> str:
+        action_type, outbound_action = self._adapter_service.build_outbound_action_from_xml(
+            action.action_xml
+        )
 
         websocket = self._napcat_connection_state.get()
         if websocket is None:
             raise RuntimeError("onebot reverse ws is not connected")
 
-        outbound_action = self._adapter_service.build_send_message_action(
-            session_id=action.session_id,
-            content=action.payload.content,
-        )
         result = await self._napcat_gateway.send_action(
             websocket=websocket,
             action=outbound_action.action,
@@ -127,5 +120,6 @@ class ActionConsumerWorker:
         )
         if result.get("status") != "ok":
             raise NapcatDownstreamError(f"onebot action failed: {result}")
+        return action_type
 
 

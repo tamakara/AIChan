@@ -11,6 +11,7 @@ from ..router.schemas import (
     AgentChatRequest,
     AgentChatResponse,
 )
+from .action_batch_parser import parse_action_batch
 from .redis_stream import HubRedisStream
 
 
@@ -59,16 +60,21 @@ class OutboundClient:
             status="ok",
             elapsed_ms=elapsed_ms(started_at),
         )
-        return response.reply
+        return response.batch
 
-    async def send_reply(self, session_id: str, content: str) -> None:
+    async def send_actions(self, session_id: str, batch_xml: str) -> None:
         started_at = start_timer()
-        await self._redis_stream.enqueue_send_message(session_id=session_id, content=content)
+        actions = parse_action_batch(batch_xml=batch_xml, expected_session_id=session_id)
+        for action in actions:
+            await self._redis_stream.enqueue_action_xml(
+                session_id=action.session_id,
+                action_xml=action.action_xml,
+            )
         log_info(
             self._logger,
             "hub.reply_enqueued",
             session_id=session_id,
-            reply_len=len(content),
+            reply_len=len(batch_xml),
             elapsed_ms=elapsed_ms(started_at),
         )
 

@@ -40,29 +40,19 @@ class EventStreamMessage(BaseModel):
         }
 
 
-class ActionPayload(BaseModel):
-    model_config = ConfigDict(frozen=True)
-
-    content: str = Field(min_length=1)
-
-
 class ActionStreamMessage(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     action_id: str
     session_id: str = Field(min_length=1)
-    action_type: str = Field(min_length=1)
-    payload: ActionPayload
+    action_xml: str = Field(min_length=1)
     created_at: str
 
     @classmethod
     def from_stream_fields(cls, fields: dict[str, str]) -> "ActionStreamMessage":
-        raw_payload = fields.get("payload", "")
-        payload_data = json.loads(raw_payload) if raw_payload else {}
         return cls(
             action_id=fields.get("action_id", ""),
             session_id=fields.get("session_id", ""),
-            action_type=fields.get("action_type", ""),
-            payload=ActionPayload.model_validate(payload_data),
+            action_xml=fields.get("action_xml", ""),
             created_at=fields.get("created_at", ""),
         )

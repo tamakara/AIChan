@@ -28,8 +28,8 @@ AICHAN 是一个由 `adapter-service`、`hub-service`、`agent-service` 组成�
 
 ### 2.4 故障语义
 - `adapter-service` 断开：消息无法进入系统，也无法回写。
-- `hub-service` 失败：事件无法被编排为回复。
-- `agent-service` 失败：无法生成回复正文。
+- `hub-service` 失败：事件无法被编排为动作批次。
+- `agent-service` 失败：无法生成协议动作批次。
 - `Redis` 失败：事件和动作都无法在服务间流转。
 
 ## 3. 核心数据模型
@@ -51,7 +51,7 @@ flowchart LR
     HS -->|POST /chat| A[agent-service]
     A -->|SSE 调用工具| M[MCP Gateway]
     M -->|docker://adapter-service:latest| T[adapter-mcp]
-    A -->|reply| HS
+    A -->|batch end| HS
     HS -->|XADD qq.actions| R
     R -->|XREADGROUP qq.actions| C
     C -->|OneBot action| O

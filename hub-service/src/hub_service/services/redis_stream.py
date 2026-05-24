@@ -45,8 +45,8 @@ class HubRedisStream:
             message_id,
         )
 
-    async def enqueue_send_message(self, session_id: str, content: str) -> None:
-        message = ActionStreamMessage.for_send_message(session_id=session_id, content=content)
+    async def enqueue_action_xml(self, session_id: str, action_xml: str) -> None:
+        message = ActionStreamMessage.for_action_xml(session_id=session_id, action_xml=action_xml)
         await self._client.xadd(self._settings.actions_stream, message.to_stream_fields())
 
     async def _ensure_event_group(self) -> None:

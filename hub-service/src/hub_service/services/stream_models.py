@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timezone
-from typing import Any, Literal
+from typing import Any
 from uuid import uuid4
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict
 
 
 class EventStreamMessage(BaseModel):
@@ -29,28 +29,20 @@ class EventStreamMessage(BaseModel):
         )
 
 
-class SendMessageActionPayload(BaseModel):
-    model_config = ConfigDict(frozen=True)
-
-    content: str = Field(min_length=1)
-
-
 class ActionStreamMessage(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     action_id: str
     session_id: str
-    action_type: Literal["send_message"]
-    payload: SendMessageActionPayload
+    action_xml: str
     created_at: str
 
     @classmethod
-    def for_send_message(cls, session_id: str, content: str) -> "ActionStreamMessage":
+    def for_action_xml(cls, session_id: str, action_xml: str) -> "ActionStreamMessage":
         return cls(
             action_id=str(uuid4()),
             session_id=session_id,
-            action_type="send_message",
-            payload=SendMessageActionPayload(content=content),
+            action_xml=action_xml,
             created_at=datetime.now(timezone.utc).isoformat(),
         )
 
@@ -58,7 +50,6 @@ class ActionStreamMessage(BaseModel):
         return {
             "action_id": self.action_id,
             "session_id": self.session_id,
-            "action_type": self.action_type,
-            "payload": json.dumps(self.payload.model_dump(), ensure_ascii=False),
+            "action_xml": self.action_xml,
             "created_at": self.created_at,
         }

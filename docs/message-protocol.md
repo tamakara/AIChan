@@ -7,14 +7,17 @@
 当前状态：
 - 协议草案已确定（本文档）。
 - `adapter-service` / `hub-service` / `agent-service` 主链路已切换到本协议。
-- 当前代码实现已支持 `message` / `poke` / `recall` 事件标签与 `<batch type="start|append">` 批次输入。
+- 当前代码实现已支持：
+  - 入站：`message/poke/recall` 事件标签 + `<batch type="start|append">` 输入
+  - 出站：`<batch type="end">` 动作批次 + `action_xml` 单条下发
 
 ## 2. 设计结论（本次收口）
 - 去掉 XML 内的 `protocol="aichan.message.xml"` 与 `version="1"` 属性。
 - 把批次容器从 `<messages>` 统一改名为 `<batch>`。
 - `adapter-service` 只负责单条事件标签（`<message>` / `<poke>` / `<recall>`）规范化。
-- `hub-service` 按现有会话调度策略，把多条事件标签组合成 `<batch type="...">`。
-- `<batch type="...">` 中的 `type` 语义等价于旧版 `messages.mode`（`start|append`）。
+- `hub-service` 按现有会话调度策略，把多条事件标签组合成 `<batch type="start|append">` 送给 agent。
+- `agent-service` 输出固定为 `<batch type="end">...</batch>`。
+- `hub-service` 解析 `<batch type="end">`，按顺序拆成单条 `action_xml` 写入 `qq.actions`。
 
 ## 3. 分层职责
 - `adapter-service`
@@ -36,6 +39,7 @@
   message_id="123456789"
   session_id="private_123456"
   user_id="qq_123456"
+  self_id="qq_10001"
   time="1710000000"
 >你好</message>
 ```
@@ -50,6 +54,7 @@
   - 私聊：`private_<user_id>`
   - 群聊：`group_<group_id>`
 - `user_id`：固定 `qq_<onebot_user_id>`
+- `self_id`：固定 `qq_<onebot_self_id>`，只允许来自 OneBot 事件 `self_id` 字段；缺失则整条事件丢弃
 - `time`：必须来自 `raw_event.time`，秒级时间戳字符串
 - 文本内容：
   - 先执行 `extract_plain_text`
@@ -58,37 +63,57 @@
 
 ### 4.3 `poke` 标准结构（Notice Event）
 ```xml
-<poke session_id="group_987654321" user_id="qq_123456" target_id="qq_654321" />
+<poke session_id="group_987654321" user_id="qq_123456" self_id="qq_10001" target_id="qq_654321" />
 ```
 
 字段约束：
 - `session_id`：会话路由键（`private_*` 或 `group_*`）
 - `user_id`：发起戳一戳的用户，统一为 `qq_<onebot_user_id>`
+- `self_id`：当前登录 QQ，统一为 `qq_<onebot_self_id>`
 - `target_id`：被戳用户，统一为 `qq_<onebot_target_id>`
 
 ### 4.4 `recall` 标准结构（Notice Event）
 ```xml
-<recall session_id="group_987654321" user_id="qq_123456" message_id="123456789" />
+<recall session_id="group_987654321" user_id="qq_123456" self_id="qq_10001" message_id="123456789" />
 ```
 
 字段约束：
 - `session_id`：会话路由键（`private_*` 或 `group_*`）
 - `user_id`：撤回动作相关用户（按 OneBot 事件字段映射）
+- `self_id`：当前登录 QQ，统一为 `qq_<onebot_self_id>`
 - `message_id`：被撤回消息的 ID（建议按字符串写入 XML 属性）
 
 ## 5. 批次容器 XML（Batch）
 ### 5.1 标准结构
 ```xml
 <batch type="start">
-  <message message_type="private" sub_type="friend" message_id="123456789" session_id="private_123456" user_id="qq_123456" time="1710000000">第一条</message>
-  <poke session_id="private_123456" user_id="qq_123456" target_id="qq_654321" />
-  <recall session_id="private_123456" user_id="qq_123456" message_id="123456790" />
+  <message message_type="private" sub_type="friend" message_id="123456789" session_id="private_123456" user_id="qq_123456" self_id="qq_10001" time="1710000000">第一条</message>
+  <poke session_id="private_123456" user_id="qq_123456" self_id="qq_10001" target_id="qq_654321" />
+  <recall session_id="private_123456" user_id="qq_123456" self_id="qq_10001" message_id="123456790" />
 </batch>
 ```
 
 ### 5.2 `batch.type` 语义
 - `start`：当前回复链路的首轮输入
 - `append`：同一回复链路中，因新消息到达触发的覆盖式重跑输入
+
+### 5.3 Agent 出站动作批次结构
+```xml
+<batch type="end">
+  <message session_id="private_123456">你好，笨蛋</message>
+  <poke session_id="private_123456" target_id="qq_654321" />
+  <recall session_id="private_123456" message_id="123456790" />
+</batch>
+```
+
+约束：
+- `type` 必须是 `end`
+- 子标签只允许 `message/poke/recall`
+- 出站最小属性要求：
+  - `message`：`session_id` + 非空文本体
+  - `poke`：`session_id` + `target_id`
+  - `recall`：`session_id` + `message_id`
+- 出站标签可省略 `self_id`，由执行层按会话上下文路由
 
 约束：
 - 同一个 `<batch>` 内所有事件标签（`message/poke/recall`）必须来自同一 `session_id`
@@ -106,6 +131,12 @@
 - `event_xml` 是跨服务唯一消费正文，`content` 纯文本字段可移除。
 - `raw_event` 保留用于审计与诊断，不参与下游协议拼装。
 
+`qq.actions` 的动作字段收口为：
+- `action_id`
+- `session_id`
+- `action_xml`（单条 `<message ...>` / `<poke ... />` / `<recall ... />`）
+- `created_at`
+
 ## 7. NapCat -> 协议映射规则
 - NapCat `private` 消息：
   - `message.message_type=private`
@@ -119,6 +150,7 @@
   - `message.session_id=group_<group_id>`
 - `message.time`：只取 `raw_event.time`
 - `message.user_id`：统一转为 `qq_<user_id>`
+- `message.self_id`：统一转为 `qq_<self_id>`
 
 - NapCat `notice.notify.poke`：
   - 生成 `<poke ... />`
@@ -130,7 +162,20 @@
   - 生成 `<recall ... />`
   - `recall.session_id=<private_* 或 group_*>`
   - `recall.user_id=qq_<user_id>`
+  - `recall.self_id=qq_<self_id>`
   - `recall.message_id=<message_id>`
+
+- Agent 出站 `<message ...>`：
+  - 解析 `session_id` + 文本体
+  - `session_id=group_*` -> `send_group_msg`
+  - `session_id=private_*` -> `send_private_msg`
+- Agent 出站 `<poke ... />`：
+  - 解析 `session_id` + `target_id`
+  - `session_id=group_*` -> `group_poke`
+  - `session_id=private_*` -> `friend_poke`
+- Agent 出站 `<recall ... />`：
+  - 解析 `session_id` + `message_id`
+  - 统一映射 `delete_msg`
 
 ## 8. 落地步骤（建议）
 1. `adapter-service` 增加 `event_xml` 生成器并写入 `qq.events`。

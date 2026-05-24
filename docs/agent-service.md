@@ -1,13 +1,13 @@
 # agent-service
 
 ## 1. 模块一句话定位
-`agent-service` 是对话推理执行层：维护 `Agent` 上下文、驱动 LLM 多轮推理与 MCP 工具调用，并通过 HTTP 接口返回回复。  
+`agent-service` 是对话推理执行层：维护 `Agent` 上下文、驱动 LLM 多轮推理与 MCP 工具调用，并通过 HTTP 接口返回协议化动作批次。  
 不负责消息接入与投递（由 `adapter-service` / `hub-service` 处理）。
 
 协议说明：
 - 统一内部消息协议草案见 [message-protocol.md](message-protocol.md)。
 - 目标协议中，agent 只消费 `<batch type="...">...</batch>`，不再自行拼装消息 XML。
-- 当前实现已在 `/chat` 路由入口直接消费上游透传的 `batch` XML。
+- 当前实现已在 `/chat` 路由入口直接消费上游透传的输入 `batch`，并强校验输出必须是 `<batch type="end">`。
 
 ## 2. 接口契约
 ### 2.1 对外提供（HTTP）
@@ -29,10 +29,11 @@
     - `agent_id: str`（必填，必须已创建）
     - `batch: str`（必填，最少 1 字符，格式为 `<batch type="start|append">...</batch>`）
   - 响应体（`ChatResponse`）：
-    - `reply: str`
+    - `batch: str`（格式固定 `<batch type="end">...</batch>`）
   - 处理语义：
     - 严格先创建后聊天：`agent_id` 不存在时直接返回 `404`。
     - 路由入口不再重建消息 XML，直接把 `batch` 原样作为一次 `user` 输入交给 `Agent`。
+    - 路由出口会校验 LLM 输出协议：根标签必须是 `batch`、`type=end`、子标签仅允许 `message/poke/recall` 且满足最小属性要求。
     - 会话级标识（`session_id`、`agent_id`）只在创建 `Agent` 时通过 `<session_start ...>` 注入，不在每轮消息体重复携带。
     - 同一 `agent_id` 串行执行，不同 `agent_id` 可并行。
   - 失败语义：
@@ -112,7 +113,8 @@ flowchart TD
     J --> K[追加 user(XML)]
     K --> L[LlmClient.generate]
     L --> M[LLM stop?]
-    M -->|是| N[返回 reply]
+    M -->|是| N[校验输出为 batch end]
+    N --> O[返回 batch]
     M -->|tool_calls| O[执行 MCP 工具并回写 tool 消息]
     O --> L
 ```

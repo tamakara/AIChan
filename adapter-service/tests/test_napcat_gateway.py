@@ -67,7 +67,7 @@ def test_private_event_published_to_stream() -> None:
     assert (
         message.event_xml
         == '<message message_type="private" sub_type="friend" message_id="11" '
-        'session_id="private_20002" user_id="qq_20002" time="1710000000">hello</message>'
+        'session_id="private_20002" user_id="qq_20002" self_id="qq_10001" time="1710000000">hello</message>'
     )
 
 
@@ -86,7 +86,7 @@ def test_private_poke_notice_published_to_stream() -> None:
     assert message.session_id == "private_20002"
     assert (
         message.event_xml
-        == '<poke session_id="private_20002" user_id="qq_20002" target_id="qq_10001" />'
+        == '<poke session_id="private_20002" user_id="qq_20002" self_id="qq_10001" target_id="qq_10001" />'
     )
 
 
@@ -105,6 +105,6 @@ def test_private_recall_notice_published_to_stream() -> None:
     assert message.session_id == "private_20002"
     assert (
         message.event_xml
-        == '<recall session_id="private_20002" user_id="qq_20002" message_id="12" />'
+        == '<recall session_id="private_20002" user_id="qq_20002" self_id="qq_10001" message_id="12" />'
     )
 

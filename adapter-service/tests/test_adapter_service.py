@@ -39,7 +39,7 @@ def test_private_text_clean_pass(service: AdapterService) -> None:
     assert (
         result.payload.event_xml
         == '<message message_type="private" sub_type="friend" message_id="11" '
-        'session_id="private_20002" user_id="qq_20002" time="1710000000">??  ??</message>'
+        'session_id="private_20002" user_id="qq_20002" self_id="qq_10001" time="1710000000">??  ??</message>'
     )
 
 
@@ -177,7 +177,7 @@ def test_private_poke_notice_event_pass(service: AdapterService) -> None:
     assert result.payload.session_id == "private_20002"
     assert (
         result.payload.event_xml
-        == '<poke session_id="private_20002" user_id="qq_20002" target_id="qq_10001" />'
+        == '<poke session_id="private_20002" user_id="qq_20002" self_id="qq_10001" target_id="qq_10001" />'
     )
 
 
@@ -215,7 +215,7 @@ def test_group_poke_notice_can_be_enabled_by_adapter_whitelist() -> None:
     assert result.payload.session_id == "group_30003"
     assert (
         result.payload.event_xml
-        == '<poke session_id="group_30003" user_id="qq_20002" target_id="qq_10001" />'
+        == '<poke session_id="group_30003" user_id="qq_20002" self_id="qq_10001" target_id="qq_10001" />'
     )
 
 
@@ -253,7 +253,7 @@ def test_group_recall_notice_can_be_enabled_by_adapter_whitelist() -> None:
     assert result.payload.session_id == "group_30003"
     assert (
         result.payload.event_xml
-        == '<recall session_id="group_30003" user_id="qq_20002" message_id="16" />'
+        == '<recall session_id="group_30003" user_id="qq_20002" self_id="qq_10001" message_id="16" />'
     )
 
 
@@ -272,7 +272,7 @@ def test_friend_recall_notice_event_pass(service: AdapterService) -> None:
     assert result.payload.session_id == "private_20002"
     assert (
         result.payload.event_xml
-        == '<recall session_id="private_20002" user_id="qq_20002" message_id="17" />'
+        == '<recall session_id="private_20002" user_id="qq_20002" self_id="qq_10001" message_id="17" />'
     )
 
 
@@ -287,6 +287,24 @@ def test_notice_event_missing_time_is_filtered(service: AdapterService) -> None:
     result = service.clean_event(raw)
     assert result.accepted is False
     assert result.ignore_reason == "missing_event_time"
+
+
+def test_message_event_missing_self_id_is_filtered(service: AdapterService) -> None:
+    raw = {
+        "time": 1710000000,
+        "post_type": "message",
+        "message_type": "private",
+        "sub_type": "friend",
+        "message_id": 14,
+        "user_id": 20002,
+        "message": [{"type": "text", "data": {"text": "hello"}}],
+        "raw_message": "hello",
+        "font": 14,
+        "sender": {"user_id": 20002, "nickname": "alice", "sex": "unknown", "age": 0},
+    }
+    result = service.clean_event(raw)
+    assert result.accepted is False
+    assert result.ignore_reason == "missing_self_id"
 
 
 def test_build_send_message_action_group(service: AdapterService) -> None:

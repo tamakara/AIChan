@@ -26,7 +26,7 @@ class ChatRequest(BaseModel):
 class ChatResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    reply: str
+    batch: str
 
 
 class HealthResponse(BaseModel):

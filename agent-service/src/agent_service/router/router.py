@@ -1,4 +1,5 @@
 import re
+import xml.etree.ElementTree as ET
 
 from fastapi import APIRouter, HTTPException
 
@@ -50,15 +51,16 @@ def create_router(
         )
 
         try:
-            reply = agent.run(
+            batch = agent.run(
                 user_message=req.batch,
                 message_count=event_count,
             )
+            _validate_agent_batch_output(batch)
             log_info(
                 logger,
                 "agent.chat_completed",
                 agent_id=req.agent_id,
-                reply_len=len(reply),
+                reply_len=len(batch),
                 elapsed_ms=elapsed_ms(request_started_at),
             )
         except Exception as exc:
@@ -69,7 +71,7 @@ def create_router(
                 elapsed_ms=elapsed_ms(request_started_at),
             )
             raise HTTPException(status_code=500, detail=str(exc)) from exc
-        return ChatResponse(reply=reply)
+        return ChatResponse(batch=batch)
 
     return router
 
@@ -78,4 +80,44 @@ def _count_batch_events(batch_xml: str) -> int:
     # 事件数只用于观测统计，按标签计数能避免批次内容格式变化导致统计失真。
     count = len(re.findall(r"<(?:message|poke|recall)\b", batch_xml))
     return count if count > 0 else 1
+
+
+def _validate_agent_batch_output(batch_xml: str) -> None:
+    try:
+        root = ET.fromstring(batch_xml)
+    except ET.ParseError as exc:
+        raise ValueError("agent output must be valid xml") from exc
+
+    if root.tag != "batch":
+        raise ValueError("agent output root tag must be <batch>")
+    if root.attrib.get("type") != "end":
+        raise ValueError("agent output batch.type must be 'end'")
+    if len(root) == 0:
+        raise ValueError("agent output batch must include at least one event")
+
+    # 这里在服务边界做强校验，防止非协议输出直接写入下游动作流导致执行层误操作。
+    for child in root:
+        session_id = child.attrib.get("session_id", "").strip()
+        if not session_id:
+            raise ValueError(f"agent output <{child.tag}> missing session_id")
+
+        if child.tag == "message":
+            content = (child.text or "").strip()
+            if not content:
+                raise ValueError("agent output <message> content must be non-empty")
+            continue
+
+        if child.tag == "poke":
+            target_id = child.attrib.get("target_id", "").strip()
+            if not target_id:
+                raise ValueError("agent output <poke> missing target_id")
+            continue
+
+        if child.tag == "recall":
+            message_id = child.attrib.get("message_id", "").strip()
+            if not message_id:
+                raise ValueError("agent output <recall> missing message_id")
+            continue
+
+        raise ValueError(f"agent output contains unsupported tag: {child.tag}")
 

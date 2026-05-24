@@ -32,8 +32,8 @@ class StubRedisStream:
     def __init__(self) -> None:
         self.actions: list[tuple[str, str]] = []
 
-    async def enqueue_send_message(self, session_id: str, content: str) -> None:
-        self.actions.append((session_id, content))
+    async def enqueue_action_xml(self, session_id: str, action_xml: str) -> None:
+        self.actions.append((session_id, action_xml))
 
 
 def test_create_agent_calls_new_endpoint() -> None:
@@ -60,9 +60,10 @@ def test_call_agent_uses_batch_payload() -> None:
         agent_service_url="http://agent-service:8000",
         redis_stream=redis_stream,  # type: ignore[arg-type]
     )
-    client._client = DummyHttpClient([DummyResponse({"reply": "ok"})])  # type: ignore[attr-defined]
+    expected_batch = '<batch type="end"><message session_id="private_1">ok</message></batch>'
+    client._client = DummyHttpClient([DummyResponse({"batch": expected_batch})])  # type: ignore[attr-defined]
 
-    reply = asyncio.run(
+    batch = asyncio.run(
         client.call_agent(
             "private_1",
             "agent-1",
@@ -72,7 +73,7 @@ def test_call_agent_uses_batch_payload() -> None:
         )
     )
 
-    assert reply == "ok"
+    assert batch == expected_batch
     called_url, called_payload = client._client.calls[0]  # type: ignore[attr-defined]
     assert called_url == "http://agent-service:8000/chat"
     assert called_payload == {
@@ -103,13 +104,22 @@ def test_call_agent_invalid_response_raises() -> None:
         )
 
 
-def test_send_reply_enqueue_action() -> None:
+def test_send_actions_enqueue_action_xmls() -> None:
     redis_stream = StubRedisStream()
     client = OutboundClient(
         agent_service_url="http://agent-service:8000",
         redis_stream=redis_stream,  # type: ignore[arg-type]
     )
 
-    asyncio.run(client.send_reply("private_1", "ok"))
+    asyncio.run(
+        client.send_actions(
+            "private_1",
+            '<batch type="end"><message session_id="private_1">ok</message>'
+            '<poke session_id="private_1" target_id="qq_2" /></batch>',
+        )
+    )
 
-    assert redis_stream.actions == [("private_1", "ok")]
+    assert redis_stream.actions == [
+        ("private_1", '<message session_id="private_1">ok</message>'),
+        ("private_1", '<poke session_id="private_1" target_id="qq_2" />'),
+    ]

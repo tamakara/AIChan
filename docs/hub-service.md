@@ -1,7 +1,7 @@
 # hub-service
 
 ## 1. 模块一句话定位
-`hub-service` 是会话编排中枢：从 `qq.events` 消费事件，做最小保底校验后按 `session_id` 进入防抖与串行调度，调用 `agent-service` 生成回复，再写回 `qq.actions`。  
+`hub-service` 是会话编排中枢：从 `qq.events` 消费事件，做最小保底校验后按 `session_id` 进入防抖与串行调度，调用 `agent-service` 生成动作批次，再写回 `qq.actions`。  
 不负责 QQ 协议接入与消息发送执行（发送由 `adapter-service` 完成）。
 
 协议说明：
@@ -28,7 +28,7 @@
     - `agent_id: str`
     - `batch: str`（最少 1 字符，内容是 `<batch type="start|append">...</batch>`）
   - 成功响应体（`AgentChatResponse`）：
-    - `reply: str`
+    - `batch: str`（格式固定 `<batch type="end">...</batch>`）
   - 失败语义：
     - 下游 `status_code >= 400`：抛出 `RuntimeError`（包含 `url/status/body`）
     - 下游 JSON 不是对象：抛出 `ValueError`
@@ -51,9 +51,16 @@
 - 动作模型（`ActionStreamMessage`）：
   - `action_id: uuid4`
   - `session_id: str`
-  - `action_type: "send_message"`
-  - `payload: {"content": "<reply>"}`
+  - `action_xml: str`（单条 `<message ...>` / `<poke ... />` / `<recall ... />`）
   - `created_at: ISO8601 UTC`
+
+下发规则：
+- hub 收到 agent 返回的 `<batch type="end">` 后，按顺序拆出每条动作标签并逐条写入 `qq.actions`。
+- hub 在下发前强校验：
+  - 根标签必须是 `batch` 且 `type=end`
+  - 子标签只允许 `message/poke/recall`
+  - `session_id` 必须与当前会话一致
+  - 子标签最小属性必须完整（`message` 文本非空、`poke.target_id`、`recall.message_id`）
 
 ## 3. 核心数据模型
 ### 3.1 事件输入模型（`EventStreamMessage`）
@@ -108,7 +115,7 @@ flowchart TD
     O -->|否| P[session_run_failed]
     O -->|是| Q{latest_seq > batch_max_seq?}
     Q -->|是| R[丢弃本轮回复]
-    Q -->|否| S[发送回复到 qq.actions]
+    Q -->|否| S[解析 end-batch 并逐条写 action_xml 到 qq.actions]
     R --> T{仍有 pending 消息?}
     T -->|是| U[重置 debounce_deadline=now+debounce 后重跑]
     T -->|否| V[会话空闲，回收 runner]
@@ -135,7 +142,7 @@ flowchart TD
   - 设置 `running=True` 后调用 agent。
 - 运行完成后的发送决策：
   - 若 `latest_seq > batch_max_seq`：说明运行期间来了新消息，本轮回复过时，直接丢弃。
-  - 否则发送本轮回复。
+  - 否则按顺序下发本轮动作标签（`action_xml`）。
 - 需要重跑时：
   - 只要 `pending_events` 非空，都会重置 `debounce_deadline=now+debounce_seconds`。
   - 这保证“每次重跑前都要重新走完整防抖窗口”，窗口内有新消息会继续重置计时。
@@ -157,8 +164,8 @@ sequenceDiagram
     R->>R: 入队(seq=2)\ndeadline=当前+debounce
     Note over R: run 中不打断，只标记后续重跑
 
-    A-->>R: run#1 reply 返回
-    R->>R: 检查 latest_seq(2) > batch_max_seq(1)\n=> 丢弃 run#1 reply
+    A-->>R: run#1 end-batch 返回
+    R->>R: 检查 latest_seq(2) > batch_max_seq(1)\n=> 丢弃 run#1 end-batch
     R->>R: 因 pending 非空，重置 deadline=now+debounce
     Note over R: 重跑前再次完整防抖
 
@@ -166,7 +173,7 @@ sequenceDiagram
     R->>R: 入队(seq=3)\ndeadline 再次后移
 
     R->>A: 防抖再次到期后发起 run#2（mode=append）
-    A-->>R: run#2 reply 返回
+    A-->>R: run#2 end-batch 返回
     R->>R: latest_seq(3) == batch_max_seq(3)
     R-->>U: 发送最终回复（仅最新轮次）
 ```
@@ -179,7 +186,7 @@ sequenceDiagram
   - `append`：同一回复链路内，因新消息触发的重跑轮次。
 - 丢弃策略边界：
   - 不取消进行中的 agent 调用。
-  - 只在调用返回后做“发送/丢弃”决策。
+  - 只在调用返回后做“下发/丢弃”决策。
 
 ## 5. 配置项与运行依赖
 ### 5.1 配置文件

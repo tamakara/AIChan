@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 from typing import Any
+import xml.etree.ElementTree as ET
 from xml.sax.saxutils import escape
 
 from nonebot.adapters.onebot.v11.event import (
@@ -27,6 +28,8 @@ class AdapterService:
     def clean_event(self, raw_event: dict[str, Any]) -> CleanResult:
         if self._is_supported_post_type(raw_event) and self._extract_event_time(raw_event) is None:
             return CleanResult(accepted=False, ignore_reason="missing_event_time")
+        if self._is_supported_post_type(raw_event) and self._extract_self_id(raw_event) is None:
+            return CleanResult(accepted=False, ignore_reason="missing_self_id")
 
         try:
             message_event = MESSAGE_EVENT_ADAPTER.validate_python(raw_event)
@@ -63,6 +66,9 @@ class AdapterService:
 
         user_id = int(event.get_user_id())
         abstract_user_id = self.to_abstract_user_id(user_id)
+        self_id = self._extract_self_id(raw_event)
+        if self_id is None:
+            return CleanResult(accepted=False, ignore_reason="missing_self_id")
         if isinstance(event, GroupMessageEvent):
             message_type = "group"
             group_id = int(event.group_id)
@@ -84,6 +90,7 @@ class AdapterService:
                 message_id=message_id,
                 session_id=session_id,
                 user_id=abstract_user_id,
+                self_id=self_id,
                 event_time=event_time,
                 content=plain_text,
             ),
@@ -112,6 +119,7 @@ class AdapterService:
                 group_id=group_id,
                 actor_user_id=actor_user_id,
                 target_user_id=target_user_id,
+                self_id=self._extract_self_id(raw_event),
                 raw_event=raw_event,
             )
 
@@ -121,6 +129,7 @@ class AdapterService:
                 session_id=self.to_group_session_id(int(event.group_id)),
                 actor_user_id=int(event.user_id),
                 message_id=str(event.message_id),
+                self_id=self._extract_self_id(raw_event),
                 raw_event=raw_event,
             )
 
@@ -129,6 +138,7 @@ class AdapterService:
             session_id=self.to_private_session_id(int(event.user_id)),
             actor_user_id=int(event.user_id),
             message_id=str(event.message_id),
+            self_id=self._extract_self_id(raw_event),
             raw_event=raw_event,
         )
 
@@ -138,8 +148,11 @@ class AdapterService:
         group_id: int | None,
         actor_user_id: int,
         target_user_id: int,
+        self_id: str | None,
         raw_event: dict[str, Any],
     ) -> CleanResult:
+        if self_id is None:
+            return CleanResult(accepted=False, ignore_reason="missing_self_id")
         if group_id is not None:
             message_type = "group"
             session_id = self.to_group_session_id(int(group_id))
@@ -155,6 +168,7 @@ class AdapterService:
             event_xml=self._build_poke_event_xml(
                 session_id=session_id,
                 user_id=self.to_abstract_user_id(actor_user_id),
+                self_id=self_id,
                 target_id=self.to_abstract_user_id(target_user_id),
             ),
             raw_event=raw_event,
@@ -168,8 +182,11 @@ class AdapterService:
         session_id: str,
         actor_user_id: int,
         message_id: str,
+        self_id: str | None,
         raw_event: dict[str, Any],
     ) -> CleanResult:
+        if self_id is None:
+            return CleanResult(accepted=False, ignore_reason="missing_self_id")
         if not self._is_allowed_message_type(message_type):
             return CleanResult(accepted=False, ignore_reason="message_type_filtered")
 
@@ -178,11 +195,42 @@ class AdapterService:
             event_xml=self._build_recall_event_xml(
                 session_id=session_id,
                 user_id=self.to_abstract_user_id(actor_user_id),
+                self_id=self_id,
                 message_id=message_id,
             ),
             raw_event=raw_event,
         )
         return CleanResult(accepted=True, payload=payload)
+
+    def build_outbound_action_from_xml(self, action_xml: str) -> tuple[str, OutboundAction]:
+        try:
+            root = ET.fromstring(action_xml)
+        except ET.ParseError as exc:
+            raise ValueError("action_xml must be valid xml") from exc
+
+        session_id = (root.attrib.get("session_id") or "").strip()
+        if not session_id:
+            raise ValueError("action_xml missing session_id")
+
+        if root.tag == "message":
+            content = (root.text or "").strip()
+            if not content:
+                raise ValueError("message content must be non-empty")
+            return "message", self.build_send_message_action(session_id=session_id, content=content)
+
+        if root.tag == "poke":
+            target_id = (root.attrib.get("target_id") or "").strip()
+            if not target_id:
+                raise ValueError("poke action missing target_id")
+            return "poke", self.build_poke_action(session_id=session_id, target_id=target_id)
+
+        if root.tag == "recall":
+            message_id = (root.attrib.get("message_id") or "").strip()
+            if not message_id:
+                raise ValueError("recall action missing message_id")
+            return "recall", self.build_recall_action(session_id=session_id, message_id=message_id)
+
+        raise ValueError(f"unsupported action tag: {root.tag}")
 
     def build_send_message_action(self, session_id: str, content: str) -> OutboundAction:
         if session_id.startswith("group_"):
@@ -198,6 +246,34 @@ class AdapterService:
     def build_get_user_info_action(self, abstract_user_id: str) -> OutboundAction:
         user_id = self.parse_abstract_user_id(abstract_user_id)
         return OutboundAction(action="get_stranger_info", params={"user_id": user_id, "no_cache": True})
+
+    def build_poke_action(self, session_id: str, target_id: str) -> OutboundAction:
+        target_user_id = self.parse_abstract_user_id(target_id)
+        if session_id.startswith("group_"):
+            group_id = self.parse_group_session_id(session_id)
+            return OutboundAction(
+                action="group_poke",
+                params={"group_id": group_id, "user_id": target_user_id},
+            )
+
+        if session_id.startswith("private_"):
+            return OutboundAction(
+                action="friend_poke",
+                params={"user_id": target_user_id},
+            )
+
+        raise ValueError("session_id must start with 'group_' or 'private_'")
+
+    def build_recall_action(self, session_id: str, message_id: str) -> OutboundAction:
+        if session_id.startswith("group_"):
+            self.parse_group_session_id(session_id)
+        elif session_id.startswith("private_"):
+            self.parse_private_session_id(session_id)
+        else:
+            raise ValueError("session_id must start with 'group_' or 'private_'")
+
+        normalized_message_id = self._parse_positive_int(message_id=message_id)
+        return OutboundAction(action="delete_msg", params={"message_id": normalized_message_id})
 
     def build_get_history_action(
         self,
@@ -319,6 +395,19 @@ class AdapterService:
         return None
 
     @staticmethod
+    def _extract_self_id(raw_event: dict[str, Any]) -> str | None:
+        raw_self_id = raw_event.get("self_id")
+        if isinstance(raw_self_id, bool):
+            return None
+        if isinstance(raw_self_id, int):
+            return AdapterService.to_abstract_user_id(raw_self_id)
+        if isinstance(raw_self_id, float) and raw_self_id.is_integer():
+            return AdapterService.to_abstract_user_id(int(raw_self_id))
+        if isinstance(raw_self_id, str) and raw_self_id.strip().isdigit():
+            return AdapterService.to_abstract_user_id(int(raw_self_id.strip()))
+        return None
+
+    @staticmethod
     def _extract_sub_type(
         *,
         raw_event: dict[str, Any],
@@ -346,6 +435,7 @@ class AdapterService:
         message_id: str,
         session_id: str,
         user_id: str,
+        self_id: str,
         event_time: str,
         content: str,
     ) -> str:
@@ -357,6 +447,7 @@ class AdapterService:
             f'message_id="{AdapterService._escape_attr(message_id)}" '
             f'session_id="{AdapterService._escape_attr(session_id)}" '
             f'user_id="{AdapterService._escape_attr(user_id)}" '
+            f'self_id="{AdapterService._escape_attr(self_id)}" '
             f'time="{AdapterService._escape_attr(event_time)}"'
             ">"
             f"{AdapterService._escape_text(content)}"
@@ -368,12 +459,14 @@ class AdapterService:
         *,
         session_id: str,
         user_id: str,
+        self_id: str,
         target_id: str,
     ) -> str:
         return (
             "<poke "
             f'session_id="{AdapterService._escape_attr(session_id)}" '
             f'user_id="{AdapterService._escape_attr(user_id)}" '
+            f'self_id="{AdapterService._escape_attr(self_id)}" '
             f'target_id="{AdapterService._escape_attr(target_id)}" '
             "/>"
         )
@@ -383,12 +476,14 @@ class AdapterService:
         *,
         session_id: str,
         user_id: str,
+        self_id: str,
         message_id: str,
     ) -> str:
         return (
             "<recall "
             f'session_id="{AdapterService._escape_attr(session_id)}" '
             f'user_id="{AdapterService._escape_attr(user_id)}" '
+            f'self_id="{AdapterService._escape_attr(self_id)}" '
             f'message_id="{AdapterService._escape_attr(message_id)}" '
             "/>"
         )
@@ -413,3 +508,13 @@ class AdapterService:
             except (TypeError, ValueError):
                 continue
         return None
+
+    @staticmethod
+    def _parse_positive_int(*, message_id: str) -> int:
+        try:
+            value = int(message_id)
+        except ValueError as exc:
+            raise ValueError("message_id must be int-like") from exc
+        if value < 1:
+            raise ValueError("message_id must be positive")
+        return value

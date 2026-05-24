@@ -10,7 +10,7 @@ class StubOutboundClient:
         self.create_calls: list[tuple[str, dict[str, str]]] = []
         self.agent_calls: list[tuple[str, str, str, str]] = []
         self.agent_call_started_ats: list[float] = []
-        self.reply_calls: list[tuple[str, str]] = []
+        self.action_batches: list[tuple[str, str]] = []
         self.call_delays: list[float] = []
 
     async def create_agent(self, session_id: str, metadata: dict[str, str]) -> str:
@@ -32,10 +32,14 @@ class StubOutboundClient:
         delay = self.call_delays.pop(0) if self.call_delays else 0.05
         await asyncio.sleep(delay)
         merged = "\n".join(re.findall(r"<message\b[^>]*>(.*?)</message>", batch_xml))
-        return f"reply:{merged}"
+        return (
+            f'<batch type="end"><message session_id="{session_id}">'
+            f"reply:{merged}"
+            "</message></batch>"
+        )
 
-    async def send_reply(self, session_id: str, content: str) -> None:
-        self.reply_calls.append((session_id, content))
+    async def send_actions(self, session_id: str, batch_xml: str) -> None:
+        self.action_batches.append((session_id, batch_xml))
 
 
 def _event(session_id: str, content: str, message_type: str = "private") -> EventStreamMessage:
@@ -76,7 +80,12 @@ def test_debounce_merges_messages_for_same_session() -> None:
     assert outbound.agent_calls[0][2] == "start"
     assert ">a</message>" in outbound.agent_calls[0][3]
     assert ">b</message>" in outbound.agent_calls[0][3]
-    assert outbound.reply_calls == [("private_1", "reply:a\nb")]
+    assert outbound.action_batches == [
+        (
+            "private_1",
+            '<batch type="end"><message session_id="private_1">reply:a\nb</message></batch>',
+        )
+    ]
     assert state["runner_count"] == 0
 
 
@@ -106,7 +115,12 @@ def test_running_session_collects_next_round_messages() -> None:
     assert ">second</message>" in outbound.agent_calls[1][3]
     assert ">third</message>" in outbound.agent_calls[1][3]
     assert outbound.agent_calls[0][1] == outbound.agent_calls[1][1]
-    assert outbound.reply_calls == [("private_1", "reply:second\nthird")]
+    assert outbound.action_batches == [
+        (
+            "private_1",
+            '<batch type="end"><message session_id="private_1">reply:second\nthird</message></batch>',
+        )
+    ]
     assert state["runner_count"] == 0
 
 
@@ -129,7 +143,7 @@ def test_different_sessions_are_dispatched_independently() -> None:
     assert len(outbound.agent_calls) == 2
     assert {session_id for session_id, *_ in outbound.agent_calls} == {"private_1", "private_2"}
     assert outbound.agent_calls[0][1] != outbound.agent_calls[1][1]
-    assert len(outbound.reply_calls) == 2
+    assert len(outbound.action_batches) == 2
 
 
 def test_running_session_discards_stale_reply_and_only_sends_rerun_result() -> None:
@@ -154,7 +168,12 @@ def test_running_session_discards_stale_reply_and_only_sends_rerun_result() -> N
     assert outbound.agent_calls[1][2] == "append"
     assert ">first</message>" in outbound.agent_calls[0][3]
     assert ">second</message>" in outbound.agent_calls[1][3]
-    assert outbound.reply_calls == [("private_1", "reply:second")]
+    assert outbound.action_batches == [
+        (
+            "private_1",
+            '<batch type="end"><message session_id="private_1">reply:second</message></batch>',
+        )
+    ]
 
 
 def test_followup_after_reply_starts_next_round() -> None:
@@ -177,7 +196,16 @@ def test_followup_after_reply_starts_next_round() -> None:
     assert len(outbound.agent_calls) == 2
     assert outbound.agent_calls[0][2] == "start"
     assert outbound.agent_calls[1][2] == "start"
-    assert outbound.reply_calls == [("private_1", "reply:first"), ("private_1", "reply:second")]
+    assert outbound.action_batches == [
+        (
+            "private_1",
+            '<batch type="end"><message session_id="private_1">reply:first</message></batch>',
+        ),
+        (
+            "private_1",
+            '<batch type="end"><message session_id="private_1">reply:second</message></batch>',
+        ),
+    ]
 
 
 def test_rerun_waits_full_debounce_after_run_completion() -> None:
@@ -208,4 +236,9 @@ def test_rerun_waits_full_debounce_after_run_completion() -> None:
     assert outbound.agent_calls[0][2] == "start"
     assert outbound.agent_calls[1][2] == "append"
     assert outbound.agent_call_started_ats[1] - outbound.agent_call_started_ats[0] >= 0.12
-    assert outbound.reply_calls == [("private_1", "reply:second")]
+    assert outbound.action_batches == [
+        (
+            "private_1",
+            '<batch type="end"><message session_id="private_1">reply:second</message></batch>',
+        )
+    ]

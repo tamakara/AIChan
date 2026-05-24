@@ -138,20 +138,23 @@ class SessionRunner:
         try:
             # 标记回复链路已开始，后续因消息更新触发重跑时统一使用 append 语义。
             self._start_reply_cycle_if_needed()
-            reply = await self._outbound_client.call_agent(
+            outbound_batch = await self._outbound_client.call_agent(
                 session_id=self._session_id,
                 agent_id=self._agent_id,
                 batch_xml=batch_xml,
             )
             should_send, reason = await self._decide_reply_delivery(batch_max_seq=batch_max_seq)
             if should_send:
-                await self._outbound_client.send_reply(session_id=self._session_id, content=reply)
+                await self._outbound_client.send_actions(
+                    session_id=self._session_id,
+                    batch_xml=outbound_batch,
+                )
                 log_info(
                     self._logger,
                     "hub.session_run_completed",
                     session_id=self._session_id,
                     agent_id=self._agent_id,
-                    reply_len=len(reply),
+                    reply_len=len(outbound_batch),
                     elapsed_ms=elapsed_ms(run_started_at),
                 )
                 self._reset_reply_cycle()

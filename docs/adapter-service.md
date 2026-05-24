@@ -1,7 +1,7 @@
 # adapter-service
 
 ## 1. 模块一句话定位
-`adapter-service` 是 QQ 协议适配层：连接 OneBot v11 反向 WebSocket，把入站消息事件规范化并按配置做业务过滤后写入 `qq.events`，并消费 `qq.actions` 执行发送动作。  
+`adapter-service` 是 QQ 协议适配层：连接 OneBot v11 反向 WebSocket，把入站消息事件规范化并按配置做业务过滤后写入 `qq.events`，并消费 `qq.actions` 执行协议动作（`message/poke/recall`）。  
 不负责会话编排与 agent 调度（这些由 `hub-service` 负责）。
 
 协议说明：
@@ -56,8 +56,17 @@
 - 读取流：`redis.actions_stream`（默认 `qq.actions`）
 - 读取方式：`XREADGROUP`（group=`redis.actions_group`，consumer=`redis.actions_consumer`）
 - 消息结构（`ActionStreamMessage`）：
-  - `action_id`、`session_id`、`action_type`、`payload`、`created_at`
-  - `payload.content` 为必填且非空字符串
+  - `action_id`、`session_id`、`action_xml`、`created_at`
+- 执行规则：
+  - `action_xml` 必须是单条 `<message ...>` / `<poke ... />` / `<recall ... />`
+  - 最小属性要求：
+    - `message`：`session_id` + 非空文本体
+    - `poke`：`session_id` + `target_id`
+    - `recall`：`session_id` + `message_id`
+  - NapCat 动作映射：
+    - `<message>` -> `send_private_msg` / `send_group_msg`
+    - `<poke>` -> `friend_poke` / `group_poke`
+    - `<recall>` -> `delete_msg`
 
 ### 2.4 对外产出（Redis Stream）
 - 写入流：`redis.events_stream`（默认 `qq.events`）
@@ -66,11 +75,11 @@
 - 产出规则：
   - 接收 OneBot `message` 与指定 `notice` 事件并做结构化清洗。
   - 按 `adapter.allowed_message_types` 过滤 `message_type`。
-  - 清洗后空文本（仅 message）、缺失 `message_id`（仅 message）或缺失 `raw_event.time` 的事件会在适配层直接丢弃。
+  - 清洗后空文本（仅 message）、缺失 `message_id`（仅 message）、缺失 `raw_event.time` 或缺失 `raw_event.self_id` 的事件会在适配层直接丢弃。
   - 通过统一 XML 标签入流：
-    - `message`：`<message message_type="..." sub_type="..." message_id="..." session_id="..." user_id="..." time="...">...</message>`
-    - `poke`：`<poke session_id="..." user_id="..." target_id="..." />`
-    - `recall`：`<recall session_id="..." user_id="..." message_id="..." />`
+    - `message`：`<message message_type="..." sub_type="..." message_id="..." session_id="..." user_id="..." self_id="..." time="...">...</message>`
+    - `poke`：`<poke session_id="..." user_id="..." self_id="..." target_id="..." />`
+    - `recall`：`<recall session_id="..." user_id="..." self_id="..." message_id="..." />`
 
 ### 2.5 异常码说明
 - 未定义独立业务错误码体系，错误通过 HTTP 状态码与日志表达。
@@ -83,8 +92,8 @@
 - `raw_event`：原始事件保留，供下游诊断和再推理
 
 ### 3.2 动作消息（`ActionStreamMessage`）
-- `action_type`：当前只识别 `send_message`
-- `payload.content`：最终回发给 QQ 上游实现的消息体
+- `action_xml`：单条动作标签，执行前在 adapter 侧做 XML 与最小属性校验
+- `session_id`：执行路由键（群聊/私聊分流）
 
 ### 3.3 连接与动作等待态
 - `NapcatConnectionState._websocket`：当前有效连接引用（单实例）
@@ -115,10 +124,8 @@ flowchart TD
     I --> J[按 echo 唤醒 pending Future]
 
     K[ActionConsumerWorker 轮询 qq.actions] --> L[解析 ActionStreamMessage]
-    L --> M{action_type==send_message?}
-    M -->|否| N[记录 skipped]
-    M -->|是| O[build_send_message_action]
-    O --> P{WS 是否连接}
+    L --> M[解析 action_xml 为 OutboundAction]
+    M --> P{WS 是否连接}
     P -->|否| Q[抛 RuntimeError 不 ACK 留待重试]
     P -->|是| R[send_action 发送 OneBot 请求]
     R --> S{超时?}

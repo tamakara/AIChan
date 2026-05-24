@@ -11,15 +11,19 @@ class StubLlmClient:
     def __init__(self) -> None:
         self.calls: list[list] = []
         self.fail: bool = False
+        self.output: str | None = None
         self.model_name = "gpt-test"
 
     def generate(self, messages, tools_schema, temperature) -> LlmResponse:
         self.calls.append(messages)
         if self.fail:
             raise RuntimeError("stub failure")
-        user_message = messages[-1]["content"]
-        reply = f"echo:{user_message}"
-        return LlmResponse(content=reply, tool_calls=[], finish_reason="stop")
+        batch = (
+            self.output
+            if self.output is not None
+            else '<batch type="end"><message session_id="private_1">ok</message></batch>'
+        )
+        return LlmResponse(content=batch, tool_calls=[], finish_reason="stop")
 
 
 class StubMcpGateway:
@@ -132,7 +136,7 @@ def test_chat_uses_existing_agent_and_injects_context() -> None:
     )
 
     assert response.status_code == 200
-    assert response.json()["reply"].startswith('echo:<batch type="start"><message')
+    assert response.json()["batch"] == '<batch type="end"><message session_id="private_1">ok</message></batch>'
     assert len(llm_client.calls) == 1
 
     called_messages = llm_client.calls[0]
@@ -196,9 +200,13 @@ def test_chat_reuses_existing_agent() -> None:
     first_user_xml = str(llm_client.calls[0][-1]["content"])
     second_call_roles = [msg["role"] for msg in llm_client.calls[1]]
     second_call_contents = [str(msg["content"]) for msg in llm_client.calls[1]]
+    expected_first_assistant_batch = (
+        '<batch type="end"><message session_id="private_1">ok</message></batch>'
+    )
 
     assert second_call_roles == ["system", "system", "user", "assistant", "user"]
-    assert f"echo:{first_user_xml}" in second_call_contents
+    assert first_user_xml in second_call_contents
+    assert expected_first_assistant_batch in second_call_contents
 
 
 def test_chat_accepts_append_batch_type_when_requested() -> None:
@@ -249,6 +257,28 @@ def test_chat_returns_500_when_agent_fails() -> None:
 
     assert response.status_code == 500
     assert response.json()["detail"] == "stub failure"
+
+
+def test_chat_returns_500_when_agent_output_is_not_protocol_batch() -> None:
+    llm_client = StubLlmClient()
+    llm_client.output = "not xml"
+    client = build_client(llm_client=llm_client)
+    agent_id = _create_agent(client, {"session_id": "private_1"})
+
+    response = client.post(
+        "/chat",
+        json={
+            "agent_id": agent_id,
+            "batch": _batch(
+                '<message message_type="private" sub_type="friend" '
+                'message_id="11" session_id="private_1" user_id="qq_1" '
+                'time="1710000000">hello</message>'
+            ),
+        },
+    )
+
+    assert response.status_code == 500
+    assert "agent output must be valid xml" in response.json()["detail"]
 
 
 def test_chat_returns_422_when_batch_empty() -> None:

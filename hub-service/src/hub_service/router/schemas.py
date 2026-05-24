@@ -38,4 +38,4 @@ class AgentChatRequest(BaseModel):
 class AgentChatResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    reply: str
+    batch: str
