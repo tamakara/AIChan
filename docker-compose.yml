@@ -1,17 +1,11 @@
 services:
-  redis:
-    image: redis:7-alpine
-    restart: unless-stopped
-    ports:
-      - "6379:6379"
-
   mcp-gateway:
     image: docker/mcp-gateway:latest
     restart: unless-stopped
     command:
       - --transport=sse
       - --port=9000
-      - --servers=playwright,fetch,time,docker://adapter-service:latest
+      - --servers=playwright,fetch,time,docker://napcat-mcp-server:latest
     ports:
       - "9000:9000"
     volumes:
@@ -28,36 +22,33 @@ services:
     ports:
       - "8000:8000"
 
-  adapter-service:
-    image: adapter-service:latest
+  napcat-mcp-server:
+    image: napcat-mcp-server:latest
     build:
-      context: ./adapter-service
+      context: ./napcat-mcp-server
     restart: unless-stopped
-    depends_on:
-      redis:
-        condition: service_started
     command:
-      - adapter-service
+      - napcat-mcp-server
     volumes:
-      - ./adapter-service/config.yml:/app/adapter-service/config.yml:ro
+      - ./napcat-mcp-server/config.yml:/app/napcat-mcp-server/config.yml:ro
     ports:
-      - "8010:8010"
+      - "8030:8030"
 
   napcat:
     image: mlikiowa/napcat-docker:latest
     restart: unless-stopped
     depends_on:
-      adapter-service:
+      hub-service:
+        condition: service_started
+      napcat-mcp-server:
         condition: service_started
     environment:
       - NAPCAT_UID=1000
       - NAPCAT_GID=1000
     volumes:
-      # 只挂载默认配置文件，避免账号级运行时配置回写到仓库。
       - ./napcat/config/napcat.json:/app/napcat/config/napcat.json
       - ./napcat/config/onebot11.json:/app/napcat/config/onebot11.json
       - ./napcat/config/webui.json:/app/napcat/config/webui.json
-      # 持久化 QQ 登录态，避免容器重启后重复扫码。
       - ./napcat/ntqq:/app/.config/QQ
     ports:
       - "6099:6099"
@@ -69,9 +60,7 @@ services:
     depends_on:
       agent-service:
         condition: service_started
-      redis:
-        condition: service_started
     volumes:
       - ./hub-service/config.yml:/app/hub-service/config.yml:ro
-    ports: 
+    ports:
       - "8020:8020"

@@ -1,11 +1,11 @@
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Literal, Mapping
+from typing import Any, Mapping
 
 from pydantic import BaseModel, ConfigDict, StrictInt, StrictStr, ValidationError, field_validator
 import yaml
 
-CONFIG_PATH = Path.cwd() / "hub-service" / "config.yml"
+CONFIG_PATH = Path.cwd() / "napcat-mcp-server" / "config.yml"
 
 
 class ServerSettings(BaseModel):
@@ -13,31 +13,6 @@ class ServerSettings(BaseModel):
 
     host: StrictStr
     port: StrictInt
-    log_level: StrictStr
-
-
-class HubSettings(BaseModel):
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
-    agent_url: StrictStr
-    debounce_seconds: float
-    allowed_message_types: tuple[Literal["private", "group"], ...]
-
-    @field_validator("debounce_seconds", mode="before")
-    @classmethod
-    def _validate_debounce_seconds(cls, value: Any) -> float:
-        if isinstance(value, bool) or not isinstance(value, (int, float)):
-            raise TypeError("必须是数字")
-        return float(value)
-
-    @field_validator("allowed_message_types", mode="before")
-    @classmethod
-    def _validate_allowed_message_types(cls, value: Any) -> tuple[str, ...]:
-        if not isinstance(value, (list, tuple)):
-            raise TypeError("必须是数组")
-        if not value:
-            raise ValueError("至少包含一个 message_type")
-        return tuple(str(item) for item in value)
 
 
 class NapcatSettings(BaseModel):
@@ -53,12 +28,26 @@ class NapcatSettings(BaseModel):
         return float(value)
 
 
+class McpSettings(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    base_url: StrictStr
+    timeout_seconds: float
+
+    @field_validator("timeout_seconds", mode="before")
+    @classmethod
+    def _validate_timeout_seconds(cls, value: Any) -> float:
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise TypeError("必须是数字")
+        return float(value)
+
+
 class Settings(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     server: ServerSettings
-    hub: HubSettings
     napcat: NapcatSettings
+    mcp: McpSettings
 
 
 def _load_config() -> dict[str, Any]:

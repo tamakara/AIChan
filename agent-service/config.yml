@@ -17,4 +17,4 @@ agent:
     secret_key: "sk-lf-cc887c45-7975-4af6-aab7-dee9ece0a9d1"
     flush_at: 16
     flush_interval: 0.5
-    request_timeout: 5.0
+    request_timeout: 15.0

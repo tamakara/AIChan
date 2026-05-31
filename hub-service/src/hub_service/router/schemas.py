@@ -12,30 +12,30 @@ class HealthResponse(BaseModel):
 class AgentInboundEvent(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    event_xml: str = Field(min_length=1)
+    event: dict[str, Any]
 
 
-class AgentCreateRequest(BaseModel):
+class SessionCreateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
-class AgentCreateResponse(BaseModel):
+class SessionCreateResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    agent_id: str
+    session_id: str
     metadata: dict[str, Any]
 
 
-class AgentChatRequest(BaseModel):
+class SessionChatRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    agent_id: str = Field(min_length=1)
+    session_id: str = Field(min_length=1)
     batch: str = Field(min_length=1)
 
 
-class AgentChatResponse(BaseModel):
+class SessionChatResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     batch: str

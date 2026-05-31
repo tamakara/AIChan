@@ -1,14 +1,17 @@
 from __future__ import annotations
 
 import asyncio
+from typing import Any
 
 from ..router.schemas import AgentInboundEvent
+from .napcat_ws import get_session_key
 from .outbound_client import OutboundClient
 from .session_runner import SessionRunner
-from .stream_models import EventStreamMessage
 
 
 class SessionRegistry:
+    """会话注册中心 — 按 OneBot 原生 session key 管理 SessionRunner。"""
+
     def __init__(
         self,
         outbound_client: OutboundClient,
@@ -17,32 +20,36 @@ class SessionRegistry:
         self._outbound_client = outbound_client
         self._debounce_seconds = debounce_seconds
         self._runners: dict[str, SessionRunner] = {}
-        self._session_agent_ids: dict[str, str] = {}
+        self._agent_session_ids: dict[str, str] = {}
         self._lock = asyncio.Lock()
         self._stopping = False
 
-    async def submit_event(self, event: EventStreamMessage) -> None:
+    async def submit_event(self, raw_event: dict[str, Any]) -> None:
+        """接收原始 OneBot v11 事件，路由到对应 SessionRunner。"""
+        session_key = get_session_key(raw_event)
+
         async with self._lock:
-            runner = self._runners.get(event.session_id)
+            runner = self._runners.get(session_key)
             if runner is None:
-                agent_id = self._session_agent_ids.get(event.session_id)
-                if agent_id is None:
-                    agent_id = await self._outbound_client.create_agent(
-                        session_id=event.session_id,
-                        metadata={"session_id": event.session_id},
+                agent_session_id = self._agent_session_ids.get(session_key)
+                if agent_session_id is None:
+                    agent_session_id = await self._outbound_client.create_session(
+                        hub_session_key=session_key,
+                        metadata={"session_key": session_key},
                     )
-                    self._session_agent_ids[event.session_id] = agent_id
-                # 注册中心统一创建 runner，确保同一 session 永远只会被单个对象串行处理。
+                    self._agent_session_ids[session_key] = agent_session_id
+
                 runner = SessionRunner(
-                    session_id=event.session_id,
-                    agent_id=agent_id,
+                    session_key=session_key,
+                    agent_session_id=agent_session_id,
                     outbound_client=self._outbound_client,
                     debounce_seconds=self._debounce_seconds,
                     on_idle=self._on_runner_idle,
                 )
-                self._runners[event.session_id] = runner
+                self._runners[session_key] = runner
+
             await runner.submit_message(
-                AgentInboundEvent(event_xml=event.event_xml)
+                AgentInboundEvent(event=raw_event)
             )
 
     async def shutdown(self) -> None:
@@ -56,12 +63,12 @@ class SessionRegistry:
         async with self._lock:
             return len(self._runners)
 
-    async def _on_runner_idle(self, session_id: str, runner: SessionRunner) -> None:
+    async def _on_runner_idle(self, session_key: str, runner: SessionRunner) -> None:
         if self._stopping:
             return
         async with self._lock:
             if self._stopping:
                 return
-            if self._runners.get(session_id) is runner:
+            if self._runners.get(session_key) is runner:
                 if await runner.is_idle():
-                    self._runners.pop(session_id, None)
+                    self._runners.pop(session_key, None)

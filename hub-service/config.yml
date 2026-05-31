@@ -6,14 +6,8 @@ server:
 hub:
   agent_url: http://agent-service:8000
   debounce_seconds: 2.0
+  allowed_message_types:
+    - private
 
-redis:
-  host: redis
-  port: 6379
-  db: 0
-  password: ""
-  events_stream: qq.events
-  events_group: hub-event-workers
-  events_consumer: hub-service-1
-  events_block_ms: 2000
-  actions_stream: qq.actions
+napcat:
+  ws_action_timeout_seconds: 5

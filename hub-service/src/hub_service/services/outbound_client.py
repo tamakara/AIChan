@@ -6,82 +6,92 @@ import httpx
 
 from ..logger import elapsed_ms, get_logger, log_info, start_timer
 from ..router.schemas import (
-    AgentCreateRequest,
-    AgentCreateResponse,
-    AgentChatRequest,
-    AgentChatResponse,
+    SessionCreateRequest,
+    SessionCreateResponse,
+    SessionChatRequest,
+    SessionChatResponse,
 )
-from .action_batch_parser import parse_action_batch
-from .redis_stream import HubRedisStream
+from .napcat_ws import NapcatWsGateway
 
 
 class OutboundClient:
+    """下游通信客户端 — agent-service HTTP + NapCat WS 动作发送。"""
+
     def __init__(
         self,
         agent_service_url: str,
-        redis_stream: HubRedisStream,
+        napcat_ws: NapcatWsGateway,
     ) -> None:
         self._logger = get_logger("outbound_client")
         self._agent_service_url = agent_service_url.rstrip("/")
-        self._redis_stream = redis_stream
+        self._napcat_ws = napcat_ws
         self._client = httpx.AsyncClient(timeout=None)
 
-    async def create_agent(self, session_id: str, metadata: dict[str, Any]) -> str:
+    async def create_session(self, hub_session_key: str, metadata: dict[str, Any]) -> str:
+        """在 agent-service 中创建会话，返回 agent 侧的 session_id。"""
         started_at = start_timer()
-        payload = AgentCreateRequest(metadata=metadata)
-        data = await self._post_json(f"{self._agent_service_url}/agents", payload.model_dump())
-        response = AgentCreateResponse.model_validate(data)
+        payload = SessionCreateRequest(metadata=metadata)
+        data = await self._post_json(f"{self._agent_service_url}/sessions", payload.model_dump())
+        response = SessionCreateResponse.model_validate(data)
         log_info(
             self._logger,
             "hub.downstream_called",
-            session_id=session_id,
+            session_key=hub_session_key,
             status="ok",
             elapsed_ms=elapsed_ms(started_at),
         )
-        return response.agent_id
+        return response.session_id
 
-    async def call_agent(
+    async def call_session(
         self,
-        session_id: str,
-        agent_id: str,
-        batch_xml: str,
+        hub_session_key: str,
+        agent_session_id: str,
+        text: str,
     ) -> str:
+        """向 agent-service 发送消息（原始 OneBot JSON 文本），返回纯文本回复。"""
         started_at = start_timer()
-        payload = AgentChatRequest(
-            agent_id=agent_id,
-            batch=batch_xml,
+        payload = SessionChatRequest(
+            session_id=agent_session_id,
+            batch=text,
         )
         data = await self._post_json(f"{self._agent_service_url}/chat", payload.model_dump())
-        response = AgentChatResponse.model_validate(data)
+        response = SessionChatResponse.model_validate(data)
         log_info(
             self._logger,
             "hub.downstream_called",
-            session_id=session_id,
+            session_key=hub_session_key,
             status="ok",
             elapsed_ms=elapsed_ms(started_at),
         )
         return response.batch
 
-    async def send_actions(self, session_id: str, batch_xml: str) -> None:
+    async def send_reply(self, session_key: str, content: str) -> None:
+        """通过 NapCat WS 直接发送 OneBot 消息动作。"""
         started_at = start_timer()
-        actions = parse_action_batch(batch_xml=batch_xml, expected_session_id=session_id)
-        for action in actions:
-            await self._redis_stream.enqueue_action_xml(
-                session_id=action.session_id,
-                action_xml=action.action_xml,
-            )
+
+        if session_key.startswith("group:"):
+            group_id = int(session_key.split(":", 1)[1])
+            action = "send_group_msg"
+            params = {"group_id": group_id, "message": content}
+        elif session_key.startswith("private:"):
+            user_id = int(session_key.split(":", 1)[1])
+            action = "send_private_msg"
+            params = {"user_id": user_id, "message": content}
+        else:
+            raise ValueError(f"invalid session_key: {session_key}")
+
+        await self._napcat_ws.send_action(action=action, params=params)
         log_info(
             self._logger,
-            "hub.reply_enqueued",
-            session_id=session_id,
-            reply_len=len(batch_xml),
+            "hub.reply_sent",
+            session_key=session_key,
+            reply_len=len(content),
             elapsed_ms=elapsed_ms(started_at),
         )
 
     async def _post_json(self, url: str, payload: dict[str, Any]) -> dict[str, Any]:
         response = await self._client.post(url, json=payload)
         if response.status_code >= 400:
-            # 下游非 2xx 时保留响应体，避免只看到状态码而丢失关键错误上下文。
             raise RuntimeError(
                 f"downstream http error: url={url} status={response.status_code} body={response.text}"
             )

@@ -3,23 +3,23 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field
 
 
-class CreateAgentRequest(BaseModel):
+class CreateSessionRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
-class CreateAgentResponse(BaseModel):
+class CreateSessionResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    agent_id: str
+    session_id: str
     metadata: dict[str, Any]
 
 
 class ChatRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    agent_id: str = Field(min_length=1)
+    session_id: str = Field(min_length=1)
     batch: str = Field(min_length=1)
 
 
@@ -33,4 +33,3 @@ class HealthResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     status: str
-

@@ -1,4 +1,5 @@
 import asyncio
+import json
 
 from hub_service.services.event_consumer import EventConsumerWorker
 
@@ -25,6 +26,20 @@ class StubSessionRegistry:
         self.events.append(event)
 
 
+def _onebot_message_event(message_type: str, session_id: str, text: str) -> dict:
+    return {
+        "time": 1710000000,
+        "self_id": 10001,
+        "post_type": "message",
+        "message_type": message_type,
+        "sub_type": "friend" if message_type == "private" else "normal",
+        "message_id": 11,
+        "user_id": 1,
+        "message": [{"type": "text", "data": {"text": text}}],
+        "sender": {"user_id": 1, "nickname": "test"},
+    }
+
+
 def test_private_event_is_forwarded_and_acked() -> None:
     redis_stream = StubRedisStream()
     session_registry = StubSessionRegistry()
@@ -33,6 +48,7 @@ def test_private_event_is_forwarded_and_acked() -> None:
         session_registry=session_registry,  # type: ignore[arg-type]
     )
 
+    ob_event = _onebot_message_event("private", "private_1", "hello")
     asyncio.run(
         worker._handle_batch(  # type: ignore[attr-defined]
             [
@@ -41,10 +57,8 @@ def test_private_event_is_forwarded_and_acked() -> None:
                     {
                         "event_id": "ev1",
                         "session_id": "private_1",
-                        "event_xml": '<message message_type="private" sub_type="friend" '
-                        'message_id="11" session_id="private_1" user_id="qq_1" '
-                        'time="1710000000">hello</message>',
-                        "raw_event": "{\"time\":1710000000,\"k\":1}",
+                        "event": json.dumps(ob_event, ensure_ascii=False),
+                        "raw_event": json.dumps(ob_event, ensure_ascii=False),
                         "created_at": "2026-01-01T00:00:00+00:00",
                     },
                 )
@@ -64,6 +78,7 @@ def test_group_event_is_forwarded_and_acked() -> None:
         session_registry=session_registry,  # type: ignore[arg-type]
     )
 
+    ob_event = _onebot_message_event("group", "group_1", "hello")
     asyncio.run(
         worker._handle_batch(  # type: ignore[attr-defined]
             [
@@ -72,10 +87,8 @@ def test_group_event_is_forwarded_and_acked() -> None:
                     {
                         "event_id": "ev1",
                         "session_id": "group_1",
-                        "event_xml": '<message message_type="group" sub_type="normal" '
-                        'message_id="11" session_id="group_1" user_id="qq_1" '
-                        'time="1710000000">hello</message>',
-                        "raw_event": "{\"time\":1710000000,\"k\":1}",
+                        "event": json.dumps(ob_event, ensure_ascii=False),
+                        "raw_event": json.dumps(ob_event, ensure_ascii=False),
                         "created_at": "2026-01-01T00:00:00+00:00",
                     },
                 )
@@ -87,7 +100,7 @@ def test_group_event_is_forwarded_and_acked() -> None:
     assert len(session_registry.events) == 1
 
 
-def test_private_empty_content_is_acked_and_ignored() -> None:
+def test_empty_event_is_acked_and_ignored() -> None:
     redis_stream = StubRedisStream()
     session_registry = StubSessionRegistry()
     worker = EventConsumerWorker(
@@ -103,8 +116,8 @@ def test_private_empty_content_is_acked_and_ignored() -> None:
                     {
                         "event_id": "ev1",
                         "session_id": "private_1",
-                        "event_xml": "   ",
-                        "raw_event": "{\"time\":1710000000,\"k\":1}",
+                        "event": "{}",
+                        "raw_event": "{\"time\":1710000000}",
                         "created_at": "2026-01-01T00:00:00+00:00",
                     },
                 )
@@ -124,6 +137,7 @@ def test_missing_raw_event_time_is_acked_and_ignored() -> None:
         session_registry=session_registry,  # type: ignore[arg-type]
     )
 
+    ob_event = _onebot_message_event("private", "private_1", "hello")
     asyncio.run(
         worker._handle_batch(  # type: ignore[attr-defined]
             [
@@ -132,10 +146,8 @@ def test_missing_raw_event_time_is_acked_and_ignored() -> None:
                     {
                         "event_id": "ev1",
                         "session_id": "private_1",
-                        "event_xml": '<message message_type="private" sub_type="friend" '
-                        'message_id="11" session_id="private_1" user_id="qq_1" '
-                        'time="1710000000">hello</message>',
-                        "raw_event": "{\"k\":1}",
+                        "event": json.dumps(ob_event, ensure_ascii=False),
+                        "raw_event": "{}",
                         "created_at": "2026-01-01T00:00:00+00:00",
                     },
                 )

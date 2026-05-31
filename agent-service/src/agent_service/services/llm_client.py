@@ -19,7 +19,10 @@ class LlmClient:
         self._logger = get_logger("llm_client")
         self._model_name = model_name
         self._observability = observability
-        self._client = OpenAI(api_key=api_key, base_url=base_url)
+        self._client = OpenAI(
+            api_key=api_key,
+            base_url=base_url,
+        )
 
     @property
     def model_name(self) -> str:

@@ -3,7 +3,8 @@ import json
 from openai.types.chat import ChatCompletionMessageFunctionToolCall
 from openai.types.chat.chat_completion_message_function_tool_call import Function
 
-from agent_service.services.agent import AgentRegistry
+from agent_service.services.agent import Agent
+from agent_service.services.session import SessionRegistry
 from agent_service.services.observability import RunTrace
 from agent_service.services.types.llm import LlmResponse
 
@@ -79,23 +80,24 @@ def test_agent_reports_full_observability_flow() -> None:
             LlmResponse(content="done", tool_calls=[], finish_reason="stop"),
         ]
     )
-    registry = AgentRegistry(  # type: ignore[arg-type]
+    agent = Agent(  # type: ignore[arg-type]
         llm_client=llm,
         mcp_gateway=StubMcpGateway(),
         max_turns=3,
         temperature=0.0,
         observability=observability,
     )
-    agent = registry.create(metadata={"session_id": "private_1"})
+    registry = SessionRegistry()
+    session = registry.create(metadata={"session_id": "private_1"})
 
     reply = agent.run(
-        user_message='<message user_id="qq_1" event_time="1710000000">hello</message>',
-        message_count=2,
+        session=session,
+        user_message="hello",
     )
 
     assert reply == "done"
     assert len(observability.started) == 1
-    assert observability.started[0]["message_count"] == 2
+    assert observability.started[0]["message_count"] == 0
     assert len(observability.generations) == 2
     assert len(observability.tools) == 1
     assert observability.tools[0]["status"] == "ok"
@@ -111,22 +113,22 @@ def test_agent_reports_failed_tool_span_but_can_continue() -> None:
             LlmResponse(content="fallback", tool_calls=[], finish_reason="stop"),
         ]
     )
-    registry = AgentRegistry(  # type: ignore[arg-type]
+    agent = Agent(  # type: ignore[arg-type]
         llm_client=llm,
         mcp_gateway=StubMcpGateway(),
         max_turns=3,
         temperature=0.0,
         observability=observability,
     )
-    agent = registry.create(metadata={"session_id": "private_2"})
+    registry = SessionRegistry()
+    session = registry.create(metadata={"session_id": "private_2"})
 
     reply = agent.run(
-        user_message='<message user_id="qq_1" event_time="1710000000">hello</message>',
-        message_count=1,
+        session=session,
+        user_message="hello",
     )
 
     assert reply == "fallback"
     assert len(observability.tools) == 1
     assert observability.tools[0]["status"] == "failed"
     assert len(observability.success) == 1
-

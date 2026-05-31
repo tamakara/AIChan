@@ -1,0 +1,10 @@
+server:
+  host: 0.0.0.0
+  port: 8030
+
+napcat:
+  ws_action_timeout_seconds: 5
+
+mcp:
+  base_url: http://napcat-mcp-server:8030
+  timeout_seconds: 5

@@ -1,5 +1,4 @@
 import asyncio
-import re
 
 from hub_service.services.session_registry import SessionRegistry
 from hub_service.services.stream_models import EventStreamMessage
@@ -8,49 +7,42 @@ from hub_service.services.stream_models import EventStreamMessage
 class StubOutboundClient:
     def __init__(self) -> None:
         self.create_calls: list[tuple[str, dict[str, str]]] = []
-        self.agent_calls: list[tuple[str, str, str, str]] = []
-        self.agent_call_started_ats: list[float] = []
-        self.action_batches: list[tuple[str, str]] = []
+        self.session_calls: list[tuple[str, str, str]] = []
+        self.session_call_started_ats: list[float] = []
+        self.replies: list[tuple[str, str]] = []
         self.call_delays: list[float] = []
 
-    async def create_agent(self, session_id: str, metadata: dict[str, str]) -> str:
-        self.create_calls.append((session_id, metadata))
-        return f"agent-{session_id}"
+    async def create_session(self, hub_session_id: str, metadata: dict[str, str]) -> str:
+        self.create_calls.append((hub_session_id, metadata))
+        return f"agent-{hub_session_id}"
 
-    async def call_agent(self, session_id: str, agent_id: str, batch_xml: str) -> str:
-        self.agent_call_started_ats.append(asyncio.get_running_loop().time())
-        batch_type_match = re.search(r'<batch type="([^"]+)">', batch_xml)
-        batch_type = batch_type_match.group(1) if batch_type_match else "unknown"
-        self.agent_calls.append(
-            (
-                session_id,
-                agent_id,
-                batch_type,
-                batch_xml,
-            )
-        )
+    async def call_session(
+        self, hub_session_id: str, agent_session_id: str, text: str
+    ) -> str:
+        self.session_call_started_ats.append(asyncio.get_running_loop().time())
+        self.session_calls.append((hub_session_id, agent_session_id, text))
         delay = self.call_delays.pop(0) if self.call_delays else 0.05
         await asyncio.sleep(delay)
-        merged = "\n".join(re.findall(r"<message\b[^>]*>(.*?)</message>", batch_xml))
-        return (
-            f'<batch type="end"><message session_id="{session_id}">'
-            f"reply:{merged}"
-            "</message></batch>"
-        )
+        return f"reply:{text}"
 
-    async def send_actions(self, session_id: str, batch_xml: str) -> None:
-        self.action_batches.append((session_id, batch_xml))
+    async def send_reply(self, session_id: str, content: str) -> None:
+        self.replies.append((session_id, content))
 
 
-def _event(session_id: str, content: str, message_type: str = "private") -> EventStreamMessage:
+def _event(session_id: str, content: str) -> EventStreamMessage:
     return EventStreamMessage(
         event_id=f"ev-{content}",
         session_id=session_id,
-        event_xml=(
-            f'<message message_type="{message_type}" sub_type="friend" '
-            f'message_id="{content}" session_id="{session_id}" '
-            f'user_id="qq_1" time="1710000000">{content}</message>'
-        ),
+        event={
+            "post_type": "message",
+            "message_type": "private",
+            "sub_type": "friend",
+            "message_id": content,
+            "user_id": 1,
+            "self_id": 10001,
+            "time": 1710000000,
+            "message": [{"type": "text", "data": {"text": content}}],
+        },
         raw_event={"time": 1710000000, "x": 1},
         created_at="2026-01-01T00:00:00+00:00",
     )
@@ -74,23 +66,20 @@ def test_debounce_merges_messages_for_same_session() -> None:
     asyncio.run(run())
 
     assert outbound.create_calls == [("private_1", {"session_id": "private_1"})]
-    assert len(outbound.agent_calls) == 1
-    assert outbound.agent_calls[0][0] == "private_1"
-    assert outbound.agent_calls[0][1] == "agent-private_1"
-    assert outbound.agent_calls[0][2] == "start"
-    assert ">a</message>" in outbound.agent_calls[0][3]
-    assert ">b</message>" in outbound.agent_calls[0][3]
-    assert outbound.action_batches == [
-        (
-            "private_1",
-            '<batch type="end"><message session_id="private_1">reply:a\nb</message></batch>',
-        )
-    ]
+    assert len(outbound.session_calls) == 1
+    assert outbound.session_calls[0][0] == "private_1"
+    assert outbound.session_calls[0][1] == "agent-private_1"
+    # 两条消息的文本被合并发送。
+    assert "a" in outbound.session_calls[0][2]
+    assert "b" in outbound.session_calls[0][2]
+    assert outbound.replies == [("private_1", "reply:a\nb")]
     assert state["runner_count"] == 0
 
 
-def test_running_session_collects_next_round_messages() -> None:
+def test_running_session_triggers_immediate_followup() -> None:
+    """运行期间到达的新消息应立即触发新请求以抢占 agent 侧的旧生成。"""
     outbound = StubOutboundClient()
+    outbound.call_delays = [0.08, 0.02]
     registry = SessionRegistry(
         outbound_client=outbound,
         debounce_seconds=0.01,
@@ -109,18 +98,11 @@ def test_running_session_collects_next_round_messages() -> None:
     asyncio.run(run())
 
     assert outbound.create_calls == [("private_1", {"session_id": "private_1"})]
-    assert outbound.agent_calls[0][2] == "start"
-    assert outbound.agent_calls[1][2] == "append"
-    assert ">first</message>" in outbound.agent_calls[0][3]
-    assert ">second</message>" in outbound.agent_calls[1][3]
-    assert ">third</message>" in outbound.agent_calls[1][3]
-    assert outbound.agent_calls[0][1] == outbound.agent_calls[1][1]
-    assert outbound.action_batches == [
-        (
-            "private_1",
-            '<batch type="end"><message session_id="private_1">reply:second\nthird</message></batch>',
-        )
-    ]
+    assert len(outbound.session_calls) == 2
+    assert "first" in outbound.session_calls[0][2]
+    assert "second" in outbound.session_calls[1][2]
+    assert "third" in outbound.session_calls[1][2]
+    assert len(outbound.replies) == 2
     assert state["runner_count"] == 0
 
 
@@ -140,40 +122,10 @@ def test_different_sessions_are_dispatched_independently() -> None:
     asyncio.run(run())
 
     assert len(outbound.create_calls) == 2
-    assert len(outbound.agent_calls) == 2
-    assert {session_id for session_id, *_ in outbound.agent_calls} == {"private_1", "private_2"}
-    assert outbound.agent_calls[0][1] != outbound.agent_calls[1][1]
-    assert len(outbound.action_batches) == 2
-
-
-def test_running_session_discards_stale_reply_and_only_sends_rerun_result() -> None:
-    outbound = StubOutboundClient()
-    outbound.call_delays = [0.05, 0.05]
-    registry = SessionRegistry(
-        outbound_client=outbound,
-        debounce_seconds=0.01,
-    )
-
-    async def run() -> None:
-        await registry.submit_event(_event("private_1", "first"))
-        await asyncio.sleep(0.02)
-        await registry.submit_event(_event("private_1", "second"))
-        await asyncio.sleep(0.25)
-        await registry.shutdown()
-
-    asyncio.run(run())
-
-    assert len(outbound.agent_calls) == 2
-    assert outbound.agent_calls[0][2] == "start"
-    assert outbound.agent_calls[1][2] == "append"
-    assert ">first</message>" in outbound.agent_calls[0][3]
-    assert ">second</message>" in outbound.agent_calls[1][3]
-    assert outbound.action_batches == [
-        (
-            "private_1",
-            '<batch type="end"><message session_id="private_1">reply:second</message></batch>',
-        )
-    ]
+    assert len(outbound.session_calls) == 2
+    assert {sid for sid, *_ in outbound.session_calls} == {"private_1", "private_2"}
+    assert outbound.session_calls[0][1] != outbound.session_calls[1][1]
+    assert len(outbound.replies) == 2
 
 
 def test_followup_after_reply_starts_next_round() -> None:
@@ -193,22 +145,15 @@ def test_followup_after_reply_starts_next_round() -> None:
 
     asyncio.run(run())
 
-    assert len(outbound.agent_calls) == 2
-    assert outbound.agent_calls[0][2] == "start"
-    assert outbound.agent_calls[1][2] == "start"
-    assert outbound.action_batches == [
-        (
-            "private_1",
-            '<batch type="end"><message session_id="private_1">reply:first</message></batch>',
-        ),
-        (
-            "private_1",
-            '<batch type="end"><message session_id="private_1">reply:second</message></batch>',
-        ),
+    assert len(outbound.session_calls) == 2
+    assert outbound.replies == [
+        ("private_1", "reply:first"),
+        ("private_1", "reply:second"),
     ]
 
 
-def test_rerun_waits_full_debounce_after_run_completion() -> None:
+def test_mid_run_events_fire_after_debounce() -> None:
+    """运行期间到达的消息在防抖窗口后触发新请求。"""
     outbound = StubOutboundClient()
     outbound.call_delays = [0.08, 0.01]
     registry = SessionRegistry(
@@ -218,10 +163,8 @@ def test_rerun_waits_full_debounce_after_run_completion() -> None:
 
     async def run() -> None:
         await registry.submit_event(_event("private_1", "first"))
-        # 第二条消息必须在首轮调用已启动但尚未完成时到达，
-        # 否则可能被首轮防抖窗口直接合并成同一批，无法覆盖“重跑前再次防抖”语义。
         deadline = asyncio.get_running_loop().time() + 0.5
-        while not outbound.agent_call_started_ats:
+        while not outbound.session_call_started_ats:
             if asyncio.get_running_loop().time() > deadline:
                 raise AssertionError("first run did not start in expected time")
             await asyncio.sleep(0.005)
@@ -232,13 +175,6 @@ def test_rerun_waits_full_debounce_after_run_completion() -> None:
 
     asyncio.run(run())
 
-    assert len(outbound.agent_calls) == 2
-    assert outbound.agent_calls[0][2] == "start"
-    assert outbound.agent_calls[1][2] == "append"
-    assert outbound.agent_call_started_ats[1] - outbound.agent_call_started_ats[0] >= 0.12
-    assert outbound.action_batches == [
-        (
-            "private_1",
-            '<batch type="end"><message session_id="private_1">reply:second</message></batch>',
-        )
-    ]
+    assert len(outbound.session_calls) == 2
+    assert outbound.session_call_started_ats[1] - outbound.session_call_started_ats[0] >= 0.04
+    assert len(outbound.replies) == 2
