@@ -23,7 +23,8 @@ def create_app() -> FastAPI:
         model_name=settings.agent.model,
         api_key=settings.agent.openai_api_key,
         base_url=settings.agent.openai_base_url,
-        observability=observability,
+        timeout=settings.agent.llm_timeout,
+        max_retries=settings.agent.llm_max_retries,
     )
 
     mcp_gateway = McpGateway(

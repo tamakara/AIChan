@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 
-from ..logger import elapsed_ms, get_logger, log_exception, log_info, start_timer
+from ..logger import elapsed_ms, get_logger, log_info, start_timer
 from .llm_client import LlmClient
 from .mcp_gateway import McpGateway
 from .observability import Observability
@@ -207,11 +207,5 @@ class Agent:
                 run=run_trace,
                 error=str(exc),
                 duration_ms=duration_ms,
-            )
-            log_exception(
-                self._logger,
-                "agent.run_failed",
-                agent_id=session.session_id,
-                elapsed_ms=duration_ms,
             )
             raise

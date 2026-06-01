@@ -38,6 +38,8 @@ class AgentSettings(BaseModel):
     openai_base_url: StrictStr
     mcp_sse_url: StrictStr
     mcp_auth_token: StrictStr
+    llm_timeout: float
+    llm_max_retries: StrictInt
     langfuse: LangfuseSettings
 
 
