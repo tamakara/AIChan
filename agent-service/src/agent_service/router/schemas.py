@@ -1,6 +1,18 @@
-from typing import Any
+from typing import Annotated, Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from nonebot.adapters.onebot.v11 import Message
+from pydantic import BaseModel, ConfigDict, Field, PlainSerializer
+
+
+def _serialize_message(msg: Message) -> list[dict[str, Any]]:
+    """将 nonebot Message 序列化为 OneBot v11 消息段数组。"""
+    return [{"type": seg.type, "data": seg.data} for seg in msg]
+
+
+MessageField = Annotated[
+    Message,
+    PlainSerializer(_serialize_message, return_type=list[dict[str, Any]]),
+]
 
 
 class CreateSessionRequest(BaseModel):
@@ -24,9 +36,12 @@ class ChatRequest(BaseModel):
 
 
 class ChatResponse(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    """OneBot v11 send_msg 参数 — 可直接透传给 NapCat。"""
 
-    batch: str
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
+    reply: MessageField
+    auto_escape: bool = False
 
 
 class HealthResponse(BaseModel):

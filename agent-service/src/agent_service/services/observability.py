@@ -26,6 +26,7 @@ class RunTrace:
 class LangfuseRunTrace(RunTrace):
     context_manager: Any
     root_observation: Any
+    base_metadata: dict[str, Any]
 
 
 class Observability(Protocol):
@@ -68,7 +69,7 @@ class Observability(Protocol):
         self,
         *,
         run: RunTrace,
-        reply: str,
+        output: Any,
         duration_ms: int,
     ) -> None: ...
 
@@ -126,7 +127,7 @@ class NoopObservability:
         self,
         *,
         run: RunTrace,
-        reply: str,
+        output: Any,
         duration_ms: int,
     ) -> None:
         return
@@ -191,6 +192,7 @@ class LangfuseObservability:
                 trace_name=TRACE_NAME,
                 context_manager=context_manager,
                 root_observation=root_observation,
+                base_metadata=run_metadata,
             )
         except Exception:
             # 观测启动失败时降级为普通 RunTrace，确保主链路不受观测组件可用性影响。
@@ -260,14 +262,12 @@ class LangfuseObservability:
             return
         try:
             with run.root_observation.start_as_current_observation(
-                name="agent.tool.span",
+                name=tool_name,
                 as_type="tool",
                 input=_to_jsonable(tool_args),
-                output=_to_jsonable(output),
+                output=_parse_tool_output(output),
                 metadata={
                     "turn": turn,
-                    "tool_name": tool_name,
-                    "tool_args": _to_jsonable(tool_args),
                     "status": status,
                     "error": error,
                     "duration_ms": duration_ms,
@@ -286,15 +286,15 @@ class LangfuseObservability:
         self,
         *,
         run: RunTrace,
-        reply: str,
+        output: Any,
         duration_ms: int,
     ) -> None:
         if not isinstance(run, LangfuseRunTrace):
             return
         try:
             run.root_observation.update(
-                output=reply,
-                metadata={"status": "ok", "duration_ms": duration_ms},
+                output=_to_jsonable(output),
+                metadata={**run.base_metadata, "status": "ok", "duration_ms": duration_ms},
             )
         except Exception:
             log_exception(
@@ -327,7 +327,7 @@ class LangfuseObservability:
             run.root_observation.update(
                 level="ERROR",
                 status_message=error,
-                metadata={"status": "failed", "duration_ms": duration_ms},
+                metadata={**run.base_metadata, "status": "failed", "duration_ms": duration_ms},
             )
         except Exception:
             log_exception(
@@ -383,6 +383,20 @@ def create_observability(settings: LangfuseSettings) -> Observability:
     return LangfuseObservability(settings=settings)
 
 
+def _parse_tool_output(output: str | None) -> Any:
+    """尝试将工具输出从 JSON 字符串解析为结构化数据，便于 Langfuse 展示。"""
+    if output is None:
+        return None
+    if not isinstance(output, str):
+        return output
+    try:
+        import json as _json
+
+        return _json.loads(output)
+    except (ValueError, TypeError):
+        return output
+
+
 def _to_jsonable(value: Any) -> Any:
     if value is None:
         return None
@@ -392,6 +406,11 @@ def _to_jsonable(value: Any) -> Any:
         return {str(k): _to_jsonable(v) for k, v in value.items()}
     if isinstance(value, (list, tuple)):
         return [_to_jsonable(item) for item in value]
+    # 优先处理 nonebot MessageSegment 类型（有 type/data 属性即为 OneBot v11 消息段）
+    seg_type = getattr(value, "type", None)
+    seg_data = getattr(value, "data", None)
+    if isinstance(seg_type, str) and isinstance(seg_data, dict):
+        return {"type": seg_type, "data": _to_jsonable(seg_data)}
     model_dump = getattr(value, "model_dump", None)
     if callable(model_dump):
         return _to_jsonable(model_dump(mode="json", exclude_none=True))

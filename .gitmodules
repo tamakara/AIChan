@@ -1,0 +1,3 @@
+[submodule "docs/onebot-11"]
+	path = docs/onebot-11
+	url = https://github.com/botuniverse/onebot-11.git

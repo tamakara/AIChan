@@ -47,8 +47,8 @@ class OutboundClient:
         hub_session_key: str,
         agent_session_id: str,
         text: str,
-    ) -> str:
-        """向 agent-service 发送消息（原始 OneBot JSON 文本），返回纯文本回复。"""
+    ) -> SessionChatResponse:
+        """向 agent-service 发送消息，返回 OneBot v11 格式回复。"""
         started_at = start_timer()
         payload = SessionChatRequest(
             session_id=agent_session_id,
@@ -63,20 +63,25 @@ class OutboundClient:
             status="ok",
             elapsed_ms=elapsed_ms(started_at),
         )
-        return response.batch
+        return response
 
-    async def send_reply(self, session_key: str, content: str) -> None:
-        """通过 NapCat WS 直接发送 OneBot 消息动作。"""
+    async def send_reply(
+        self,
+        session_key: str,
+        message: list[dict[str, Any]],
+        auto_escape: bool = False,
+    ) -> None:
+        """通过 NapCat WS 发送 OneBot send_msg 动作。reply 映射为 message 参数。"""
         started_at = start_timer()
 
         if session_key.startswith("group:"):
             group_id = int(session_key.split(":", 1)[1])
             action = "send_group_msg"
-            params = {"group_id": group_id, "message": content}
+            params = {"group_id": group_id, "message": message, "auto_escape": auto_escape}
         elif session_key.startswith("private:"):
             user_id = int(session_key.split(":", 1)[1])
             action = "send_private_msg"
-            params = {"user_id": user_id, "message": content}
+            params = {"user_id": user_id, "message": message, "auto_escape": auto_escape}
         else:
             raise ValueError(f"invalid session_key: {session_key}")
 
@@ -85,7 +90,7 @@ class OutboundClient:
             self._logger,
             "hub.reply_sent",
             session_key=session_key,
-            reply_len=len(content),
+            reply_len=len(str(message)),
             elapsed_ms=elapsed_ms(started_at),
         )
 

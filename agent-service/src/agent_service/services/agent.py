@@ -2,11 +2,32 @@ from __future__ import annotations
 
 import json
 
+from nonebot.adapters.onebot.v11 import Message, MessageSegment
+
 from ..logger import elapsed_ms, get_logger, log_info, start_timer
 from .llm_client import LlmClient
 from .mcp_gateway import McpGateway
 from .observability import Observability
 from .session import Session, SessionPreempted
+
+
+def _parse_onebot_message(raw: str) -> Message:
+    """将 LLM 输出的 JSON 字符串解析为 OneBot v11 Message。
+
+    期望格式: [{"type":"text","data":{"text":"..."}}]
+    解析失败时退化为纯文本 Message。
+    """
+    try:
+        segments_raw = json.loads(raw)
+        if not isinstance(segments_raw, list):
+            raise ValueError("not a list")
+        segments = [
+            MessageSegment(type=seg["type"], data=seg["data"])
+            for seg in segments_raw
+        ]
+        return Message(segments)
+    except (json.JSONDecodeError, KeyError, TypeError, ValueError):
+        return Message(raw)
 
 
 class Agent:
@@ -39,8 +60,8 @@ class Agent:
         self,
         session: Session,
         user_message: str,
-    ) -> str:
-        """在指定 Session 上执行一轮推理循环。
+    ) -> Message:
+        """在指定 Session 上执行一轮推理循环，返回 OneBot v11 Message。
 
         锁仅在修改 Context 时短暂持有，LLM 调用与工具执行期间不持锁，
         因此同一 session 的新请求可以中断（抢占）当前生成。
@@ -62,7 +83,7 @@ class Agent:
             )
             run_trace = self._observability.start_run(
                 agent_id=session.session_id,
-                message_count=0,
+                message_count=len(session._context.messages),
                 max_turns=self._max_turns,
                 agent_metadata=session.metadata,
             )
@@ -110,7 +131,8 @@ class Agent:
 
                 if llm_response.finish_reason != "tool_calls":
                     if llm_response.finish_reason == "stop":
-                        reply = llm_response.content
+                        reply_text = llm_response.content
+                        reply_message = _parse_onebot_message(reply_text)
                         duration_ms = elapsed_ms(run_started_at)
                         with session._lock:
                             if session._generation != my_gen:
@@ -119,17 +141,17 @@ class Agent:
                                 )
                         self._observability.finish_run_success(
                             run=run_trace,
-                            reply=reply,
+                            output=reply_message,
                             duration_ms=duration_ms,
                         )
                         log_info(
                             self._logger,
                             "agent.run_completed",
                             agent_id=session.session_id,
-                            reply_len=len(reply),
+                            reply_len=len(reply_text),
                             elapsed_ms=duration_ms,
                         )
-                        return reply
+                        return reply_message
                     raise RuntimeError(
                         "LLM response ended with unexpected reason: "
                         f"{llm_response.finish_reason}"

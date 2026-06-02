@@ -63,7 +63,7 @@ def create_router(
         )
 
         try:
-            reply = agent.run(
+            reply_message = agent.run(
                 session=session,
                 user_message=req.batch,
             )
@@ -71,7 +71,7 @@ def create_router(
                 logger,
                 "agent.chat_completed",
                 agent_id=req.session_id,
-                reply_len=len(reply),
+                reply_len=len(str(reply_message)),
                 elapsed_ms=elapsed_ms(request_started_at),
             )
         except SessionPreempted as exc:
@@ -84,6 +84,6 @@ def create_router(
                 elapsed_ms=elapsed_ms(request_started_at),
             )
             raise HTTPException(status_code=500, detail=str(exc)) from exc
-        return ChatResponse(batch=reply)
+        return ChatResponse(reply=reply_message, auto_escape=False)
 
     return router
