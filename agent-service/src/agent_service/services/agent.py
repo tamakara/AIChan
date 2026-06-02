@@ -6,7 +6,7 @@ from ..logger import elapsed_ms, start_timer
 from .llm_client import LlmClient
 from .mcp_gateway import McpGateway
 from .observability import Observability
-from .session import Session
+from .session import Session, SessionPreempted
 
 
 class Agent:
@@ -14,6 +14,8 @@ class Agent:
 
     Agent 持有共享的 LLM 客户端、MCP 网关与可观测性实例，
     通过 run(session, ...) 在指定会话上执行 turn-loop，返回纯文本回复。
+
+    同一 session 的新 run 会通过 generation 机制中断旧 run。
     """
 
     def __init__(
@@ -35,11 +37,18 @@ class Agent:
     # ------------------------------------------------------------------
 
     def run(self, session: Session, user_message: str) -> str:
-        """在指定 Session 上执行一轮推理循环，返回纯文本回复。"""
+        """在指定 Session 上执行一轮推理循环，返回纯文本回复。
+
+        同一 session 的新 run 会递增 generation，旧 run 在下一次持锁时
+        检测到 generation 不匹配并抛出 SessionPreempted 退出。
+        """
         run_started_at = start_timer()
 
+        # ── 1. 写入用户消息、递增 generation、启动观测 trace ──
         with session._lock:
             session._context.add_message(role="user", content=user_message)
+            session._generation += 1
+            my_gen = session._generation
             message_count = len(session._context.messages)
 
         run_trace = self._observability.start_run(
@@ -50,12 +59,19 @@ class Agent:
         )
 
         try:
+            # ── 2. turn-loop：LLM 推理 + 工具调用 ──
             for turn_idx in range(self._max_turns):
                 turn = turn_idx + 1
 
+                # 2a. 锁内快照上下文，检测是否已被新 run 抢占
                 with session._lock:
+                    if session._generation != my_gen:
+                        raise SessionPreempted(
+                            session.session_id, my_gen, session._generation
+                        )
                     input_messages = list(session._context.messages)
 
+                # 2b. LLM 调用（不持锁）
                 llm_started_at = start_timer()
                 llm_response = self._llm_client.generate(
                     messages=input_messages,
@@ -64,6 +80,7 @@ class Agent:
                 )
                 llm_elapsed_ms = elapsed_ms(llm_started_at)
 
+                # 2c. 记录本次 LLM 调用
                 self._observability.llm_generation(
                     run=run_trace,
                     turn=turn,
@@ -75,14 +92,21 @@ class Agent:
                     duration_ms=llm_elapsed_ms,
                 )
 
+                # 2d. 锁内写入 assistant 消息，写入前检测抢占
                 with session._lock:
+                    if session._generation != my_gen:
+                        raise SessionPreempted(
+                            session.session_id, my_gen, session._generation
+                        )
                     session._context.add_message(
                         role="assistant",
                         content=llm_response.content,
                         tool_calls=llm_response.tool_calls,
                     )
 
+                # 2e. 判断 finish_reason 分支
                 if llm_response.finish_reason != "tool_calls":
+                    # stop 表示 LLM 认为推理完成，返回纯文本
                     if llm_response.finish_reason == "stop":
                         reply = llm_response.content
                         duration_ms = elapsed_ms(run_started_at)
@@ -92,11 +116,13 @@ class Agent:
                             duration_ms=duration_ms,
                         )
                         return reply
+                    # 其他 finish_reason（length/content_filter 等）视为异常
                     raise RuntimeError(
                         "LLM response ended with unexpected reason: "
                         f"{llm_response.finish_reason}"
                     )
 
+                # 2f. tool_calls 分支：依次执行工具，失败不中断回合
                 for tool_call in llm_response.tool_calls:
                     tool_call_id = tool_call.id
                     tool_name = tool_call.function.name
@@ -123,6 +149,7 @@ class Agent:
                             output=tool_call_result,
                         )
                     except Exception as exc:
+                        # 工具调用异常写回 tool 错误消息，让 LLM 自行修正
                         tool_args_fallback = {"raw_arguments": str(tool_args_str)}
                         tool_call_result = json.dumps(
                             {"error": f"tool `{tool_name}` failed: {exc}"},
@@ -139,18 +166,28 @@ class Agent:
                             output=tool_call_result,
                         )
 
+                    # 锁内写入 tool 结果消息，写入前检测抢占
                     with session._lock:
+                        if session._generation != my_gen:
+                            raise SessionPreempted(
+                                session.session_id, my_gen, session._generation
+                            )
                         session._context.add_message(
                             role="tool",
                             content=tool_call_result,
                             tool_call_id=tool_call_id,
                         )
 
+            # ── 3. 超过 max_turns 仍未 stop ──
             raise RuntimeError(
                 "Agent failed to complete the task within "
                 f"{self._max_turns} turns of interaction."
             )
+        except SessionPreempted:
+            # 抢占不算错误，直接抛出
+            raise
         except Exception as exc:
+            # ── 4. 异常收尾：记录观测失败状态后重新抛出 ──
             duration_ms = elapsed_ms(run_started_at)
             self._observability.finish_run_error(
                 run=run_trace,

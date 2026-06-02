@@ -2,6 +2,7 @@ from fastapi import APIRouter, HTTPException
 
 from ..logger import elapsed_ms, get_logger, log_exception, log_info, start_timer
 from ..services import Agent, SessionRegistry
+from ..services.session import SessionPreempted
 from .schemas import (
     ChatRequest,
     ChatResponse,
@@ -73,6 +74,8 @@ def create_router(
                 reply_len=len(reply),
                 elapsed_ms=elapsed_ms(request_started_at),
             )
+        except SessionPreempted as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
         except Exception as exc:
             log_exception(
                 logger,
