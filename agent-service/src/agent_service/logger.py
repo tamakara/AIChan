@@ -14,7 +14,7 @@ EVENT_LABELS = {
     "agent.session_deleted": "会话已删除",
     "agent.run_started": "Agent 执行开始",
     "agent.run_completed": "Agent 执行完成",
-    "agent.run_preempted": "Agent 执行被抢占",
+
     "agent.run_failed": "Agent 执行失败",
     "agent.observability_start_failed": "观测启动失败",
     "agent.observability_generation_failed": "观测记录 generation 失败",
@@ -27,7 +27,7 @@ EVENT_LABELS = {
     "llm.request_failed": "模型请求失败",
 }
 FIELD_LABELS = {
-    "agent_id": "Agent",
+    "session_id": "会话",
     "session_id": "会话",
     "turn": "轮次",
     "tool_name": "工具",
@@ -49,7 +49,7 @@ FIELD_LABELS = {
     "timeout_seconds": "超时",
 }
 DEFAULT_HIGHLIGHT_KEYS = (
-    "agent_id",
+    "session_id",
     "session_id",
     "turn",
     "tool_name",
@@ -60,16 +60,16 @@ DEFAULT_HIGHLIGHT_KEYS = (
 )
 EVENT_HIGHLIGHT_KEYS = {
     "agent_app.boot": ("model", "max_turns", "mcp_sse_url"),
-    "agent.session_created": ("agent_id", "session_id"),
-    "agent.session_deleted": ("agent_id",),
-    "agent.chat_received": ("agent_id", "session_id", "message_count"),
-    "agent.chat_completed": ("agent_id", "session_id", "reply_len", "elapsed_ms"),
-    "agent.chat_failed": ("agent_id", "session_id", "elapsed_ms"),
-    "agent.run_started": ("agent_id", "max_turns", "message_len"),
-    "agent.run_completed": ("agent_id", "reply_len", "elapsed_ms"),
-    "agent.run_preempted": ("agent_id", "my_generation", "current_generation"),
-    "agent.run_failed": ("agent_id", "elapsed_ms"),
-    "agent.observability_start_failed": ("agent_id",),
+    "agent.session_created": ("session_id", "session_id"),
+    "agent.session_deleted": ("session_id",),
+    "agent.chat_received": ("session_id", "session_id", "message_count"),
+    "agent.chat_completed": ("session_id", "session_id", "reply_len", "elapsed_ms"),
+    "agent.chat_failed": ("session_id", "session_id", "elapsed_ms"),
+    "agent.run_started": ("session_id", "max_turns", "message_len"),
+    "agent.run_completed": ("session_id", "reply_len", "elapsed_ms"),
+
+    "agent.run_failed": ("session_id", "elapsed_ms"),
+    "agent.observability_start_failed": ("session_id",),
     "agent.observability_generation_failed": ("run_id", "turn"),
     "agent.observability_tool_failed": ("run_id", "tool_name"),
     "agent.observability_finish_failed": ("run_id", "status"),

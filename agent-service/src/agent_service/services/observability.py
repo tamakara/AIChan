@@ -33,7 +33,7 @@ class Observability(Protocol):
     def start_run(
         self,
         *,
-        agent_id: str,
+        session_id: str,
         message_count: int,
         max_turns: int,
         agent_metadata: dict[str, Any],
@@ -88,7 +88,7 @@ class NoopObservability:
     def start_run(
         self,
         *,
-        agent_id: str,
+        session_id: str,
         message_count: int,
         max_turns: int,
         agent_metadata: dict[str, Any],
@@ -166,7 +166,7 @@ class LangfuseObservability:
     def start_run(
         self,
         *,
-        agent_id: str,
+        session_id: str,
         message_count: int,
         max_turns: int,
         agent_metadata: dict[str, Any],
@@ -175,7 +175,7 @@ class LangfuseObservability:
         context_manager: Any | None = None
         try:
             run_metadata = {
-                "agent_id": agent_id,
+                "session_id": session_id,
                 "message_count": message_count,
                 "max_turns": max_turns,
                 "run_id": run_id,
@@ -199,7 +199,7 @@ class LangfuseObservability:
             log_exception(
                 self._logger,
                 "agent.observability_start_failed",
-                agent_id=agent_id,
+                session_id=session_id,
             )
             if context_manager is not None:
                 try:

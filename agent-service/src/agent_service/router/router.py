@@ -2,7 +2,6 @@ from fastapi import APIRouter, HTTPException
 
 from ..logger import elapsed_ms, get_logger, log_exception, log_info, start_timer
 from ..services import Agent, SessionRegistry
-from ..services.session import SessionPreempted
 from .schemas import (
     ChatRequest,
     ChatResponse,
@@ -29,7 +28,7 @@ def create_router(
         log_info(
             logger,
             "agent.session_created",
-            agent_id=session.session_id,
+            session_id=session.session_id,
         )
         return CreateSessionResponse(
             session_id=session.session_id,
@@ -44,7 +43,7 @@ def create_router(
         log_info(
             logger,
             "agent.session_deleted",
-            agent_id=session_id,
+            session_id=session_id,
         )
         return {"deleted": True}
 
@@ -58,7 +57,7 @@ def create_router(
         log_info(
             logger,
             "agent.chat_received",
-            agent_id=req.session_id,
+            session_id=req.session_id,
             message_len=len(req.batch),
         )
 
@@ -70,17 +69,15 @@ def create_router(
             log_info(
                 logger,
                 "agent.chat_completed",
-                agent_id=req.session_id,
+                session_id=req.session_id,
                 reply_len=len(reply),
                 elapsed_ms=elapsed_ms(request_started_at),
             )
-        except SessionPreempted as exc:
-            raise HTTPException(status_code=409, detail=str(exc)) from exc
         except Exception as exc:
             log_exception(
                 logger,
                 "agent.chat_failed",
-                agent_id=req.session_id,
+                session_id=req.session_id,
                 elapsed_ms=elapsed_ms(request_started_at),
             )
             raise HTTPException(status_code=500, detail=str(exc)) from exc

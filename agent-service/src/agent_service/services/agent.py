@@ -6,7 +6,7 @@ from ..logger import elapsed_ms, start_timer
 from .llm_client import LlmClient
 from .mcp_gateway import McpGateway
 from .observability import Observability
-from .session import Session, SessionPreempted
+from .session import Session
 
 
 class Agent:
@@ -14,8 +14,6 @@ class Agent:
 
     Agent 持有共享的 LLM 客户端、MCP 网关与可观测性实例，
     通过 run(session, ...) 在指定会话上执行 turn-loop，返回纯文本回复。
-
-    同一 session 的新 run 会通过 generation 机制中断旧 run。
     """
 
     def __init__(
@@ -37,22 +35,16 @@ class Agent:
     # ------------------------------------------------------------------
 
     def run(self, session: Session, user_message: str) -> str:
-        """在指定 Session 上执行一轮推理循环，返回纯文本回复。
-
-        同一 session 的新 run 会递增 generation，旧 run 在下一次持锁时
-        检测到 generation 不匹配并抛出 SessionPreempted 退出。
-        """
+        """在指定 Session 上执行一轮推理循环，返回纯文本回复。"""
         run_started_at = start_timer()
 
-        # ── 1. 写入用户消息、递增 generation、启动观测 trace ──
+        # ── 1. 写入用户消息、启动观测 trace ──
         with session._lock:
             session._context.add_message(role="user", content=user_message)
-            session._generation += 1
-            my_gen = session._generation
             message_count = len(session._context.messages)
 
         run_trace = self._observability.start_run(
-            agent_id=session.session_id,
+            session_id=session.session_id,
             message_count=message_count,
             max_turns=self._max_turns,
             agent_metadata=session.metadata,
@@ -63,12 +55,8 @@ class Agent:
             for turn_idx in range(self._max_turns):
                 turn = turn_idx + 1
 
-                # 2a. 锁内快照上下文，检测是否已被新 run 抢占
+                # 2a. 锁内快照当前上下文
                 with session._lock:
-                    if session._generation != my_gen:
-                        raise SessionPreempted(
-                            session.session_id, my_gen, session._generation
-                        )
                     input_messages = list(session._context.messages)
 
                 # 2b. LLM 调用（不持锁）
@@ -92,12 +80,8 @@ class Agent:
                     duration_ms=llm_elapsed_ms,
                 )
 
-                # 2d. 锁内写入 assistant 消息，写入前检测抢占
+                # 2d. 锁内写入 assistant 消息
                 with session._lock:
-                    if session._generation != my_gen:
-                        raise SessionPreempted(
-                            session.session_id, my_gen, session._generation
-                        )
                     session._context.add_message(
                         role="assistant",
                         content=llm_response.content,
@@ -166,12 +150,8 @@ class Agent:
                             output=tool_call_result,
                         )
 
-                    # 锁内写入 tool 结果消息，写入前检测抢占
+                    # 锁内写入 tool 结果消息
                     with session._lock:
-                        if session._generation != my_gen:
-                            raise SessionPreempted(
-                                session.session_id, my_gen, session._generation
-                            )
                         session._context.add_message(
                             role="tool",
                             content=tool_call_result,
@@ -183,9 +163,6 @@ class Agent:
                 "Agent failed to complete the task within "
                 f"{self._max_turns} turns of interaction."
             )
-        except SessionPreempted:
-            # 抢占不算错误，直接抛出
-            raise
         except Exception as exc:
             # ── 4. 异常收尾：记录观测失败状态后重新抛出 ──
             duration_ms = elapsed_ms(run_started_at)

@@ -8,15 +8,6 @@ from .prompts import SYSTEM_PROMPT
 from .types.context import Context
 
 
-class SessionPreempted(Exception):
-    """新 run 中断旧 run 时抛出。"""
-
-    def __init__(self, session_id: str, my_gen: int, current_gen: int) -> None:
-        super().__init__(
-            f"session={session_id} gen={my_gen} preempted by gen={current_gen}"
-        )
-
-
 class Session:
     """一次会话的上下文，独立于 Agent 进行管理。"""
 
@@ -24,9 +15,13 @@ class Session:
         self._session_id = session_id
         self._metadata = dict(metadata)
         self._lock = Lock()
-        self._generation = 0
         self._context = Context()
+        # 系统提示词 + 会话标识信息
         self._context.add_message(role="system", content=SYSTEM_PROMPT)
+        self._context.add_message(
+            role="system",
+            content=f"<session_info>当前会话 ID: {session_id}</session_info>",
+        )
 
     @property
     def session_id(self) -> str:
@@ -47,7 +42,9 @@ class SessionRegistry:
     def create(self, metadata: dict[str, Any]) -> Session:
         with self._lock:
             session_id = str(uuid4())
-            session = Session(session_id=session_id, metadata=metadata)
+            # 将 session_id 注入 metadata，确保调用方能在返回的 metadata 中获取
+            metadata_with_id = {"session_id": session_id, **metadata}
+            session = Session(session_id=session_id, metadata=metadata_with_id)
             self._sessions[session_id] = session
             return session
 
