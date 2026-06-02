@@ -36,9 +36,8 @@ class SessionChatRequest(BaseModel):
 
 
 class SessionChatResponse(BaseModel):
-    """agent-service 返回的 send_msg 参数 — reply 映射到 OneBot v11 的 message。"""
+    """agent-service 返回的纯文本回复，由 hub 负责 OneBot v11 格式化。"""
 
     model_config = ConfigDict(extra="forbid")
 
-    reply: list[dict[str, Any]]
-    auto_escape: bool = False
+    reply: str

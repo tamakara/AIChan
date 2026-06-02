@@ -1,171 +1,176 @@
 # agent-service
 
-## 1. 模块一句话定位
-`agent-service` 是对话推理执行层：维护 `Agent` 上下文、驱动 LLM 多轮推理与 MCP 工具调用，并通过 HTTP 接口返回协议化动作批次。  
-不负责消息接入与投递（由 `adapter-service` / `hub-service` 处理）。
+## 1. 模块定位
 
-协议说明：
-- 统一内部消息协议草案见 [message-protocol.md](message-protocol.md)。
-- 目标协议中，agent 只消费 `<batch type="...">...</batch>`，不再自行拼装消息 XML。
-- 当前实现已在 `/chat` 路由入口直接消费上游透传的输入 `batch`，并强校验输出必须是 `<batch type="end">`。
+`agent-service` 是 LLM 推理执行层：维护 `Session` 上下文、驱动多轮 LLM 推理与 MCP 工具调用，通过 HTTP 返回 OneBot v11 格式回复。
+
+不负责消息接入与投递（由 `hub-service` 处理）。
 
 ## 2. 接口契约
+
 ### 2.1 对外提供（HTTP）
+
 - `GET /healthz`
   - 响应：`{"status":"ok"}`
 
-- `POST /agents`
-  - 请求体（`CreateAgentRequest`）：
+- `POST /sessions`
+  - 请求（`CreateSessionRequest`）：
     - `metadata: dict[str, Any]`（可选，默认 `{}`）
-  - 响应体（`CreateAgentResponse`）：
-    - `agent_id: str`（服务端生成 UUIDv4）
-    - `metadata: dict[str, Any]`（原样返回）
-  - 语义：
-    - 每次调用都创建新的 `Agent`（不做幂等去重）。
-    - 创建时即注入 `SYSTEM_PROMPT` 与一次性 `<session_start ...>` 上下文头。
+  - 响应（`CreateSessionResponse`）：
+    - `session_id: str`（服务端生成 UUIDv4）
+    - `metadata: dict[str, Any]`
+  - 语义：每次调用创建新会话，不做幂等去重。
+
+- `DELETE /sessions/{session_id}`
+  - 成功：`{"deleted": true}`
+  - 失败：`404`（session 不存在）
 
 - `POST /chat`
-  - 请求体（`ChatRequest`）：
-    - `agent_id: str`（必填，必须已创建）
-    - `batch: str`（必填，最少 1 字符，格式为 `<batch type="start|append">...</batch>`）
-  - 响应体（`ChatResponse`）：
-    - `batch: str`（格式固定 `<batch type="end">...</batch>`）
-  - 处理语义：
-    - 严格先创建后聊天：`agent_id` 不存在时直接返回 `404`。
-    - 路由入口不再重建消息 XML，直接把 `batch` 原样作为一次 `user` 输入交给 `Agent`。
-    - 路由出口会校验 LLM 输出协议：根标签必须是 `batch`、`type=end`、子标签仅允许 `message/poke/recall` 且满足最小属性要求。
-    - 会话级标识（`session_id`、`agent_id`）只在创建 `Agent` 时通过 `<session_start ...>` 注入，不在每轮消息体重复携带。
-    - 同一 `agent_id` 串行执行，不同 `agent_id` 可并行。
+  - 请求（`ChatRequest`）：
+    - `session_id: str`（必填）
+    - `batch: str`（必填，OneBot v11 事件 JSON 数组字符串）
+  - 响应（`ChatResponse`）：
+    - `reply: list[dict]` — OneBot v11 消息段数组，格式 `[{"type":"text","data":{"text":"..."}}]`
+    - `auto_escape: bool` — 是否转义 CQ 码，默认 `false`
   - 失败语义：
-    - `agent_id` 不存在：`404`，`detail=agent not found`
-    - 运行期未捕获异常：`500`，`detail` 为异常字符串
+    - `session_id` 不存在：`404`
+    - 同一 session 被新请求抢占：`409`
+    - 运行期异常：`500`
 
-### 2.2 对外消费（LLM API）
-- 客户端：`openai.OpenAI`
-- 请求参数（`chat.completions.create`）：
-  - `model`
-  - `messages`（`Agent` 累积上下文）
-  - `temperature`
-  - `tool_choice="auto"`
-  - `tools`（来自 MCP 注册结果）
-- 响应关键字段：
-  - `content`
-  - `tool_calls`
-  - `finish_reason`（`stop/length/tool_calls/content_filter/function_call`）
-- 错误语义：
-  - `APIStatusError`：记录状态码与响应体后抛 `RuntimeError`
-  - 其他异常：记录异常后抛 `RuntimeError`
+### 2.2 LLM 输出格式
 
-### 2.3 对外消费（MCP SSE）
-- 启动阶段：调用 `list_tools` 拉取远端工具列表并本地固化。
-- 运行阶段：按工具名调用 `call_tool`，返回 JSON 字符串写回 `tool` 消息。
-- 鉴权：如配置了 `mcp_auth_token`，通过 `Authorization: Bearer <token>` 发送。
+LLM 被指示直接输出完整的 OneBot v11 响应结构：
 
-## 3. 核心数据模型
-### 3.1 运行上下文模型（`Agent`）
-- `agent_id`：上下文隔离标识（由服务端创建）。
-- `metadata`：创建时写入并冻结快照（只读暴露）。
-- 初始化时固定注入：
-  - `system`: `SYSTEM_PROMPT`
-  - `system`: `<session_start agent_id="..." ...>`
-  - `session_start` 标签由 `services/tag_builder.py::build_session_start_tag` 统一构建
-- 后续每次 `run`：
-  - 通过 `Context.add_message` 追加 `user`（XML 文本）
-  - 由 `Agent` 负责多轮循环、工具调用与观测埋点
-  - 每轮直接调用 `LlmClient.generate` 获取模型输出
-  - `Agent` 统一把 `assistant/tool` 写回 `Context`
-
-### 3.2 会话上下文模型（`Context`）
-- `messages: list[Message]`：OpenAI Chat 消息历史。
-- `add_message(...)`：统一封装 `assistant.tool_calls` 与 `tool.tool_call_id` 的写入规则。
-- 设计目标：把“长期上下文写入”职责收口在 `Agent + Context`，避免多处写入导致并发与重复消息问题。
-- 当前版本仅保留 `session_start` 标签构建；业务事件 XML 由上游 `adapter/hub` 生成并透传。
-
-### 3.3 会话运行注册表（`AgentRegistry`）
-- 结构：`dict[agent_id, Agent]`
-- 语义：
-  - `create(metadata)`：总是生成新 UUIDv4 并注册
-  - `get(agent_id)`：命中返回 `Agent`，否则 `None`
-
-### 3.4 LLM 响应模型（`LlmResponse`）
-- `content: str`
-- `tool_calls: List[ToolCall]`
-- `finish_reason`：控制状态机分支的关键字段
-
-### 3.5 可观测性模型（`Observability`）
-- `NoopObservability`：关闭观测时启用，所有方法空实现。
-- `LangfuseObservability`：开启观测时启用，统一封装 trace/generation/tool span 上报。
-- 根 trace 名称固定：`agent.chat.run`。
-- 根 trace metadata 固定包含：`agent_id`、`message_count`、`max_turns`、`run_id`、`agent_metadata`。
-
-## 4. 核心业务流程
-```mermaid
-flowchart TD
-    A[POST /agents] --> B[创建 Agent]
-    B --> C[注入 SYSTEM_PROMPT]
-    C --> D[注入 session_start]
-    D --> E[返回 agent_id]
-
-    F[POST /chat] --> G{agent_id 存在?}
-    G -->|否| H[返回 404]
-    G -->|是| I[直接消费 batch XML]
-    I --> J[Agent.run]
-    J --> K[追加 user(XML)]
-    K --> L[LlmClient.generate]
-    L --> M[LLM stop?]
-    M -->|是| N[校验输出为 batch end]
-    N --> O[返回 batch]
-    M -->|tool_calls| O[执行 MCP 工具并回写 tool 消息]
-    O --> L
+```json
+{
+  "reply": [{"type": "text", "data": {"text": "回复内容"}}],
+  "auto_escape": false
+}
 ```
 
-## 5. 配置项与运行依赖
-### 5.1 配置文件
-- 路径：`agent-service/config.yml`
-- 加载方式：仅 YAML；Pydantic 严格校验（`extra="forbid"`）。
+`agent.py` 中的 `_parse_agent_reply()` 负责解析此格式，兼容以下情况：
+- 标准数组 `[{...}]`
+- LLM 误返回单对象 `{...}`（自动包装为数组）
+- 纯文本 fallback（视为 `Message(text)`）
 
-### 5.2 配置项（当前代码）
-- `server.host`、`server.port`
-- `agent.model`
-- `agent.max_turns`
-- `agent.temperature`
-- `agent.openai_api_key`
-- `agent.openai_base_url`
-- `agent.mcp_sse_url`
-- `agent.mcp_auth_token`
-- `agent.langfuse.enabled`
-- `agent.langfuse.host`
-- `agent.langfuse.public_key`
-- `agent.langfuse.secret_key`
-- `agent.langfuse.flush_at`
-- `agent.langfuse.flush_interval`
-- `agent.langfuse.request_timeout`
+`auto_escape` 由 LLM 决定，不再硬编码。
 
-### 5.3 运行依赖
-- OpenAI 兼容 Chat Completions API
-- MCP SSE Gateway（工具列表与工具调用）
-- FastAPI / uvicorn / anyio / mcp-python SDK
+### 2.3 对外消费（LLM API）
 
-## 6. 非功能性设计
-### 6.1 错误处理
-- 路由层在 `/chat` 维持统一异常边界：未知异常统一 `500`。
-- 工具调用失败不会中断回合，而是写入 `tool` 错误消息交给模型决定后续策略。
-- Langfuse SDK 异常统一降级吞掉，仅记录本地日志，不中断主链路回复。
+- 客户端：`openai.OpenAI`
+- 配置：`timeout`、`max_retries` 由 `config.yml` 的 `llm_timeout` / `llm_max_retries` 控制
+- 请求参数：`model`、`messages`、`temperature`、`tool_choice="auto"`、`tools`
+- 响应字段：`content`、`tool_calls`、`finish_reason`
+- 错误处理：不在此层捕获，原始异常直接向上抛到 router
 
-### 6.2 日志
-- 统一前缀：`agent_service.*`
-- 关键事件：`agent_created`、`chat_received`、`chat_completed`、`chat_failed`、`agent.run_*`
-- 关键字段：`agent_id`、`message_count`、`message_len`、`reply_len`、`elapsed_ms`
+### 2.4 对外消费（MCP SSE）
 
-### 6.3 Langfuse 观测语义
-- 每次 `/chat` 对应一个 root trace（`agent.chat.run`）。
-- 每轮 LLM 调用记录 generation：输入为完整 `context.messages`，输出包含 `content/tool_calls/finish_reason`。
-- 每次 MCP 工具调用记录 tool span：`tool_name`、`tool_args`、`status`、`error`、`duration_ms`。
-- `Agent` 成功/失败时分别写 root trace 终态，并在应用 shutdown 阶段执行一次带超时保护的 `flush`。
-- 当前仅覆盖 `agent-service` 内部观测，不跨 `hub-service` / `adapter-service` 透传 trace id。
+- 启动阶段：`list_tools` 拉取并固化工具列表
+- 运行阶段：`call_tool` 执行，返回 JSON 字符串写回 `tool` 消息
+- 鉴权：`mcp_auth_token` 通过 `Authorization: Bearer` 发送
 
-## 7. 设计权衡与已知不足
-- `Agent` 状态仅存内存：实现简单，但不支持跨实例共享与重启恢复。
-- `/agents` 每次都新建：调用链最清晰，但没有去重/回收机制，长期运行可能增长。
-- `/chat` 严格 404 语义：契约清晰，但 hub 必须保证先创建再聊天。
+## 3. 核心数据模型
 
+### 3.1 会话（`Session`）
+
+- `session_id: str` — 会话标识
+- `metadata: dict` — 创建时快照
+- `_context: Context` — 消息历史
+- `_generation: int` — 用于抢占检测的版本号
+- `_lock` — 线程锁，仅在修改 Context 时短暂持有
+
+### 3.2 上下文（`Context`）
+
+- `messages: list[Message]` — OpenAI Chat 消息历史
+- `add_message(role, content, tool_calls, tool_call_id)` — 统一写入入口
+
+### 3.3 Agent 执行循环
+
+```
+user message → add_message("user")
+  → for turn in max_turns:
+    → LlmClient.generate()        # LLM 调用（不持锁）
+    → add_message("assistant")    # 锁内写入
+    → if finish_reason == "stop":
+        → _parse_agent_reply()    # 解析 OneBot v11 JSON
+        → finish_run_success()    # 上报观测
+        → return (Message, auto_escape)
+    → if finish_reason == "tool_calls":
+        → for each tool_call:
+            → McpGateway.call_tool()
+            → add_message("tool")  # 锁内写入
+    → else: raise
+```
+
+关键设计：
+- LLM 调用期间不持锁，允许新请求抢占（`generation` 版本号检测）
+- 每个 turn 开头检查是否被抢占，被抢占则抛 `SessionPreempted`
+- 错误只在内层抛出，router 统一 catch + log
+
+### 3.4 LLM 客户端（`LlmClient`）
+
+- 持有 `openai.OpenAI` 实例
+- `generate(messages, tools_schema, temperature)` → `LlmResponse`
+- 不带观测逻辑，不带错误处理，纯透传
+
+### 3.5 可观测性（`Observability`）
+
+- `NoopObservability`：关闭时启用，所有方法空实现
+- `LangfuseObservability`：开启时启用
+- 根 trace：`agent.chat.run`（chain 类型）
+- 每轮 LLM 调用：generation span，记录 input/output/model/turn/duration
+- 每次工具调用：tool span，name 为工具名，output 自动解析 JSON
+- `finish_run_success/error`：合并 metadata（不覆盖 start_run 的初始字段）
+
+Langfuse trace 结构：
+```
+agent.chat.run (chain)
+├── metadata: {agent_id, message_count, max_turns, run_id, status, duration_ms}
+├── output: OneBot v11 消息段数组
+├── agent.llm.generation (generation) × N
+│   ├── input: context.messages
+│   ├── output: {content, tool_calls, finish_reason}
+│   └── metadata: {turn, duration_ms}
+└── <tool_name> (tool) × N
+    ├── input: tool_args
+    ├── output: 结构化 JSON（自动解析）
+    └── metadata: {turn, status, error, duration_ms}
+```
+
+## 4. 异常处理
+
+- `LlmClient.generate()`：不捕获异常，直接向上抛
+- `Agent.run()`：不捕获通用异常（除 `SessionPreempted`），直接向上抛
+- `Router.chat()`：统一捕获、记录日志、返回 HTTP 错误
+- 工具调用失败：写入 `tool` 错误消息，不中断回合
+- Langfuse 异常：降级吞掉，不中断主链路
+
+## 5. 配置项
+
+| 配置项 | 类型 | 说明 |
+|--------|------|------|
+| `server.host` | str | 监听地址 |
+| `server.port` | int | 监听端口 |
+| `agent.model` | str | LLM 模型名 |
+| `agent.max_turns` | int | 最大推理轮次 |
+| `agent.temperature` | float | LLM 温度 |
+| `agent.llm_timeout` | float | LLM 请求超时（秒） |
+| `agent.llm_max_retries` | int | LLM 请求重试次数（建议 0，避免 401 等错误长时间等待） |
+| `agent.openai_api_key` | str | OpenAI 兼容 API Key |
+| `agent.openai_base_url` | str | OpenAI 兼容 API 地址 |
+| `agent.mcp_sse_url` | str | MCP SSE 网关地址 |
+| `agent.mcp_auth_token` | str | MCP 鉴权令牌 |
+| `agent.langfuse.enabled` | bool | 是否启用 Langfuse |
+| `agent.langfuse.host` | str | Langfuse 地址 |
+| `agent.langfuse.public_key` | str | Langfuse 公钥 |
+| `agent.langfuse.secret_key` | str | Langfuse 密钥 |
+| `agent.langfuse.flush_at` | int | 批量上报阈值 |
+| `agent.langfuse.flush_interval` | float | 上报间隔（秒） |
+| `agent.langfuse.request_timeout` | float | Langfuse 请求超时（秒） |
+
+## 6. 设计权衡
+
+- 会话全内存：不支持多副本和重启恢复
+- `/sessions` 无回收机制：长期运行可能内存增长
+- `llm_max_retries=0`：认证失败立即报错，不等待
+- LLM 直接输出 OneBot v11 格式：全链路透传，观测一致

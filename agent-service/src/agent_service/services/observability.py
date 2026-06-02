@@ -406,11 +406,6 @@ def _to_jsonable(value: Any) -> Any:
         return {str(k): _to_jsonable(v) for k, v in value.items()}
     if isinstance(value, (list, tuple)):
         return [_to_jsonable(item) for item in value]
-    # 优先处理 nonebot MessageSegment 类型（有 type/data 属性即为 OneBot v11 消息段）
-    seg_type = getattr(value, "type", None)
-    seg_data = getattr(value, "data", None)
-    if isinstance(seg_type, str) and isinstance(seg_data, dict):
-        return {"type": seg_type, "data": _to_jsonable(seg_data)}
     model_dump = getattr(value, "model_dump", None)
     if callable(model_dump):
         return _to_jsonable(model_dump(mode="json", exclude_none=True))

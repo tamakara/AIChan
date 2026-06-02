@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import json
 from typing import Any
 
 import httpx
+from nonebot.adapters.onebot.v11 import Message, MessageSegment
 
 from ..logger import elapsed_ms, get_logger, log_info, start_timer
 from ..router.schemas import (
@@ -47,8 +49,8 @@ class OutboundClient:
         hub_session_key: str,
         agent_session_id: str,
         text: str,
-    ) -> SessionChatResponse:
-        """向 agent-service 发送消息，返回 OneBot v11 格式回复。"""
+    ) -> str:
+        """向 agent-service 发送消息，返回纯文本回复。"""
         started_at = start_timer()
         payload = SessionChatRequest(
             session_id=agent_session_id,
@@ -63,16 +65,14 @@ class OutboundClient:
             status="ok",
             elapsed_ms=elapsed_ms(started_at),
         )
-        return response
+        return response.reply
 
-    async def send_reply(
-        self,
-        session_key: str,
-        message: list[dict[str, Any]],
-        auto_escape: bool = False,
-    ) -> None:
-        """通过 NapCat WS 发送 OneBot send_msg 动作。reply 映射为 message 参数。"""
+    async def send_reply(self, session_key: str, content: str) -> None:
+        """解析 LLM 输出的 OneBot v11 回复 JSON，转为 Message 后发送。"""
         started_at = start_timer()
+
+        reply_content, auto_escape = _parse_llm_reply(content)
+        message = _message_to_wire(reply_content)
 
         if session_key.startswith("group:"):
             group_id = int(session_key.split(":", 1)[1])
@@ -90,7 +90,7 @@ class OutboundClient:
             self._logger,
             "hub.reply_sent",
             session_key=session_key,
-            reply_len=len(str(message)),
+            reply_len=len(str(reply_content)),
             elapsed_ms=elapsed_ms(started_at),
         )
 
@@ -109,3 +109,35 @@ class OutboundClient:
 
     async def aclose(self) -> None:
         await self._client.aclose()
+
+
+def _parse_llm_reply(raw: str) -> tuple[str | list[dict[str, Any]], bool]:
+    """解析 LLM 输出的 {"reply":..., "auto_escape":...} JSON。
+
+    返回 (reply_content, auto_escape)。reply_content 可以是纯文本字符串或消息段数组。
+    解析失败时整体退化为纯文本。
+    """
+    try:
+        parsed = json.loads(raw)
+        if isinstance(parsed, dict) and "reply" in parsed:
+            reply_content = parsed["reply"]
+            auto_escape = bool(parsed.get("auto_escape", False))
+            return reply_content, auto_escape
+    except (json.JSONDecodeError, TypeError):
+        pass
+    return raw, False
+
+
+def _message_to_wire(content: str | list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """将 reply 内容转为 OneBot v11 消息段数组（JSON 可序列化）。"""
+    if isinstance(content, str):
+        msg = Message(content)
+    elif isinstance(content, list):
+        segments = [
+            MessageSegment(type=seg["type"], data=seg["data"])
+            for seg in content
+        ]
+        msg = Message(segments)
+    else:
+        msg = Message(str(content))
+    return [{"type": seg.type, "data": seg.data} for seg in msg]

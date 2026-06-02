@@ -6,7 +6,7 @@ agent:
   model: gemini-3.5-flash
   max_turns: 50
   temperature: 1.0
-  llm_timeout: 60.0
+  llm_timeout: 30.0
   llm_max_retries: 0
   openai_api_key: sk-FVXkc4rTrgVFEfbB1cD65aF6Ad1f4501Ac88346e09Ea5433
   openai_base_url: https://api.v3.cm/v1

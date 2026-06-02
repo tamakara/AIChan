@@ -129,15 +129,14 @@ class SessionRunner:
             )
             await self._outbound_client.send_reply(
                 session_key=self._session_key,
-                message=reply.reply,
-                auto_escape=reply.auto_escape,
+                content=reply,
             )
             log_info(
                 self._logger,
                 "hub.session_run_completed",
                 session_key=self._session_key,
                 agent_id=self._agent_session_id,
-                reply_len=len(str(reply.reply)),
+                reply_len=len(reply),
                 elapsed_ms=elapsed_ms(run_started_at),
             )
         except Exception:

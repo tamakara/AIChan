@@ -1,184 +1,82 @@
 # message-protocol
 
-## 1. 文档目的
-本文定义 AICHAN 统一内部消息 XML 协议（当前草案）。  
-目标是把 NapCat / OneBot v11 的消息在 `adapter-service` 一次性规范化，后续 `hub-service` 与 `agent-service` 只消费协议结果，不再重复做字段拼装。
+## 1. 协议定位
 
-当前状态：
-- 协议草案已确定（本文档）。
-- `adapter-service` / `hub-service` / `agent-service` 主链路已切换到本协议。
-- 当前代码实现已支持：
-  - 入站：`message/poke/recall` 事件标签 + `<batch type="start|append">` 输入
-  - 出站：`<batch type="end">` 动作批次 + `action_xml` 单条下发
+AICHAN 全链路使用 OneBot v11 原生 JSON 格式，不做二次转换。`hub-service` 透传 OneBot v11 事件给 `agent-service`，`agent-service` 的 LLM 直接输出 OneBot v11 消息段数组作为回复。
 
-## 2. 设计结论（本次收口）
-- 去掉 XML 内的 `protocol="aichan.message.xml"` 与 `version="1"` 属性。
-- 把批次容器从 `<messages>` 统一改名为 `<batch>`。
-- `adapter-service` 只负责单条事件标签（`<message>` / `<poke>` / `<recall>`）规范化。
-- `hub-service` 按现有会话调度策略，把多条事件标签组合成 `<batch type="start|append">` 送给 agent。
-- `agent-service` 输出固定为 `<batch type="end">...</batch>`。
-- `hub-service` 解析 `<batch type="end">`，按顺序拆成单条 `action_xml` 写入 `qq.actions`。
+## 2. 输入格式（事件）
 
-## 3. 分层职责
-- `adapter-service`
-  - 唯一负责：`OneBot 事件 -> 单条 event XML`
-  - 负责文本清洗、字段归一、XML 转义
-- `hub-service`
-  - 只做会话调度、防抖、重跑决策
-  - 负责把单条 `event XML` 组合成批次 `batch XML`
-- `agent-service`
-  - 只把 `batch XML` 当作输入上下文消费
-  - 不再负责消息标签拼装与 XML 转义
+hub-service 将收到的 OneBot v11 事件原样透传：
 
-## 4. 单条事件 XML（Message / Notice）
-### 4.1 `message` 标准结构
-```xml
-<message
-  message_type="private"
-  sub_type="friend"
-  message_id="123456789"
-  session_id="private_123456"
-  user_id="qq_123456"
-  self_id="qq_10001"
-  time="1710000000"
->你好</message>
+```json
+[{
+  "post_type": "message",
+  "message_type": "private",
+  "user_id": 123456,
+  "message_id": 999,
+  "sender": {"nickname": "小明", "card": ""},
+  "message": [
+    {"type": "text", "data": {"text": "你好"}},
+    {"type": "image", "data": {"file": "http://..."}},
+    {"type": "at", "data": {"qq": "10001"}}
+  ]
+}]
 ```
 
-### 4.2 `message` 字段约束
-- `message_type`：`private | group`
-- `sub_type`：透传 OneBot v11 `sub_type`
-  - `message_type=private`：常见为 `friend | group | other`
-  - `message_type=group`：常见为 `normal | anonymous | notice`
-- `message_id`：透传 OneBot v11 `message_id`（建议按字符串写入 XML 属性）
-- `session_id`：
-  - 私聊：`private_<user_id>`
-  - 群聊：`group_<group_id>`
-- `user_id`：固定 `qq_<onebot_user_id>`
-- `self_id`：固定 `qq_<onebot_self_id>`，只允许来自 OneBot 事件 `self_id` 字段；缺失则整条事件丢弃
-- `time`：必须来自 `raw_event.time`，秒级时间戳字符串
-- 文本内容：
-  - 先执行 `extract_plain_text`
-  - 再移除残留 CQ 码并 `strip()`
-  - 清洗后为空则整条事件丢弃，不入流
+## 3. 输出格式（回复）
 
-### 4.3 `poke` 标准结构（Notice Event）
-```xml
-<poke session_id="group_987654321" user_id="qq_123456" self_id="qq_10001" target_id="qq_654321" />
+agent-service 的 LLM 被指示直接输出如下结构：
+
+```json
+{
+  "reply": [
+    {"type": "text", "data": {"text": "笨蛋，找我有什么事喵？"}}
+  ],
+  "auto_escape": false
+}
 ```
 
-字段约束：
-- `session_id`：会话路由键（`private_*` 或 `group_*`）
-- `user_id`：发起戳一戳的用户，统一为 `qq_<onebot_user_id>`
-- `self_id`：当前登录 QQ，统一为 `qq_<onebot_self_id>`
-- `target_id`：被戳用户，统一为 `qq_<onebot_target_id>`
+### 字段说明
 
-### 4.4 `recall` 标准结构（Notice Event）
-```xml
-<recall session_id="group_987654321" user_id="qq_123456" self_id="qq_10001" message_id="123456789" />
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `reply` | `list[dict]` | OneBot v11 消息段数组，与输入 `message` 字段格式一致 |
+| `auto_escape` | `bool` | 是否作为纯文本发送（不解析 CQ 码），默认 `false` |
+
+### 消息段类型
+
+| type | data | 说明 |
+|------|------|------|
+| `text` | `{"text": "..."}` | 文本内容 |
+| `image` | `{"file": "url或base64"}` | 图片 |
+| `at` | `{"qq": "QQ号"}` | @某人 |
+| `reply` | `{"id": "消息ID"}` | 回复某条消息 |
+
+## 4. hub 透传映射
+
+hub-service 将 agent 返回的字段直接映射到 NapCat 的 OneBot v11 动作：
+
+```python
+# agent 返回
+{"reply": [...], "auto_escape": false}
+
+# hub 发送的 OneBot v11 动作
+{
+  "action": "send_private_msg",
+  "params": {
+    "user_id": 123456,
+    "message": [...],    # ← reply 直接透传
+    "auto_escape": false # ← auto_escape 直接透传
+  }
+}
 ```
 
-字段约束：
-- `session_id`：会话路由键（`private_*` 或 `group_*`）
-- `user_id`：撤回动作相关用户（按 OneBot 事件字段映射）
-- `self_id`：当前登录 QQ，统一为 `qq_<onebot_self_id>`
-- `message_id`：被撤回消息的 ID（建议按字符串写入 XML 属性）
+## 5. 兼容处理
 
-## 5. 批次容器 XML（Batch）
-### 5.1 标准结构
-```xml
-<batch type="start">
-  <message message_type="private" sub_type="friend" message_id="123456789" session_id="private_123456" user_id="qq_123456" self_id="qq_10001" time="1710000000">第一条</message>
-  <poke session_id="private_123456" user_id="qq_123456" self_id="qq_10001" target_id="qq_654321" />
-  <recall session_id="private_123456" user_id="qq_123456" self_id="qq_10001" message_id="123456790" />
-</batch>
-```
+agent-service 的 `_parse_agent_reply()` 对 LLM 输出做容错解析：
 
-### 5.2 `batch.type` 语义
-- `start`：当前回复链路的首轮输入
-- `append`：同一回复链路中，因新消息到达触发的覆盖式重跑输入
-
-### 5.3 Agent 出站动作批次结构
-```xml
-<batch type="end">
-  <message session_id="private_123456">你好，笨蛋</message>
-  <poke session_id="private_123456" target_id="qq_654321" />
-  <recall session_id="private_123456" message_id="123456790" />
-</batch>
-```
-
-约束：
-- `type` 必须是 `end`
-- 子标签只允许 `message/poke/recall`
-- 出站最小属性要求：
-  - `message`：`session_id` + 非空文本体
-  - `poke`：`session_id` + `target_id`
-  - `recall`：`session_id` + `message_id`
-- 出站标签可省略 `self_id`，由执行层按会话上下文路由
-
-约束：
-- 同一个 `<batch>` 内所有事件标签（`message/poke/recall`）必须来自同一 `session_id`
-- 事件顺序必须与原始到达顺序一致
-
-## 6. Stream 字段建议（落地目标）
-`qq.events` 的事件字段建议收口为：
-- `event_id`
-- `session_id`
-- `event_xml`（单条 `<message ...>` / `<poke ... />` / `<recall ... />`）
-- `raw_event`
-- `created_at`
-
-说明：
-- `event_xml` 是跨服务唯一消费正文，`content` 纯文本字段可移除。
-- `raw_event` 保留用于审计与诊断，不参与下游协议拼装。
-
-`qq.actions` 的动作字段收口为：
-- `action_id`
-- `session_id`
-- `action_xml`（单条 `<message ...>` / `<poke ... />` / `<recall ... />`）
-- `created_at`
-
-## 7. NapCat -> 协议映射规则
-- NapCat `private` 消息：
-  - `message.message_type=private`
-  - `message.sub_type=<onebot_private_sub_type>`
-  - `message.message_id=<onebot_message_id>`
-  - `message.session_id=private_<user_id>`
-- NapCat `group` 消息：
-  - `message.message_type=group`
-  - `message.sub_type=<onebot_group_sub_type>`
-  - `message.message_id=<onebot_message_id>`
-  - `message.session_id=group_<group_id>`
-- `message.time`：只取 `raw_event.time`
-- `message.user_id`：统一转为 `qq_<user_id>`
-- `message.self_id`：统一转为 `qq_<self_id>`
-
-- NapCat `notice.notify.poke`：
-  - 生成 `<poke ... />`
-  - `poke.session_id=<private_* 或 group_*>`
-  - `poke.user_id=qq_<user_id>`
-  - `poke.target_id=qq_<target_id>`
-
-- NapCat `notice.*_recall`：
-  - 生成 `<recall ... />`
-  - `recall.session_id=<private_* 或 group_*>`
-  - `recall.user_id=qq_<user_id>`
-  - `recall.self_id=qq_<self_id>`
-  - `recall.message_id=<message_id>`
-
-- Agent 出站 `<message ...>`：
-  - 解析 `session_id` + 文本体
-  - `session_id=group_*` -> `send_group_msg`
-  - `session_id=private_*` -> `send_private_msg`
-- Agent 出站 `<poke ... />`：
-  - 解析 `session_id` + `target_id`
-  - `session_id=group_*` -> `group_poke`
-  - `session_id=private_*` -> `friend_poke`
-- Agent 出站 `<recall ... />`：
-  - 解析 `session_id` + `message_id`
-  - 统一映射 `delete_msg`
-
-## 8. 落地步骤（建议）
-1. `adapter-service` 增加 `event_xml` 生成器并写入 `qq.events`。
-2. `hub-service` 改为透传 `event_xml`，仅决定 `batch.type=start|append` 并构造 `<batch>` 容器。
-3. `agent-service` 删除消息 XML 构建逻辑，直接消费 hub 传入的协议 XML。
-4. 同步更新 `docs/adapter-service.md`、`docs/hub-service.md`、`docs/agent-service.md` 的接口定义与示例。
+| LLM 实际输出 | 处理方式 |
+|-------------|---------|
+| `{"reply":[...], "auto_escape":false}` | 标准解析 |
+| `{"reply":{...}, "auto_escape":false}` | 单对象自动包装为数组 |
+| 纯文本字符串 | fallback：视为 `Message(text)`，`auto_escape=false` |

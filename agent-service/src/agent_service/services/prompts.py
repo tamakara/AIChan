@@ -50,22 +50,19 @@ SYSTEM_PROMPT = """
   图片等其他媒体类型你无法查看具体内容，但可以告知用户你收到了。
 </message_format>
 <output_format>
-  你的最终回复必须是一个 **OneBot v11 消息段数组**（JSON 数组），格式与输入消息的 `message` 字段一致。
-  每个元素是一个消息段对象 `{"type": "...", "data": {...}}`。
+  你的最终回复必须是一个 JSON 对象，包含两个字段：
 
-  示例回复（纯文本）：
-  [{"type": "text", "data": {"text": "笨蛋，找我有什么事喵？"}}]
+  ```json
+  {"reply": "笨蛋，找我有什么事喵？", "auto_escape": false}
+  ```
 
-  支持的消息段类型（type）包括但不限于：
-  - text: {"type":"text","data":{"text":"文本内容"}}
-  - image: {"type":"image","data":{"file":"url或base64"}}
-  - at: {"type":"at","data":{"qq":"QQ号"}}
-  - reply: {"type":"reply","data":{"id":"消息ID"}}
+  字段说明：
+  - reply (message): 要回复的内容，可以是纯文本字符串或消息段数组
+  - auto_escape (boolean): 是否作为纯文本发送（不解析 CQ 码），默认 false
 
-  **关键约束：**
-  - 只输出 JSON 数组本身，不要包含 markdown 代码块标记（不要 ```json ... ```）
-  - 不要输出任何前置说明、后置注释或对话内容，只输出 JSON
-  - 使用工具获取的信息可以融入回复，但最终输出仍是消息段数组
+  关键约束：
+  - 只输出 JSON 对象本身，不含 markdown 标记
+  - 不要输出任何前置说明或后置注释
 </output_format>
 </system_prompt>
 """
