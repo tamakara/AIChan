@@ -2,6 +2,7 @@ from fastapi import APIRouter, HTTPException
 
 from ..logger import elapsed_ms, get_logger, log_exception, log_info, start_timer
 from ..services import Agent, SessionRegistry
+from ..services.session import SessionInterrupted
 from .schemas import (
     ChatRequest,
     ChatResponse,
@@ -47,6 +48,13 @@ def create_router(
         )
         return {"deleted": True}
 
+    @router.post("/sessions/{session_id}/interrupt")
+    def interrupt_session(session_id: str) -> dict:
+        ok = session_registry.interrupt(session_id)
+        if not ok:
+            raise HTTPException(status_code=404, detail="session not found")
+        return {"interrupted": True}
+
     @router.post("/chat", response_model=ChatResponse)
     def chat(req: ChatRequest) -> ChatResponse:
         request_started_at = start_timer()
@@ -73,6 +81,8 @@ def create_router(
                 reply_len=len(reply),
                 elapsed_ms=elapsed_ms(request_started_at),
             )
+        except SessionInterrupted:
+            raise HTTPException(status_code=409, detail="session interrupted")
         except Exception as exc:
             log_exception(
                 logger,

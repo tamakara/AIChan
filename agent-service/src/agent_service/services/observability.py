@@ -24,6 +24,7 @@ class RunTrace:
 
 @dataclass
 class LangfuseRunTrace(RunTrace):
+    propagate_ctx: Any
     context_manager: Any
     root_observation: Any
     base_metadata: dict[str, Any]
@@ -172,10 +173,16 @@ class LangfuseObservability:
         agent_metadata: dict[str, Any],
     ) -> RunTrace:
         run_id = str(uuid4())
+        propagate_ctx: Any | None = None
         context_manager: Any | None = None
         try:
+            from langfuse import propagate_attributes
+
+            # propagate_attributes 将 session_id 注入 OTel baggage
+            propagate_ctx = propagate_attributes(session_id=session_id)
+            propagate_ctx.__enter__()
+
             run_metadata = {
-                "session_id": session_id,
                 "message_count": message_count,
                 "max_turns": max_turns,
                 "run_id": run_id,
@@ -190,12 +197,12 @@ class LangfuseObservability:
             return LangfuseRunTrace(
                 run_id=run_id,
                 trace_name=TRACE_NAME,
+                propagate_ctx=propagate_ctx,
                 context_manager=context_manager,
                 root_observation=root_observation,
                 base_metadata=run_metadata,
             )
         except Exception:
-            # 观测启动失败时降级为普通 RunTrace，确保主链路不受观测组件可用性影响。
             log_exception(
                 self._logger,
                 "agent.observability_start_failed",
@@ -204,6 +211,11 @@ class LangfuseObservability:
             if context_manager is not None:
                 try:
                     context_manager.__exit__(*sys.exc_info())
+                except Exception:
+                    pass
+            if propagate_ctx is not None:
+                try:
+                    propagate_ctx.__exit__(*sys.exc_info())
                 except Exception:
                     pass
             return RunTrace(run_id=run_id, trace_name=TRACE_NAME)
@@ -304,15 +316,7 @@ class LangfuseObservability:
                 status="ok",
             )
         finally:
-            try:
-                run.context_manager.__exit__(None, None, None)
-            except Exception:
-                log_exception(
-                    self._logger,
-                    "agent.observability_finish_failed",
-                    run_id=run.run_id,
-                    status="ok",
-                )
+            _exit_contexts(self._logger, run)
 
     def finish_run_error(
         self,
@@ -337,15 +341,7 @@ class LangfuseObservability:
                 status="failed",
             )
         finally:
-            try:
-                run.context_manager.__exit__(None, None, None)
-            except Exception:
-                log_exception(
-                    self._logger,
-                    "agent.observability_finish_failed",
-                    run_id=run.run_id,
-                    status="failed",
-                )
+            _exit_contexts(self._logger, run)
 
     def flush(self, timeout_seconds: float) -> None:
         done = Event()
@@ -395,6 +391,15 @@ def _parse_tool_output(output: str | None) -> Any:
         return _json.loads(output)
     except (ValueError, TypeError):
         return output
+
+
+def _exit_contexts(logger: Any, run: LangfuseRunTrace) -> None:
+    """安全退出观测上下文，先 observation 后 propagate。"""
+    for ctx in (run.context_manager, run.propagate_ctx):
+        try:
+            ctx.__exit__(None, None, None)
+        except Exception:
+            pass
 
 
 def _to_jsonable(value: Any) -> Any:

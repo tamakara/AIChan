@@ -44,19 +44,40 @@ class OutboundClient:
         )
         return response.session_id
 
+    async def interrupt_session(self, agent_session_id: str) -> None:
+        """中断 agent-service 中正在运行的会话。忽略 404 等异常。"""
+        try:
+            await self._post_json(
+                f"{self._agent_service_url}/sessions/{agent_session_id}/interrupt",
+                {},
+            )
+        except RuntimeError:
+            pass  # session 不存在或未被中断，不影响主流程
+
     async def call_session(
         self,
         hub_session_key: str,
         agent_session_id: str,
         text: str,
-    ) -> str:
-        """向 agent-service 发送消息，返回纯文本回复。"""
+    ) -> str | None:
+        """向 agent-service 发送消息，返回纯文本回复。被中断返回 None。"""
         started_at = start_timer()
         payload = SessionChatRequest(
             session_id=agent_session_id,
             batch=text,
         )
-        data = await self._post_json(f"{self._agent_service_url}/chat", payload.model_dump())
+        try:
+            data = await self._post_json(f"{self._agent_service_url}/chat", payload.model_dump())
+        except RuntimeError as exc:
+            if "status=409" in str(exc):
+                log_info(
+                    self._logger,
+                    "hub.downstream_interrupted",
+                    session_key=hub_session_key,
+                    elapsed_ms=elapsed_ms(started_at),
+                )
+                return None
+            raise
         response = SessionChatResponse.model_validate(data)
         log_info(
             self._logger,

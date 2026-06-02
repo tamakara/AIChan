@@ -41,13 +41,21 @@ class SessionRunner:
 
     async def submit_message(self, message: AgentInboundEvent) -> None:
         loop = asyncio.get_running_loop()
+
+        should_interrupt = False
         async with self._lock:
             if self._stopping:
                 return
+            # 当前有 run 正在执行时触发中断
+            if self._running:
+                should_interrupt = True
 
             self._pending_events.append(message)
             self._debounce_deadline = loop.time() + self._debounce_seconds
             self._schedule_debounce_locked()
+
+        if should_interrupt:
+            await self._outbound_client.interrupt_session(self._agent_session_id)
 
     async def shutdown(self) -> None:
         self._stopping = True
@@ -127,6 +135,9 @@ class SessionRunner:
                 agent_session_id=self._agent_session_id,
                 text=message_text,
             )
+            if reply is None:
+                # 被中断，不发送回复
+                return
             await self._outbound_client.send_reply(
                 session_key=self._session_key,
                 content=reply,

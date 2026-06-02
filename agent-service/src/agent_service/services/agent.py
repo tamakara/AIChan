@@ -6,7 +6,7 @@ from ..logger import elapsed_ms, start_timer
 from .llm_client import LlmClient
 from .mcp_gateway import McpGateway
 from .observability import Observability
-from .session import Session
+from .session import Session, SessionInterrupted
 
 
 class Agent:
@@ -35,7 +35,12 @@ class Agent:
     # ------------------------------------------------------------------
 
     def run(self, session: Session, user_message: str) -> str:
-        """在指定 Session 上执行一轮推理循环，返回纯文本回复。"""
+        """在指定 Session 上执行一轮推理循环，返回纯文本回复。
+
+        每次 run 开始时清除 interrupt 标记。
+        LLM 返回后若检测到中断标记，抛 SessionInterrupted 且不写入上下文。
+        """
+        my_gen = session.begin_run()
         run_started_at = start_timer()
 
         # ── 1. 写入用户消息、启动观测 trace ──
@@ -55,11 +60,9 @@ class Agent:
             for turn_idx in range(self._max_turns):
                 turn = turn_idx + 1
 
-                # 2a. 锁内快照当前上下文
                 with session._lock:
                     input_messages = list(session._context.messages)
 
-                # 2b. LLM 调用（不持锁）
                 llm_started_at = start_timer()
                 llm_response = self._llm_client.generate(
                     messages=input_messages,
@@ -68,7 +71,9 @@ class Agent:
                 )
                 llm_elapsed_ms = elapsed_ms(llm_started_at)
 
-                # 2c. 记录本次 LLM 调用
+                # LLM 返回后检测中断——仅针对本 run 的 generation，新 run 不受影响
+                session.check_interrupt(my_gen)
+
                 self._observability.llm_generation(
                     run=run_trace,
                     turn=turn,
@@ -80,7 +85,6 @@ class Agent:
                     duration_ms=llm_elapsed_ms,
                 )
 
-                # 2d. 锁内写入 assistant 消息
                 with session._lock:
                     session._context.add_message(
                         role="assistant",
@@ -88,9 +92,7 @@ class Agent:
                         tool_calls=llm_response.tool_calls,
                     )
 
-                # 2e. 判断 finish_reason 分支
                 if llm_response.finish_reason != "tool_calls":
-                    # stop 表示 LLM 认为推理完成，返回纯文本
                     if llm_response.finish_reason == "stop":
                         reply = llm_response.content
                         duration_ms = elapsed_ms(run_started_at)
@@ -100,13 +102,11 @@ class Agent:
                             duration_ms=duration_ms,
                         )
                         return reply
-                    # 其他 finish_reason（length/content_filter 等）视为异常
                     raise RuntimeError(
                         "LLM response ended with unexpected reason: "
                         f"{llm_response.finish_reason}"
                     )
 
-                # 2f. tool_calls 分支：依次执行工具，失败不中断回合
                 for tool_call in llm_response.tool_calls:
                     tool_call_id = tool_call.id
                     tool_name = tool_call.function.name
@@ -133,7 +133,6 @@ class Agent:
                             output=tool_call_result,
                         )
                     except Exception as exc:
-                        # 工具调用异常写回 tool 错误消息，让 LLM 自行修正
                         tool_args_fallback = {"raw_arguments": str(tool_args_str)}
                         tool_call_result = json.dumps(
                             {"error": f"tool `{tool_name}` failed: {exc}"},
@@ -150,7 +149,6 @@ class Agent:
                             output=tool_call_result,
                         )
 
-                    # 锁内写入 tool 结果消息
                     with session._lock:
                         session._context.add_message(
                             role="tool",
@@ -158,13 +156,13 @@ class Agent:
                             tool_call_id=tool_call_id,
                         )
 
-            # ── 3. 超过 max_turns 仍未 stop ──
             raise RuntimeError(
                 "Agent failed to complete the task within "
                 f"{self._max_turns} turns of interaction."
             )
+        except SessionInterrupted:
+            raise
         except Exception as exc:
-            # ── 4. 异常收尾：记录观测失败状态后重新抛出 ──
             duration_ms = elapsed_ms(run_started_at)
             self._observability.finish_run_error(
                 run=run_trace,
