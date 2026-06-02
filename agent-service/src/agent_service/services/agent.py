@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 
-from ..logger import elapsed_ms, get_logger, log_info, start_timer
+from ..logger import elapsed_ms, start_timer
 from .llm_client import LlmClient
 from .mcp_gateway import McpGateway
 from .observability import Observability
@@ -24,7 +24,6 @@ class Agent:
         temperature: float,
         observability: Observability,
     ) -> None:
-        self._logger = get_logger("agent")
         self._llm_client = llm_client
         self._mcp_gateway = mcp_gateway
         self._max_turns = max_turns
@@ -53,13 +52,6 @@ class Agent:
             session._generation += 1
             my_gen = session._generation
 
-            log_info(
-                self._logger,
-                "agent.run_started",
-                agent_id=session.session_id,
-                max_turns=self._max_turns,
-                message_len=len(user_message),
-            )
             run_trace = self._observability.start_run(
                 agent_id=session.session_id,
                 message_count=len(session._context.messages),
@@ -121,13 +113,6 @@ class Agent:
                             run=run_trace,
                             output=reply,
                             duration_ms=duration_ms,
-                        )
-                        log_info(
-                            self._logger,
-                            "agent.run_completed",
-                            agent_id=session.session_id,
-                            reply_len=len(reply),
-                            elapsed_ms=duration_ms,
                         )
                         return reply
                     raise RuntimeError(
@@ -193,13 +178,6 @@ class Agent:
                 f"{self._max_turns} turns of interaction."
             )
         except SessionPreempted:
-            log_info(
-                self._logger,
-                "agent.run_preempted",
-                agent_id=session.session_id,
-                my_generation=my_gen,
-                current_generation=session._generation,
-            )
             raise
         except Exception as exc:
             duration_ms = elapsed_ms(run_started_at)

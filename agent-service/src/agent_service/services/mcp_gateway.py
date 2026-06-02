@@ -8,7 +8,6 @@ import mcp.types as mcp_types
 from mcp.client.session import ClientSession
 from mcp.client.sse import sse_client
 
-from ..logger import elapsed_ms, get_logger, log_info, start_timer
 from .observability import Observability
 
 
@@ -29,7 +28,6 @@ class McpGateway:
         auth_token: str | None = None,
         observability: Observability | None = None,
     ):
-        self._logger = get_logger("mcp_gateway")
         self._sse_url = sse_url
         self._auth_token = auth_token
         self._observability = observability
@@ -37,7 +35,6 @@ class McpGateway:
         self._tools_schema: List[Dict[str, Any]] = []
 
     def register_mcp_server(self) -> None:
-        started_at = start_timer()
         try:
             remote_tools = anyio.run(self._list_mcp_tools_async)
         except Exception as exc:
@@ -53,18 +50,11 @@ class McpGateway:
                 ),
             )
         self._refresh_tools_schema()
-        log_info(
-            self._logger,
-            "mcp.registered",
-            tool_count=len(remote_tools),
-            elapsed_ms=elapsed_ms(started_at),
-        )
 
     def get_tools_schema(self) -> List[Dict[str, Any]]:
         return self._tools_schema
 
     def call_tool(self, tool_name: str, tool_args: Dict[str, Any]) -> str:
-        started_at = start_timer()
         binding = self._mcp_tools.get(tool_name)
         if binding is None:
             raise KeyError(f"未找到工具: {tool_name}")
@@ -77,13 +67,6 @@ class McpGateway:
             )
         except Exception as exc:
             raise RuntimeError(f"调用 MCP SSE 工具失败: {exc}") from exc
-
-        log_info(
-            self._logger,
-            "mcp.tool_called",
-            tool_name=tool_name,
-            elapsed_ms=elapsed_ms(started_at),
-        )
 
         return json.dumps(
             result.model_dump(by_alias=True, mode="json", exclude_none=True),
