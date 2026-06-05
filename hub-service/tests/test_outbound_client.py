@@ -28,75 +28,81 @@ class DummyHttpClient:
         return None
 
 
-class StubRedisStream:
+class StubNapcatWs:
     def __init__(self) -> None:
         self.actions: list[tuple[str, dict]] = []
 
-    async def enqueue_action(self, session_id: str, action: dict) -> None:
-        self.actions.append((session_id, action))
+    async def send_action(self, action: str, params: dict) -> dict:
+        self.actions.append((action, params))
+        return {"status": "ok", "retcode": 0}
 
 
-def test_create_session_calls_new_endpoint() -> None:
-    redis_stream = StubRedisStream()
+def test_create_session_calls_agent_endpoint() -> None:
+    napcat_ws = StubNapcatWs()
     client = OutboundClient(
         agent_service_url="http://agent-service:8000",
-        redis_stream=redis_stream,  # type: ignore[arg-type]
+        napcat_ws=napcat_ws,  # type: ignore[arg-type]
     )
     client._client = DummyHttpClient(  # type: ignore[attr-defined]
-        [DummyResponse({"session_id": "agent-1", "metadata": {"session_id": "private_1"}})]
+        [DummyResponse({"session_id": "agent-1", "metadata": {"session_key": "private:1"}})]
     )
 
     agent_session_id = asyncio.run(
-        client.create_session("private_1", {"session_id": "private_1"})
+        client.create_session("private:1", {"session_key": "private:1"})
     )
 
     assert agent_session_id == "agent-1"
     called_url, called_payload = client._client.calls[0]  # type: ignore[attr-defined]
     assert called_url == "http://agent-service:8000/sessions"
-    assert called_payload == {"metadata": {"session_id": "private_1"}}
+    assert called_payload == {"metadata": {"session_key": "private:1"}}
 
 
-def test_call_session_uses_text_payload() -> None:
-    redis_stream = StubRedisStream()
+def test_call_session_returns_structured_reply() -> None:
     client = OutboundClient(
         agent_service_url="http://agent-service:8000",
-        redis_stream=redis_stream,  # type: ignore[arg-type]
+        napcat_ws=StubNapcatWs(),  # type: ignore[arg-type]
     )
-    expected_reply = "ok!"
-    client._client = DummyHttpClient([DummyResponse({"batch": expected_reply})])  # type: ignore[attr-defined]
-
-    reply = asyncio.run(
-        client.call_session("private_1", "agent-1", "hello")
+    client._client = DummyHttpClient(  # type: ignore[attr-defined]
+        [DummyResponse({"reply": [{"type": "text", "data": {"text": "ok!"}}], "auto_escape": False})]
     )
 
-    assert reply == expected_reply
+    reply = asyncio.run(client.call_session("private:1", "agent-1", "hello"))
+
+    assert reply is not None
+    assert reply.content == [{"type": "text", "data": {"text": "ok!"}}]
+    assert reply.auto_escape is False
     called_url, called_payload = client._client.calls[0]  # type: ignore[attr-defined]
     assert called_url == "http://agent-service:8000/chat"
     assert called_payload == {"session_id": "agent-1", "batch": "hello"}
 
 
 def test_call_session_invalid_response_raises() -> None:
-    redis_stream = StubRedisStream()
     client = OutboundClient(
         agent_service_url="http://agent-service:8000",
-        redis_stream=redis_stream,  # type: ignore[arg-type]
+        napcat_ws=StubNapcatWs(),  # type: ignore[arg-type]
     )
     client._client = DummyHttpClient([DummyResponse({"bad": "shape"})])  # type: ignore[attr-defined]
 
     with pytest.raises(Exception):
-        asyncio.run(client.call_session("private_1", "agent-1", "hello"))
+        asyncio.run(client.call_session("private:1", "agent-1", "hello"))
 
 
-def test_send_reply_enqueues_action() -> None:
-    redis_stream = StubRedisStream()
+def test_send_reply_sends_private_message_action() -> None:
+    napcat_ws = StubNapcatWs()
     client = OutboundClient(
         agent_service_url="http://agent-service:8000",
-        redis_stream=redis_stream,  # type: ignore[arg-type]
+        napcat_ws=napcat_ws,  # type: ignore[arg-type]
     )
 
-    asyncio.run(client.send_reply("private_1", "hello!"))
+    asyncio.run(client.send_reply("private:1", "hello!", auto_escape=False))
 
-    assert len(redis_stream.actions) == 1
-    sid, action = redis_stream.actions[0]
-    assert sid == "private_1"
-    assert action == {"type": "message", "session_id": "private_1", "content": "hello!"}
+    assert napcat_ws.actions == [
+        (
+            "send_private_msg",
+            {
+                "user_id": 1,
+                "message": [{"type": "text", "data": {"text": "hello!"}}],
+                "auto_escape": False,
+            },
+        )
+    ]

@@ -6,5 +6,5 @@ napcat:
   ws_action_timeout_seconds: 5
 
 mcp:
-  base_url: http://napcat-mcp-server:8030
+  base_url: http://hub-service:8020
   timeout_seconds: 5

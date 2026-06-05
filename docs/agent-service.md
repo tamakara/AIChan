@@ -25,16 +25,21 @@
   - 成功：`{"deleted": true}`
   - 失败：`404`（session 不存在）
 
+- `POST /sessions/{session_id}/interrupt`
+  - 成功：`{"interrupted": true}`
+  - 失败：`404`（session 不存在）
+  - 语义：由 hub-service 在同一会话运行中收到新消息时调用，用于停止旧 run 的后续写入。
+
 - `POST /chat`
   - 请求（`ChatRequest`）：
     - `session_id: str`（必填）
     - `batch: str`（必填，OneBot v11 事件 JSON 数组字符串）
   - 响应（`ChatResponse`）：
-    - `reply: list[dict]` — OneBot v11 消息段数组，格式 `[{"type":"text","data":{"text":"..."}}]`
+    - `reply: str | list[dict]` — OneBot v11 回复内容，字符串会在 hub-service 投递前转为 `text` 段
     - `auto_escape: bool` — 是否转义 CQ 码，默认 `false`
   - 失败语义：
     - `session_id` 不存在：`404`
-    - 同一 session 被新请求抢占：`409`
+    - session 被显式中断：`409`
     - 运行期异常：`500`
 
 ### 2.2 LLM 输出格式
@@ -94,7 +99,7 @@ user message → add_message("user")
     → if finish_reason == "stop":
         → _parse_agent_reply()    # 解析 OneBot v11 JSON
         → finish_run_success()    # 上报观测
-        → return (Message, auto_escape)
+        → return AgentReply(reply, auto_escape)
     → if finish_reason == "tool_calls":
         → for each tool_call:
             → McpGateway.call_tool()
@@ -103,8 +108,8 @@ user message → add_message("user")
 ```
 
 关键设计：
-- LLM 调用期间不持锁，允许新请求抢占（`generation` 版本号检测）
-- 每个 turn 开头检查是否被抢占，被抢占则抛 `SessionPreempted`
+- LLM 调用期间不持锁；中断由 `/sessions/{id}/interrupt` 设置 generation 标记
+- LLM 返回后检查本 run 是否被中断，被中断则抛 `SessionInterrupted`
 - 错误只在内层抛出，router 统一 catch + log
 
 ### 3.4 LLM 客户端（`LlmClient`）
@@ -125,8 +130,8 @@ user message → add_message("user")
 Langfuse trace 结构：
 ```
 agent.chat.run (chain)
-├── metadata: {agent_id, message_count, max_turns, run_id, status, duration_ms}
-├── output: OneBot v11 消息段数组
+├── metadata: {message_count, max_turns, run_id, status, duration_ms}
+├── output: {reply, auto_escape}
 ├── agent.llm.generation (generation) × N
 │   ├── input: context.messages
 │   ├── output: {content, tool_calls, finish_reason}
@@ -140,7 +145,7 @@ agent.chat.run (chain)
 ## 4. 异常处理
 
 - `LlmClient.generate()`：不捕获异常，直接向上抛
-- `Agent.run()`：不捕获通用异常（除 `SessionPreempted`），直接向上抛
+- `Agent.run()`：不捕获通用异常（除 `SessionInterrupted`），直接向上抛
 - `Router.chat()`：统一捕获、记录日志、返回 HTTP 错误
 - 工具调用失败：写入 `tool` 错误消息，不中断回合
 - Langfuse 异常：降级吞掉，不中断主链路
@@ -167,6 +172,8 @@ agent.chat.run (chain)
 | `agent.langfuse.flush_at` | int | 批量上报阈值 |
 | `agent.langfuse.flush_interval` | float | 上报间隔（秒） |
 | `agent.langfuse.request_timeout` | float | Langfuse 请求超时（秒） |
+
+密钥字段在仓库中只保留占位值。真实 `agent.openai_api_key`、`agent.langfuse.public_key`、`agent.langfuse.secret_key` 只应写入本地运行配置；如果真实值曾经进入仓库，需要先在对应平台轮换。
 
 ## 6. 设计权衡
 

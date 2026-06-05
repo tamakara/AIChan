@@ -2,7 +2,7 @@ import threading
 import time
 
 from agent_service.services.agent import Agent
-from agent_service.services.session import SessionPreempted, SessionRegistry
+from agent_service.services.session import SessionInterrupted, SessionRegistry
 from agent_service.services.observability import NoopObservability
 from agent_service.services.types.llm import LlmResponse
 
@@ -14,7 +14,7 @@ class StubLlmClient:
 
     def generate(self, messages, tools_schema, temperature) -> LlmResponse:
         self.calls.append((messages, tools_schema, temperature))
-        return LlmResponse(content="ok", tool_calls=[], finish_reason="stop")
+        return LlmResponse(content='{"reply": "ok", "auto_escape": false}', tool_calls=[], finish_reason="stop")
 
 
 class BlockingLlmClient:
@@ -29,7 +29,7 @@ class BlockingLlmClient:
         self.calls.append(messages)
         if len(self.calls) == 1:
             self._block_event.wait()
-        return LlmResponse(content="ok", tool_calls=[], finish_reason="stop")
+        return LlmResponse(content='{"reply": "ok", "auto_escape": false}', tool_calls=[], finish_reason="stop")
 
 
 class StubMcpGateway:
@@ -98,11 +98,12 @@ def test_agent_run_session() -> None:
         user_message="hello",
     )
 
-    assert reply == "ok"
+    assert reply.reply == "ok"
+    assert reply.auto_escape is False
 
 
-def test_run_session_preempted_by_new_request() -> None:
-    """新请求应抢占（中断）正在进行中的旧生成。"""
+def test_run_session_interrupted_by_registry_signal() -> None:
+    """agent 只响应显式中断信号，抢占触发由 hub-service 负责。"""
     block_event = threading.Event()
     llm_client = BlockingLlmClient(block_event)
     agent = Agent(  # type: ignore[arg-type]
@@ -123,9 +124,9 @@ def test_run_session_preempted_by_new_request() -> None:
                 session=session,
                 user_message="msg_1",
             )
-        except SessionPreempted as exc:
-            result_holder["first"] = "preempted"
-            result_holder["preempted_exc"] = exc
+        except SessionInterrupted as exc:
+            result_holder["first"] = "interrupted"
+            result_holder["interrupted_exc"] = exc
         except Exception as exc:
             result_holder["first"] = f"error: {exc}"
 
@@ -137,19 +138,11 @@ def test_run_session_preempted_by_new_request() -> None:
         time.sleep(0.01)
     assert len(llm_client.calls) == 1, "first run did not reach LLM call"
 
-    reply = agent.run(
-        session=session,
-        user_message="msg_2",
-    )
+    assert registry.interrupt(session.session_id) is True
     block_event.set()
     t.join(timeout=5.0)
 
-    assert result_holder.get("first") == "preempted", (
-        f"expected preempted, got {result_holder.get('first')}"
+    assert result_holder.get("first") == "interrupted", (
+        f"expected interrupted, got {result_holder.get('first')}"
     )
-    assert reply == "ok"
-
-    assert len(llm_client.calls) >= 2
-    second_call_messages = llm_client.calls[1]
-    user_messages = [m for m in second_call_messages if m["role"] == "user"]
-    assert len(user_messages) == 2
+    assert len(llm_client.calls) == 1

@@ -17,9 +17,9 @@ class SpyObservability:
         self.success: list[dict] = []
         self.errors: list[dict] = []
 
-    def start_run(self, *, agent_id: str, message_count: int, max_turns: int, agent_metadata: dict):
+    def start_run(self, *, session_id: str, message_count: int, max_turns: int, agent_metadata: dict):
         payload = {
-            "agent_id": agent_id,
+            "session_id": session_id,
             "message_count": message_count,
             "max_turns": max_turns,
             "agent_metadata": agent_metadata,
@@ -77,7 +77,7 @@ def test_agent_reports_full_observability_flow() -> None:
     llm = StubLlmClient(
         responses=[
             LlmResponse(content="", tool_calls=[_tool_call("history")], finish_reason="tool_calls"),
-            LlmResponse(content="done", tool_calls=[], finish_reason="stop"),
+            LlmResponse(content='{"reply": "done", "auto_escape": false}', tool_calls=[], finish_reason="stop"),
         ]
     )
     agent = Agent(  # type: ignore[arg-type]
@@ -95,9 +95,10 @@ def test_agent_reports_full_observability_flow() -> None:
         user_message="hello",
     )
 
-    assert reply == "done"
+    assert reply.reply == "done"
+    assert reply.auto_escape is False
     assert len(observability.started) == 1
-    assert observability.started[0]["message_count"] == 0
+    assert observability.started[0]["message_count"] == 3
     assert len(observability.generations) == 2
     assert len(observability.tools) == 1
     assert observability.tools[0]["status"] == "ok"
@@ -110,7 +111,7 @@ def test_agent_reports_failed_tool_span_but_can_continue() -> None:
     llm = StubLlmClient(
         responses=[
             LlmResponse(content="", tool_calls=[_tool_call("fail_tool")], finish_reason="tool_calls"),
-            LlmResponse(content="fallback", tool_calls=[], finish_reason="stop"),
+            LlmResponse(content='{"reply": "fallback", "auto_escape": false}', tool_calls=[], finish_reason="stop"),
         ]
     )
     agent = Agent(  # type: ignore[arg-type]
@@ -128,7 +129,7 @@ def test_agent_reports_failed_tool_span_but_can_continue() -> None:
         user_message="hello",
     )
 
-    assert reply == "fallback"
+    assert reply.reply == "fallback"
     assert len(observability.tools) == 1
     assert observability.tools[0]["status"] == "failed"
     assert len(observability.success) == 1

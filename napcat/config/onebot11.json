@@ -12,15 +12,6 @@
         "reconnectInterval": 5000,
         "token": "",
         "messagePostFormat": "array"
-      },
-      {
-        "name": "aichan-mcp",
-        "enable": true,
-        "url": "ws://napcat-mcp-server:8030/onebot/v11/ws",
-        "reportSelfMessage": false,
-        "reconnectInterval": 5000,
-        "token": "",
-        "messagePostFormat": "array"
       }
     ]
   },

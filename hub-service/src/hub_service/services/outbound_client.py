@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import json
+from dataclasses import dataclass
 from typing import Any
 
 import httpx
@@ -14,6 +14,12 @@ from ..router.schemas import (
     SessionChatResponse,
 )
 from .napcat_ws import NapcatWsGateway
+
+
+@dataclass(frozen=True)
+class AgentReply:
+    content: str | list[dict[str, Any]]
+    auto_escape: bool
 
 
 class OutboundClient:
@@ -59,8 +65,8 @@ class OutboundClient:
         hub_session_key: str,
         agent_session_id: str,
         text: str,
-    ) -> str | None:
-        """向 agent-service 发送消息，返回纯文本回复。被中断返回 None。"""
+    ) -> AgentReply | None:
+        """向 agent-service 发送消息，返回已解析的回复。被中断返回 None。"""
         started_at = start_timer()
         payload = SessionChatRequest(
             session_id=agent_session_id,
@@ -86,14 +92,18 @@ class OutboundClient:
             status="ok",
             elapsed_ms=elapsed_ms(started_at),
         )
-        return response.reply
+        return AgentReply(content=response.reply, auto_escape=response.auto_escape)
 
-    async def send_reply(self, session_key: str, content: str) -> None:
-        """解析 LLM 输出的 OneBot v11 回复 JSON，转为 Message 后发送。"""
+    async def send_reply(
+        self,
+        session_key: str,
+        content: str | list[dict[str, Any]],
+        auto_escape: bool,
+    ) -> None:
+        """将 agent-service 返回的回复转为 OneBot v11 动作并发送。"""
         started_at = start_timer()
 
-        reply_content, auto_escape = _parse_llm_reply(content)
-        message = _message_to_wire(reply_content)
+        message = _message_to_wire(content)
 
         if session_key.startswith("group:"):
             group_id = int(session_key.split(":", 1)[1])
@@ -111,7 +121,7 @@ class OutboundClient:
             self._logger,
             "hub.reply_sent",
             session_key=session_key,
-            reply_len=len(str(reply_content)),
+            reply_len=len(str(content)),
             elapsed_ms=elapsed_ms(started_at),
         )
 
@@ -130,23 +140,6 @@ class OutboundClient:
 
     async def aclose(self) -> None:
         await self._client.aclose()
-
-
-def _parse_llm_reply(raw: str) -> tuple[str | list[dict[str, Any]], bool]:
-    """解析 LLM 输出的 {"reply":..., "auto_escape":...} JSON。
-
-    返回 (reply_content, auto_escape)。reply_content 可以是纯文本字符串或消息段数组。
-    解析失败时整体退化为纯文本。
-    """
-    try:
-        parsed = json.loads(raw)
-        if isinstance(parsed, dict) and "reply" in parsed:
-            reply_content = parsed["reply"]
-            auto_escape = bool(parsed.get("auto_escape", False))
-            return reply_content, auto_escape
-    except (json.JSONDecodeError, TypeError):
-        pass
-    return raw, False
 
 
 def _message_to_wire(content: str | list[dict[str, Any]]) -> list[dict[str, Any]]:

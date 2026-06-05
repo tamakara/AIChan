@@ -9,6 +9,27 @@ class HealthResponse(BaseModel):
     status: str = "ok"
 
 
+class UserInfoResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    ok: bool
+    data: dict[str, Any]
+
+
+class MessageHistoryData(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    messages: list[dict[str, Any]]
+    next_before_message_id: int | None
+
+
+class MessageHistoryResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    ok: bool
+    data: MessageHistoryData
+
+
 class AgentInboundEvent(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -36,8 +57,9 @@ class SessionChatRequest(BaseModel):
 
 
 class SessionChatResponse(BaseModel):
-    """agent-service 返回的纯文本回复，由 hub 负责 OneBot v11 格式化。"""
+    """agent-service 返回的已解析 OneBot v11 回复。"""
 
     model_config = ConfigDict(extra="forbid")
 
-    reply: str
+    reply: str | list[dict[str, Any]]
+    auto_escape: bool = False

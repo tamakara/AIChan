@@ -13,7 +13,8 @@ def _base_settings_payload() -> dict:
             "temperature": 0.3,
             "openai_api_key": "k",
             "openai_base_url": "https://example.com/v1",
-            "openai_timeout": 30.0,
+            "llm_timeout": 30.0,
+            "llm_max_retries": 0,
             "mcp_sse_url": "http://mcp:9000/sse",
             "mcp_auth_token": "",
             "langfuse": {

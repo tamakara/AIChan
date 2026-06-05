@@ -2,7 +2,7 @@
 
 ## 1. 协议定位
 
-AICHAN 全链路使用 OneBot v11 原生 JSON 格式，不做二次转换。`hub-service` 透传 OneBot v11 事件给 `agent-service`，`agent-service` 的 LLM 直接输出 OneBot v11 消息段数组作为回复。
+AICHAN 全链路使用 OneBot v11 原生 JSON 格式。`hub-service` 透传 OneBot v11 事件给 `agent-service`，`agent-service` 解析 LLM 最终 JSON 为 `reply/auto_escape`，`hub-service` 只负责把结构化回复投递给 NapCat。
 
 ## 2. 输入格式（事件）
 
@@ -40,7 +40,7 @@ agent-service 的 LLM 被指示直接输出如下结构：
 
 | 字段 | 类型 | 说明 |
 |------|------|------|
-| `reply` | `list[dict]` | OneBot v11 消息段数组，与输入 `message` 字段格式一致 |
+| `reply` | `str | list[dict]` | 回复内容；字符串会转为 OneBot `text` 段，数组则按消息段透传 |
 | `auto_escape` | `bool` | 是否作为纯文本发送（不解析 CQ 码），默认 `false` |
 
 ### 消息段类型

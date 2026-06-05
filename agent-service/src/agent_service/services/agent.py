@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
+from typing import Any
 
 from ..logger import elapsed_ms, start_timer
 from .llm_client import LlmClient
@@ -9,11 +11,17 @@ from .observability import Observability
 from .session import Session, SessionInterrupted
 
 
+@dataclass(frozen=True)
+class AgentReply:
+    reply: str | list[dict[str, Any]]
+    auto_escape: bool
+
+
 class Agent:
     """可复用的 Agent 单例，对 Session 执行推理。
 
     Agent 持有共享的 LLM 客户端、MCP 网关与可观测性实例，
-    通过 run(session, ...) 在指定会话上执行 turn-loop，返回纯文本回复。
+    通过 run(session, ...) 在指定会话上执行 turn-loop，返回结构化回复。
     """
 
     def __init__(
@@ -34,8 +42,8 @@ class Agent:
     # 会话执行
     # ------------------------------------------------------------------
 
-    def run(self, session: Session, user_message: str) -> str:
-        """在指定 Session 上执行一轮推理循环，返回纯文本回复。
+    def run(self, session: Session, user_message: str) -> AgentReply:
+        """在指定 Session 上执行一轮推理循环，返回 OneBot v11 回复结构。
 
         每次 run 开始时清除 interrupt 标记。
         LLM 返回后若检测到中断标记，抛 SessionInterrupted 且不写入上下文。
@@ -94,11 +102,14 @@ class Agent:
 
                 if llm_response.finish_reason != "tool_calls":
                     if llm_response.finish_reason == "stop":
-                        reply = llm_response.content
+                        reply = _parse_agent_reply(llm_response.content)
                         duration_ms = elapsed_ms(run_started_at)
                         self._observability.finish_run_success(
                             run=run_trace,
-                            output=reply,
+                            output={
+                                "reply": reply.reply,
+                                "auto_escape": reply.auto_escape,
+                            },
                             duration_ms=duration_ms,
                         )
                         return reply
@@ -170,3 +181,27 @@ class Agent:
                 duration_ms=duration_ms,
             )
             raise
+
+
+def _parse_agent_reply(raw: str) -> AgentReply:
+    """把 LLM 最终输出收敛为唯一 HTTP 契约。
+
+    业务上允许模型最终输出 JSON 对象；一旦格式偏离，就退化为纯文本消息，
+    避免把解析职责泄漏给 hub-service，保证消息编排层只处理已确认的 OneBot 回复。
+    """
+    try:
+        parsed = json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        return AgentReply(reply=raw, auto_escape=False)
+
+    if not isinstance(parsed, dict) or "reply" not in parsed:
+        return AgentReply(reply=raw, auto_escape=False)
+
+    reply = parsed["reply"]
+    if isinstance(reply, str):
+        return AgentReply(reply=reply, auto_escape=bool(parsed.get("auto_escape", False)))
+    if isinstance(reply, dict):
+        return AgentReply(reply=[reply], auto_escape=bool(parsed.get("auto_escape", False)))
+    if isinstance(reply, list) and all(isinstance(item, dict) for item in reply):
+        return AgentReply(reply=reply, auto_escape=bool(parsed.get("auto_escape", False)))
+    return AgentReply(reply=raw, auto_escape=False)

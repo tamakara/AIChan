@@ -101,7 +101,7 @@ def test_langfuse_observability_records_root_generation_tool_and_finish() -> Non
     observability = LangfuseObservability(settings=_settings(), client=client)
 
     run = observability.start_run(
-        agent_id="agent_1",
+        session_id="agent_1",
         message_count=2,
         max_turns=5,
         agent_metadata={"session_id": "private_1"},
@@ -126,13 +126,12 @@ def test_langfuse_observability_records_root_generation_tool_and_finish() -> Non
         duration_ms=7,
         output='{"ok":true}',
     )
-    observability.finish_run_success(run=run, reply="done", duration_ms=20)
+    observability.finish_run_success(run=run, output="done", duration_ms=20)
     observability.flush(timeout_seconds=0.2)
 
     assert len(client.roots) == 1
     root = client.roots[0]
     assert root.name == "agent.chat.run"
-    assert root.metadata["agent_id"] == "agent_1"
     assert root.metadata["message_count"] == 2
     assert root.metadata["agent_metadata"] == {"session_id": "private_1"}
     assert len(root.children) == 2
@@ -146,7 +145,7 @@ def test_langfuse_observability_failures_are_swallowed() -> None:
     observability = LangfuseObservability(settings=_settings(), client=FailingLangfuseClient())
 
     run = observability.start_run(
-        agent_id="agent_1",
+        session_id="agent_1",
         message_count=1,
         max_turns=3,
         agent_metadata={},

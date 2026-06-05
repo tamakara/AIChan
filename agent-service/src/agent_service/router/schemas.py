@@ -24,11 +24,12 @@ class ChatRequest(BaseModel):
 
 
 class ChatResponse(BaseModel):
-    """agent 返回纯文本，由 hub-service 负责 OneBot v11 格式化。"""
+    """agent 返回已解析的 OneBot v11 回复，由 hub-service 直接投递。"""
 
     model_config = ConfigDict(extra="forbid")
 
-    reply: str
+    reply: str | list[dict[str, Any]]
+    auto_escape: bool = False
 
 
 class HealthResponse(BaseModel):

@@ -19,7 +19,7 @@ class StubLlmClient:
         self.calls.append(messages)
         if self.fail:
             raise RuntimeError("stub failure")
-        reply = self.output if self.output is not None else "ok"
+        reply = self.output if self.output is not None else '{"reply": "ok", "auto_escape": false}'
         return LlmResponse(content=reply, tool_calls=[], finish_reason="stop")
 
 
@@ -84,7 +84,7 @@ def test_create_session_without_metadata_defaults_to_empty_dict() -> None:
     assert response.status_code == 200
     payload = response.json()
     assert isinstance(payload["session_id"], str)
-    assert payload["metadata"] == {}
+    assert payload["metadata"] == {"session_id": payload["session_id"]}
 
 
 def test_delete_session() -> None:
@@ -141,20 +141,23 @@ def test_chat_uses_existing_session_and_injects_context() -> None:
     )
 
     assert response.status_code == 200
-    assert response.json()["batch"] == "ok"
+    assert response.json() == {"reply": "ok", "auto_escape": False}
     assert len(llm_client.calls) == 1
 
     called_messages = llm_client.calls[0]
     assert called_messages[-1]["content"] == "hello"
 
-    # 只有一条 system 消息（SYSTEM_PROMPT，不再有 session_start 标签）
-    assert len(called_messages) == 2
+    # Session 内保留角色提示词和会话信息两条 system 消息，再追加用户消息。
+    assert len(called_messages) == 3
     assert called_messages[0]["role"] == "system"
-    assert called_messages[1]["role"] == "user"
+    assert called_messages[1]["role"] == "system"
+    assert called_messages[2]["role"] == "user"
 
-    persisted_messages = registry.get(session_id).get_messages()  # type: ignore[union-attr]
-    assert len(persisted_messages) == 3
-    assert persisted_messages[2]["role"] == "assistant"
+    session = registry.get(session_id)
+    assert session is not None
+    persisted_messages = session._context.messages  # noqa: SLF001
+    assert len(persisted_messages) == 4
+    assert persisted_messages[3]["role"] == "assistant"
 
 
 def test_chat_reuses_existing_session() -> None:
@@ -180,9 +183,9 @@ def test_chat_reuses_existing_session() -> None:
     second_call_roles = [msg["role"] for msg in llm_client.calls[1]]
     second_call_contents = [str(msg["content"]) for msg in llm_client.calls[1]]
 
-    assert second_call_roles == ["system", "user", "assistant", "user"]
+    assert second_call_roles == ["system", "system", "user", "assistant", "user"]
     assert first_user_xml in second_call_contents
-    assert "ok" in second_call_contents
+    assert '{"reply": "ok", "auto_escape": false}' in second_call_contents
 
 
 def test_chat_returns_500_when_agent_fails() -> None:

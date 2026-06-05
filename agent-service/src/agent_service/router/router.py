@@ -78,7 +78,7 @@ def create_router(
                 logger,
                 "agent.chat_completed",
                 session_id=req.session_id,
-                reply_len=len(reply),
+                reply_len=len(str(reply.reply)),
                 elapsed_ms=elapsed_ms(request_started_at),
             )
         except SessionInterrupted:
@@ -91,6 +91,6 @@ def create_router(
                 elapsed_ms=elapsed_ms(request_started_at),
             )
             raise HTTPException(status_code=500, detail=str(exc)) from exc
-        return ChatResponse(reply=reply)
+        return ChatResponse(reply=reply.reply, auto_escape=reply.auto_escape)
 
     return router

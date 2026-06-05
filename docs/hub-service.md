@@ -2,9 +2,9 @@
 
 ## 1. 模块定位
 
-`hub-service` 是会话编排中枢：通过 NapCat WebSocket 接收 OneBot v11 事件，按 `session_key` 做防抖合并与串行调度，调用 `agent-service` 生成回复，再通过 NapCat WS 发送回复。
+`hub-service` 是会话编排中枢：通过唯一的 NapCat WebSocket 接收 OneBot v11 事件，按 `session_key` 做防抖合并与串行调度，调用 `agent-service` 生成回复，再通过同一条 NapCat WS 发送回复。
 
-不负责 QQ 协议接入（由 NapCat 完成），不参与 LLM 推理（由 `agent-service` 完成）。
+不负责 QQ 协议接入（由 NapCat 完成），不参与 LLM 推理（由 `agent-service` 完成）。QQ 历史消息和用户信息查询也统一经过 hub-service，供 `napcat-mcp-server` 的 MCP 工具调用。
 
 ## 2. 接口契约
 
@@ -12,6 +12,10 @@
 
 - `GET /healthz`
   - 响应：`{"status":"ok"}`
+- `GET /api/v1/user/{user_id}/info`
+  - 通过 NapCat `get_stranger_info` 动作查询用户信息
+- `GET /api/v1/message/history?message_type=private|group&peer_id=...`
+  - 通过 NapCat 历史消息动作查询私聊或群聊记录
 
 ### 2.2 对外消费（WebSocket）
 
@@ -30,6 +34,7 @@
   - `send_private_msg(user_id, message, auto_escape)`
   - `send_group_msg(group_id, message, auto_escape)`
 - `message` 和 `auto_escape` 直接来自 agent-service 的 `reply` 和 `auto_escape` 字段
+- 通过同一套 `send_action` 执行 QQ 查询动作，避免 MCP 服务单独维护 NapCat 连接
 
 ## 3. 核心数据模型
 
@@ -70,7 +75,7 @@
 ```
 
 关键规则：
-- 正在运行时新消息只入队不打断
+- 正在运行时新消息会入队，并调用 agent-service 的 interrupt 端点终止旧 run 后续写入
 - 运行结束后检查是否有新消息，有则重跑
 - 重跑前重新等待完整防抖窗口
 
@@ -88,7 +93,7 @@
 
 ## 6. 回复透传
 
-hub-service 不修改 agent 返回的内容：
+hub-service 不解析 LLM 输出，只把 agent-service 已解析的回复转为 NapCat 动作：
 
 ```
 agent 返回: {reply: [...], auto_escape: false}
@@ -100,3 +105,4 @@ hub 透传:   send_msg({message: reply, auto_escape: auto_escape})
 - 会话状态全内存：不支持多副本和重启恢复
 - 下游 HTTP `timeout=None`：避免误超时，但缺少硬超时保护
 - 高频连发若持续未达静默窗口，会延后触发 agent
+- NapCat WS 是单连接内存状态，当前部署目标是单实例
