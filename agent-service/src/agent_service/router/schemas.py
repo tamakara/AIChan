@@ -20,16 +20,15 @@ class ChatRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     session_id: str = Field(min_length=1)
-    batch: str = Field(min_length=1)
+    input_xml: str = Field(min_length=1)
 
 
 class ChatResponse(BaseModel):
-    """agent 返回已解析的 OneBot v11 回复，由 hub-service 直接投递。"""
+    """agent 返回 AICHAN XML 回复，由 hub-service 转为 QQ 私聊消息。"""
 
     model_config = ConfigDict(extra="forbid")
 
-    reply: str | list[dict[str, Any]]
-    auto_escape: bool = False
+    output_xml: str = Field(min_length=1)
 
 
 class HealthResponse(BaseModel):

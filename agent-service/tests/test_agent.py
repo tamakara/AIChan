@@ -14,7 +14,7 @@ class StubLlmClient:
 
     def generate(self, messages, tools_schema, temperature) -> LlmResponse:
         self.calls.append((messages, tools_schema, temperature))
-        return LlmResponse(content='{"reply": "ok", "auto_escape": false}', tool_calls=[], finish_reason="stop")
+        return LlmResponse(content="<reply><text>ok</text></reply>", tool_calls=[], finish_reason="stop")
 
 
 class BlockingLlmClient:
@@ -29,7 +29,7 @@ class BlockingLlmClient:
         self.calls.append(messages)
         if len(self.calls) == 1:
             self._block_event.wait()
-        return LlmResponse(content='{"reply": "ok", "auto_escape": false}', tool_calls=[], finish_reason="stop")
+        return LlmResponse(content="<reply><text>ok</text></reply>", tool_calls=[], finish_reason="stop")
 
 
 class StubMcpGateway:
@@ -98,8 +98,19 @@ def test_agent_run_session() -> None:
         user_message="hello",
     )
 
-    assert reply.reply == "ok"
-    assert reply.auto_escape is False
+    assert reply.output_xml == "<reply><text>ok</text></reply>"
+
+
+def test_session_info_contains_metadata() -> None:
+    registry = _build_registry()
+    session = registry.create(metadata={"platform": "qq", "user_id": 1, "self_id": 10001})
+
+    assert session._context.messages[1]["content"] == (  # noqa: SLF001
+        "<session_info><session_id>"
+        f"{session.session_id}"
+        "</session_id><platform>qq</platform><user_id>1</user_id>"
+        "<self_id>10001</self_id></session_info>"
+    )
 
 
 def test_run_session_interrupted_by_registry_signal() -> None:

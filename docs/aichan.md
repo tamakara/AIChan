@@ -2,7 +2,7 @@
 
 ## 1. 系统定位
 
-AICHAN 是一个基于 OneBot v11 协议的三层消息机器人系统：NapCat 接入 QQ 消息 → `hub-service` 会话编排与 QQ 动作出口 → `agent-service` LLM 推理 → 回复透传回 QQ。
+AICHAN 是一个基于 NapCat + OneBot v11 接入的 QQ 私聊助理系统：NapCat 接入 QQ 消息 → `hub-service` 做白名单、XML 转换、会话编排与 QQ 动作出口 → `agent-service` LLM 推理 → 回复回 QQ。
 
 不依赖 Redis 等中间件，服务间直接通过 HTTP + WebSocket 通信。
 
@@ -19,8 +19,8 @@ AICHAN 是一个基于 OneBot v11 协议的三层消息机器人系统：NapCat 
 |------|------|------|
 | `napcat` | OneBot v11 QQ 客户端，收发消息 | 6099 (WebUI) |
 | `napcat-mcp-server` | 将 QQ 查询能力包装为 MCP 工具，实际查询转发给 hub-service | 内部 |
-| `hub-service` | 会话编排中枢：防抖合并、调用 agent、统一持有 NapCat WS | 8020 |
-| `agent-service` | LLM 推理执行：多轮对话、MCP 工具调用、OneBot v11 回复生成 | 8000 |
+| `hub-service` | 会话编排中枢：私聊白名单、防抖合并、XML 转换、调用 agent、统一持有 NapCat WS | 8020 |
+| `agent-service` | LLM 推理执行：多轮对话、MCP 工具调用、AICHAN XML 回复生成 | 8000 |
 | `mcp-gateway` | MCP 工具网关，聚合 playwright/fetch/time/napcat 工具 | 9000 |
 
 ## 3. 消息数据流
@@ -28,13 +28,15 @@ AICHAN 是一个基于 OneBot v11 协议的三层消息机器人系统：NapCat 
 ```
 [QQ 用户发消息]
   → NapCat OneBot v11 WS 事件 → hub-service 接收
+  → 私聊 + user_id 白名单过滤
   → 按 session_key 防抖合并多轮输入
+  → OneBot v11 私聊事件转换为 <batch>
   → POST /chat → agent-service
   → Agent 多轮 LLM 推理 + MCP 工具调用
-  → LLM 直接输出 {"reply": [...], "auto_escape": false}
-  → agent-service 解析为 HTTP 响应 {reply, auto_escape}
-  → hub-service 直接投递 reply/auto_escape
-  → NapCat WS send_action(send_msg, {message: reply, auto_escape})
+  → LLM 输出 <reply>
+  → agent-service 返回 {output_xml}
+  → hub-service 转换为 OneBot v11 消息段
+  → NapCat WS send_action(send_private_msg)
   → QQ 用户收到回复
 ```
 
@@ -45,7 +47,7 @@ AICHAN 是一个基于 OneBot v11 协议的三层消息机器人系统：NapCat 
 | `agent-service` | `GET /healthz` | 存活探针 |
 | `agent-service` | `POST /sessions` | 创建会话 |
 | `agent-service` | `DELETE /sessions/{id}` | 删除会话 |
-| `agent-service` | `POST /chat` | 发送消息，返回 OneBot v11 回复 |
+| `agent-service` | `POST /chat` | 发送 `<batch>`，返回 `<reply>` |
 | `hub-service` | `GET /healthz` | 存活探针 |
 | `hub-service` | `GET /api/v1/user/{id}/info` | QQ 用户信息查询，供 MCP 工具调用 |
 | `hub-service` | `GET /api/v1/message/history` | QQ 历史消息查询，供 MCP 工具调用 |
@@ -54,18 +56,15 @@ AICHAN 是一个基于 OneBot v11 协议的三层消息机器人系统：NapCat 
 
 请求：
 ```json
-{"session_id": "uuid", "batch": "[{\"post_type\":\"message\",...}]"}
+{"session_id": "uuid", "input_xml": "<batch>...</batch>"}
 ```
 
 响应：
 ```json
-{
-  "reply": [{"type": "text", "data": {"text": "笨蛋，找我有什么事喵？"}}],
-  "auto_escape": false
-}
+{"output_xml": "<reply><text>笨蛋，找我有什么事喵？</text></reply>"}
 ```
 
-`reply` 为 OneBot v11 消息段数组，`auto_escape` 控制是否转义 CQ 码。hub-service 直接将这两个字段透传给 NapCat 的 `send_msg` 动作。
+hub-service 将 `output_xml` 转为 OneBot v11 私聊消息段并发送给当前会话对应的 QQ 用户。
 
 ## 5. 配置
 
@@ -110,6 +109,6 @@ docker compose logs -f hub-service agent-service
 - 会话状态在 `agent-service` 和 `hub-service` 的进程内存中，重启丢失，单实例部署
 - 防抖窗口内合并消息，减少 LLM 调用次数
 - NapCat 只有一条反向 WS 连接，由 `hub-service` 统一持有，避免收发链路和工具查询链路各自维护连接
-- LLM 直接输出 OneBot v11 格式，`agent-service` 在 HTTP 边界解析一次，`hub-service` 只负责投递
+- OneBot v11 复杂性收口在 `hub-service`，agent 只处理 AICHAN XML
 - 错误只在最外层（router）记录，内层直接抛出
 - 可观测性通过 Langfuse 上报，覆盖 LLM generation 和工具调用

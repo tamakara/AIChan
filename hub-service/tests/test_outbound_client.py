@@ -44,17 +44,24 @@ def test_create_session_calls_agent_endpoint() -> None:
         napcat_ws=napcat_ws,  # type: ignore[arg-type]
     )
     client._client = DummyHttpClient(  # type: ignore[attr-defined]
-        [DummyResponse({"session_id": "agent-1", "metadata": {"session_key": "private:1"}})]
+        [
+            DummyResponse(
+                {
+                    "session_id": "agent-1",
+                    "metadata": {"platform": "qq", "user_id": 1, "self_id": 10001},
+                }
+            )
+        ]
     )
 
     agent_session_id = asyncio.run(
-        client.create_session("private:1", {"session_key": "private:1"})
+        client.create_session("private:1", {"platform": "qq", "user_id": 1, "self_id": 10001})
     )
 
     assert agent_session_id == "agent-1"
     called_url, called_payload = client._client.calls[0]  # type: ignore[attr-defined]
     assert called_url == "http://agent-service:8000/sessions"
-    assert called_payload == {"metadata": {"session_key": "private:1"}}
+    assert called_payload == {"metadata": {"platform": "qq", "user_id": 1, "self_id": 10001}}
 
 
 def test_call_session_returns_structured_reply() -> None:
@@ -63,17 +70,16 @@ def test_call_session_returns_structured_reply() -> None:
         napcat_ws=StubNapcatWs(),  # type: ignore[arg-type]
     )
     client._client = DummyHttpClient(  # type: ignore[attr-defined]
-        [DummyResponse({"reply": [{"type": "text", "data": {"text": "ok!"}}], "auto_escape": False})]
+        [DummyResponse({"output_xml": "<reply><text>ok!</text></reply>"})]
     )
 
-    reply = asyncio.run(client.call_session("private:1", "agent-1", "hello"))
+    reply = asyncio.run(client.call_session("private:1", "agent-1", "<batch />"))
 
     assert reply is not None
-    assert reply.content == [{"type": "text", "data": {"text": "ok!"}}]
-    assert reply.auto_escape is False
+    assert reply.output_xml == "<reply><text>ok!</text></reply>"
     called_url, called_payload = client._client.calls[0]  # type: ignore[attr-defined]
     assert called_url == "http://agent-service:8000/chat"
-    assert called_payload == {"session_id": "agent-1", "batch": "hello"}
+    assert called_payload == {"session_id": "agent-1", "input_xml": "<batch />"}
 
 
 def test_call_session_invalid_response_raises() -> None:
@@ -94,7 +100,7 @@ def test_send_reply_sends_private_message_action() -> None:
         napcat_ws=napcat_ws,  # type: ignore[arg-type]
     )
 
-    asyncio.run(client.send_reply("private:1", "hello!", auto_escape=False))
+    asyncio.run(client.send_reply("private:1", "<reply><text>hello!</text></reply>"))
 
     assert napcat_ws.actions == [
         (
@@ -106,3 +112,15 @@ def test_send_reply_sends_private_message_action() -> None:
             },
         )
     ]
+
+
+def test_send_reply_ignores_empty_reply() -> None:
+    napcat_ws = StubNapcatWs()
+    client = OutboundClient(
+        agent_service_url="http://agent-service:8000",
+        napcat_ws=napcat_ws,  # type: ignore[arg-type]
+    )
+
+    asyncio.run(client.send_reply("private:1", "<reply />"))
+
+    assert napcat_ws.actions == []

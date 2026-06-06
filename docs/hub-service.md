@@ -2,9 +2,9 @@
 
 ## 1. 模块定位
 
-`hub-service` 是会话编排中枢：通过唯一的 NapCat WebSocket 接收 OneBot v11 事件，按 `session_key` 做防抖合并与串行调度，调用 `agent-service` 生成回复，再通过同一条 NapCat WS 发送回复。
+`hub-service` 是 QQ 私聊会话编排中枢：通过唯一的 NapCat WebSocket 接收 OneBot v11 事件，按内部 `session_key` 做防抖合并与串行调度，调用 `agent-service` 生成 XML 回复，再通过同一条 NapCat WS 发送私聊消息。
 
-不负责 QQ 协议接入（由 NapCat 完成），不参与 LLM 推理（由 `agent-service` 完成）。QQ 历史消息和用户信息查询也统一经过 hub-service，供 `napcat-mcp-server` 的 MCP 工具调用。
+OneBot v11 复杂性只停留在本服务边界。agent-service 不接收原始 OneBot 事件，也不直接输出 OneBot 消息段。
 
 ## 2. 接口契约
 
@@ -15,67 +15,72 @@
 - `GET /api/v1/user/{user_id}/info`
   - 通过 NapCat `get_stranger_info` 动作查询用户信息
 - `GET /api/v1/message/history?message_type=private|group&peer_id=...`
-  - 通过 NapCat 历史消息动作查询私聊或群聊记录
+  - 通过 NapCat 历史消息动作查询私聊或群聊记录，供 MCP 工具调用
 
 ### 2.2 对外消费（WebSocket）
 
 - 连接 NapCat 反向 WS，接收 OneBot v11 事件
-- 按 `allowed_message_types` 过滤（默认仅 `private`）
-- 事件进入 `SessionRunner` 按 `session_key` 路由
+- 固定只处理 `post_type=message` 且 `message_type=private`
+- `user_id` 必须存在于 `hub.allowed_user_ids`
+- 白名单为空时全部忽略，不创建会话
 
 ### 2.3 对外消费（HTTP → agent-service）
 
-- `POST {agent_url}/sessions` — 创建 agent 会话
-- `POST {agent_url}/chat` — 发送消息批次，接收 OneBot v11 回复
+- `POST {agent_url}/sessions` — 创建 agent 会话，metadata 包含 `platform/user_id/self_id`
+- `POST {agent_url}/chat` — 发送 `<batch>` XML，接收 `<reply>` XML
+- `POST {agent_url}/sessions/{session_id}/interrupt` — 同一会话运行中收到新消息时中断旧 run
 
 ### 2.4 对外产出（WebSocket → NapCat）
 
-- 通过 NapCat WS `send_action` 发送 OneBot v11 动作：
-  - `send_private_msg(user_id, message, auto_escape)`
-  - `send_group_msg(group_id, message, auto_escape)`
-- `message` 和 `auto_escape` 直接来自 agent-service 的 `reply` 和 `auto_escape` 字段
-- 通过同一套 `send_action` 执行 QQ 查询动作，避免 MCP 服务单独维护 NapCat 连接
+- 通过 NapCat WS `send_action` 发送 `send_private_msg`
+- `message` 由 `<reply>` 转换为 OneBot v11 消息段数组
+- `auto_escape` 固定为 `false`
 
 ## 3. 核心数据模型
 
 ### 3.1 会话键（`session_key`）
 
 - 私聊：`private:<user_id>`
-- 群聊：`group:<group_id>`
+- 仅用于 hub-service 内部路由和回发目标，不传给 agent-service metadata
 
-### 3.2 SessionRunner
-
-单个会话的运行器，核心状态：
-
-| 状态 | 说明 |
-|------|------|
-| `pending_events` | 待处理事件队列 |
-| `running` | 是否正在执行 agent 调用 |
-| `debounce_deadline` | 防抖窗口截止时间 |
-| `_lock` | 异步锁，保证串行 |
-
-### 3.3 SessionRegistry
+### 3.2 SessionRegistry
 
 - `session_key → SessionRunner` 映射
 - `session_key → agent_session_id` 映射
-- 首次看到新 `session_key`：调用 `/sessions` 创建 agent 会话，再创建 runner
-- 后续同会话复用同一 `agent_session_id`
+- 首次看到白名单内私聊用户：调用 `/sessions` 创建 agent 会话，再创建 runner
+- 创建 agent 会话时传入：
+
+```json
+{
+  "platform": "qq",
+  "user_id": 123456,
+  "self_id": 10001
+}
+```
+
+### 3.3 XML 转换
+
+- `onebot_private_events_to_input_xml(events)`：把防抖批次转换为 `<batch>`
+- `reply_xml_to_onebot_segments(xml)`：把 `<reply>` 转换为 OneBot v11 私聊消息段
+- 转换层丢弃 `raw_message`、`font`、群字段和无关 sender 字段
 
 ## 4. 防抖调度流程
 
 ```
-事件到达 → 入队 pending_events → 重置 debounce_deadline
+事件到达 → 私聊 + 白名单过滤 → 入队 pending_events
+  → 重置 debounce_deadline
   → 防抖静默窗口等待
   → 窗口内无新消息 → 提取批次
-  → POST /chat（透传 OneBot v11 事件 JSON）
-  → 收到 {reply, auto_escape}
-  → send_action(send_msg, {message: reply, auto_escape})
+  → 转换为 <batch>
+  → POST /chat({input_xml})
+  → 收到 {output_xml}
+  → 转换为 OneBot 消息段并 send_private_msg
   → 仍有 pending → 重置窗口重跑
   → 无 pending → 会话空闲
 ```
 
 关键规则：
-- 正在运行时新消息会入队，并调用 agent-service 的 interrupt 端点终止旧 run 后续写入
+- 正在运行时新消息会入队，并调用 agent-service interrupt 端点终止旧 run 后续写入
 - 运行结束后检查是否有新消息，有则重跑
 - 重跑前重新等待完整防抖窗口
 
@@ -88,21 +93,13 @@
 | `server.log_level` | str | 日志级别 |
 | `hub.agent_url` | str | agent-service 地址 |
 | `hub.debounce_seconds` | float | 防抖窗口（秒） |
-| `hub.allowed_message_types` | list[str] | 放行的消息类型（`private`/`group`） |
+| `hub.allowed_user_ids` | list[int] | 允许对话的 QQ 用户 ID；空数组表示全部忽略 |
 | `napcat.ws_action_timeout_seconds` | int | NapCat 动作超时（秒） |
 
-## 6. 回复透传
-
-hub-service 不解析 LLM 输出，只把 agent-service 已解析的回复转为 NapCat 动作：
-
-```
-agent 返回: {reply: [...], auto_escape: false}
-hub 透传:   send_msg({message: reply, auto_escape: auto_escape})
-```
-
-## 7. 设计权衡
+## 6. 设计权衡
 
 - 会话状态全内存：不支持多副本和重启恢复
+- 入口只支持 QQ 私聊，群聊作为后续独立入口再扩展
 - 下游 HTTP `timeout=None`：避免误超时，但缺少硬超时保护
 - 高频连发若持续未达静默窗口，会延后触发 agent
 - NapCat WS 是单连接内存状态，当前部署目标是单实例

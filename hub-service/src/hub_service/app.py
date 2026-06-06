@@ -14,7 +14,7 @@ def create_app() -> FastAPI:
         logger,
         "hub_app.boot",
         agent_url=settings.hub.agent_url,
-        allowed_message_types=list(settings.hub.allowed_message_types),
+        allowed_user_ids=list(settings.hub.allowed_user_ids),
     )
 
     # WS 连接状态与网关
@@ -22,7 +22,7 @@ def create_app() -> FastAPI:
     napcat_ws_gateway = NapcatWsGateway(
         connection_state=napcat_connection_state,
         action_timeout_seconds=settings.napcat.ws_action_timeout_seconds,
-        allowed_message_types=set(settings.hub.allowed_message_types),
+        allowed_user_ids=set(settings.hub.allowed_user_ids),
     )
 
     # 下游通信与会话管理

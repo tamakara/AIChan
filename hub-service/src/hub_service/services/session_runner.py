@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 import asyncio
-import json
 from collections.abc import Awaitable, Callable
 
 from ..logger import elapsed_ms, get_logger, log_exception, log_info, start_timer
 from ..router.schemas import AgentInboundEvent
+from .message_xml import onebot_private_events_to_input_xml
 from .outbound_client import OutboundClient
 
 IdleCallback = Callable[[str, "SessionRunner"], Awaitable[None]]
@@ -118,9 +118,8 @@ class SessionRunner:
 
     async def _run_once(self, events: list[AgentInboundEvent]) -> None:
         run_started_at = start_timer()
-        # 透传 OneBot v11 原始 JSON 给 agent
         raw_events = [e.event for e in events]
-        message_text = json.dumps(raw_events, ensure_ascii=False)
+        input_xml = onebot_private_events_to_input_xml(raw_events)
 
         log_info(
             self._logger,
@@ -133,22 +132,21 @@ class SessionRunner:
             reply = await self._outbound_client.call_session(
                 hub_session_key=self._session_key,
                 agent_session_id=self._agent_session_id,
-                text=message_text,
+                input_xml=input_xml,
             )
             if reply is None:
                 # 被中断，不发送回复
                 return
             await self._outbound_client.send_reply(
                 session_key=self._session_key,
-                content=reply.content,
-                auto_escape=reply.auto_escape,
+                output_xml=reply.output_xml,
             )
             log_info(
                 self._logger,
                 "hub.session_run_completed",
                 session_key=self._session_key,
                 agent_id=self._agent_session_id,
-                reply_len=len(str(reply.content)),
+                reply_len=len(reply.output_xml),
                 elapsed_ms=elapsed_ms(run_started_at),
             )
         except Exception:

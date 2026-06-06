@@ -1,10 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
 
 import httpx
-from nonebot.adapters.onebot.v11 import Message, MessageSegment
 
 from ..logger import elapsed_ms, get_logger, log_info, start_timer
 from ..router.schemas import (
@@ -13,13 +11,13 @@ from ..router.schemas import (
     SessionChatRequest,
     SessionChatResponse,
 )
+from .message_xml import reply_xml_to_onebot_segments
 from .napcat_ws import NapcatWsGateway
 
 
 @dataclass(frozen=True)
 class AgentReply:
-    content: str | list[dict[str, Any]]
-    auto_escape: bool
+    output_xml: str
 
 
 class OutboundClient:
@@ -64,13 +62,13 @@ class OutboundClient:
         self,
         hub_session_key: str,
         agent_session_id: str,
-        text: str,
+        input_xml: str,
     ) -> AgentReply | None:
         """向 agent-service 发送消息，返回已解析的回复。被中断返回 None。"""
         started_at = start_timer()
         payload = SessionChatRequest(
             session_id=agent_session_id,
-            batch=text,
+            input_xml=input_xml,
         )
         try:
             data = await self._post_json(f"{self._agent_service_url}/chat", payload.model_dump())
@@ -92,36 +90,32 @@ class OutboundClient:
             status="ok",
             elapsed_ms=elapsed_ms(started_at),
         )
-        return AgentReply(content=response.reply, auto_escape=response.auto_escape)
+        return AgentReply(output_xml=response.output_xml)
 
     async def send_reply(
         self,
         session_key: str,
-        content: str | list[dict[str, Any]],
-        auto_escape: bool,
+        output_xml: str,
     ) -> None:
-        """将 agent-service 返回的回复转为 OneBot v11 动作并发送。"""
+        """将 agent-service 返回的 AICHAN XML 回复转为 OneBot v11 私聊动作。"""
         started_at = start_timer()
+        message = reply_xml_to_onebot_segments(output_xml)
+        if not message:
+            return
 
-        message = _message_to_wire(content)
-
-        if session_key.startswith("group:"):
-            group_id = int(session_key.split(":", 1)[1])
-            action = "send_group_msg"
-            params = {"group_id": group_id, "message": message, "auto_escape": auto_escape}
-        elif session_key.startswith("private:"):
-            user_id = int(session_key.split(":", 1)[1])
-            action = "send_private_msg"
-            params = {"user_id": user_id, "message": message, "auto_escape": auto_escape}
-        else:
+        if not session_key.startswith("private:"):
             raise ValueError(f"invalid session_key: {session_key}")
+
+        user_id = int(session_key.split(":", 1)[1])
+        action = "send_private_msg"
+        params = {"user_id": user_id, "message": message, "auto_escape": False}
 
         await self._napcat_ws.send_action(action=action, params=params)
         log_info(
             self._logger,
             "hub.reply_sent",
             session_key=session_key,
-            reply_len=len(str(content)),
+            reply_len=len(output_xml),
             elapsed_ms=elapsed_ms(started_at),
         )
 
@@ -140,18 +134,3 @@ class OutboundClient:
 
     async def aclose(self) -> None:
         await self._client.aclose()
-
-
-def _message_to_wire(content: str | list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """将 reply 内容转为 OneBot v11 消息段数组（JSON 可序列化）。"""
-    if isinstance(content, str):
-        msg = Message(content)
-    elif isinstance(content, list):
-        segments = [
-            MessageSegment(type=seg["type"], data=seg["data"])
-            for seg in content
-        ]
-        msg = Message(segments)
-    else:
-        msg = Message(str(content))
-    return [{"type": seg.type, "data": seg.data} for seg in msg]

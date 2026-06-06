@@ -20,21 +20,20 @@ class StubOutboundClient:
         return
 
     async def call_session(
-        self, hub_session_key: str, agent_session_id: str, text: str
+        self, hub_session_key: str, agent_session_id: str, input_xml: str
     ) -> AgentReply | None:
         self.session_call_started_ats.append(asyncio.get_running_loop().time())
-        self.session_calls.append((hub_session_key, agent_session_id, text))
+        self.session_calls.append((hub_session_key, agent_session_id, input_xml))
         delay = self.call_delays.pop(0) if self.call_delays else 0.05
         await asyncio.sleep(delay)
-        return AgentReply(content=f"reply:{text}", auto_escape=False)
+        return AgentReply(output_xml=f"<reply><text>reply:{input_xml}</text></reply>")
 
     async def send_reply(
         self,
         session_key: str,
-        content: str | list[dict],
-        auto_escape: bool,
+        output_xml: str,
     ) -> None:
-        self.replies.append((session_key, content, auto_escape))
+        self.replies.append((session_key, output_xml, False))
 
 
 def _event(user_id: int, content: str) -> dict:
@@ -67,12 +66,14 @@ def test_debounce_merges_messages_for_same_session() -> None:
 
     asyncio.run(run())
 
-    assert outbound.create_calls == [("private:1", {"session_key": "private:1"})]
+    assert outbound.create_calls == [
+        ("private:1", {"platform": "qq", "user_id": 1, "self_id": 10001})
+    ]
     assert len(outbound.session_calls) == 1
     assert outbound.session_calls[0][0] == "private:1"
     assert outbound.session_calls[0][1] == "agent-private:1"
-    assert '"message_id": "a"' in outbound.session_calls[0][2]
-    assert '"message_id": "b"' in outbound.session_calls[0][2]
+    assert '<batch><message id="a"' in outbound.session_calls[0][2]
+    assert '<message id="b"' in outbound.session_calls[0][2]
     assert outbound.replies[0][0] == "private:1"
     assert state["runner_count"] == 0
 
@@ -96,9 +97,9 @@ def test_running_session_triggers_followup_batch() -> None:
     asyncio.run(run())
 
     assert len(outbound.session_calls) == 2
-    assert '"message_id": "first"' in outbound.session_calls[0][2]
-    assert '"message_id": "second"' in outbound.session_calls[1][2]
-    assert '"message_id": "third"' in outbound.session_calls[1][2]
+    assert '<message id="first"' in outbound.session_calls[0][2]
+    assert '<message id="second"' in outbound.session_calls[1][2]
+    assert '<message id="third"' in outbound.session_calls[1][2]
     assert len(outbound.replies) == 2
 
 

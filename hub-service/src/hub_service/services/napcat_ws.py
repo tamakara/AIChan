@@ -20,13 +20,13 @@ class NapcatWsGateway:
         self,
         connection_state: NapcatConnectionState,
         action_timeout_seconds: float,
-        allowed_message_types: set[str],
+        allowed_user_ids: set[int],
         on_event: OnEventCallback | None = None,
     ) -> None:
         self._logger = get_logger("napcat_ws")
         self._connection_state = connection_state
         self._action_timeout_seconds = action_timeout_seconds
-        self._allowed_message_types = allowed_message_types
+        self._allowed_user_ids = allowed_user_ids
         self._on_event = on_event
         self._pending_actions: dict[str, asyncio.Future[dict[str, Any]]] = {}
         self._pending_lock = asyncio.Lock()
@@ -113,8 +113,11 @@ class NapcatWsGateway:
         if raw_event.get("post_type") != "message":
             return
 
-        message_type = raw_event.get("message_type", "")
-        if message_type not in self._allowed_message_types:
+        if raw_event.get("message_type") != "private":
+            return
+
+        user_id = _to_int(raw_event.get("user_id"))
+        if user_id is None or user_id not in self._allowed_user_ids:
             return
 
         if not _is_valid_event_time(raw_event.get("time")):
@@ -163,11 +166,20 @@ def _is_valid_event_time(value: object) -> bool:
     return False
 
 
+def _to_int(value: object) -> int | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float) and value.is_integer():
+        return int(value)
+    if isinstance(value, str) and value.strip().isdigit():
+        return int(value)
+    return None
+
+
 def get_session_key(event: dict[str, Any]) -> str:
-    """从 OneBot v11 事件中提取会话路由键。"""
-    message_type = event.get("message_type", "")
-    if message_type == "group":
-        return f"group:{event['group_id']}"
-    if message_type == "private":
-        return f"private:{event['user_id']}"
-    raise ValueError(f"unsupported message_type: {message_type}")
+    """从 OneBot v11 私聊事件中提取 hub 内部会话路由键。"""
+    if event.get("message_type") != "private":
+        raise ValueError(f"unsupported message_type: {event.get('message_type', '')}")
+    return f"private:{event['user_id']}"

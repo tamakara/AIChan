@@ -3,6 +3,7 @@ from __future__ import annotations
 from threading import Lock
 from typing import Any
 from uuid import uuid4
+from xml.etree import ElementTree
 
 from .prompts import SYSTEM_PROMPT
 from .types.context import Context
@@ -26,7 +27,7 @@ class Session:
         self._context.add_message(role="system", content=SYSTEM_PROMPT)
         self._context.add_message(
             role="system",
-            content=f"<session_info>当前会话 ID: {session_id}</session_info>",
+            content=_session_info_xml(session_id=session_id, metadata=self._metadata),
         )
 
     def begin_run(self) -> int:
@@ -85,3 +86,13 @@ class SessionRegistry:
                 del self._sessions[session_id]
                 return True
             return False
+
+
+def _session_info_xml(session_id: str, metadata: dict[str, Any]) -> str:
+    root = ElementTree.Element("session_info")
+    ElementTree.SubElement(root, "session_id").text = session_id
+    for key in ("platform", "user_id", "self_id"):
+        value = metadata.get(key)
+        if value is not None:
+            ElementTree.SubElement(root, key).text = str(value)
+    return ElementTree.tostring(root, encoding="unicode", short_empty_elements=True)

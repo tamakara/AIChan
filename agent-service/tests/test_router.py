@@ -19,7 +19,7 @@ class StubLlmClient:
         self.calls.append(messages)
         if self.fail:
             raise RuntimeError("stub failure")
-        reply = self.output if self.output is not None else '{"reply": "ok", "auto_escape": false}'
+        reply = self.output if self.output is not None else "<reply><text>ok</text></reply>"
         return LlmResponse(content=reply, tool_calls=[], finish_reason="stop")
 
 
@@ -115,7 +115,7 @@ def test_chat_returns_404_when_session_not_created() -> None:
 
     response = client.post(
         "/chat",
-        json={"session_id": "not-created", "batch": "hello"},
+        json={"session_id": "not-created", "input_xml": "<batch />"},
     )
 
     assert response.status_code == 404
@@ -137,15 +137,15 @@ def test_chat_uses_existing_session_and_injects_context() -> None:
 
     response = client.post(
         "/chat",
-        json={"session_id": session_id, "batch": "hello"},
+        json={"session_id": session_id, "input_xml": "<batch><message><text>hello</text></message></batch>"},
     )
 
     assert response.status_code == 200
-    assert response.json() == {"reply": "ok", "auto_escape": False}
+    assert response.json() == {"output_xml": "<reply><text>ok</text></reply>"}
     assert len(llm_client.calls) == 1
 
     called_messages = llm_client.calls[0]
-    assert called_messages[-1]["content"] == "hello"
+    assert called_messages[-1]["content"] == "<batch><message><text>hello</text></message></batch>"
 
     # Session 内保留角色提示词和会话信息两条 system 消息，再追加用户消息。
     assert len(called_messages) == 3
@@ -167,11 +167,11 @@ def test_chat_reuses_existing_session() -> None:
 
     first = client.post(
         "/chat",
-        json={"session_id": session_id, "batch": "hello"},
+        json={"session_id": session_id, "input_xml": "<batch><message><text>hello</text></message></batch>"},
     )
     second = client.post(
         "/chat",
-        json={"session_id": session_id, "batch": "again"},
+        json={"session_id": session_id, "input_xml": "<batch><message><text>again</text></message></batch>"},
     )
 
     assert first.status_code == 200
@@ -185,7 +185,7 @@ def test_chat_reuses_existing_session() -> None:
 
     assert second_call_roles == ["system", "system", "user", "assistant", "user"]
     assert first_user_xml in second_call_contents
-    assert '{"reply": "ok", "auto_escape": false}' in second_call_contents
+    assert "<reply><text>ok</text></reply>" in second_call_contents
 
 
 def test_chat_returns_500_when_agent_fails() -> None:
@@ -196,20 +196,35 @@ def test_chat_returns_500_when_agent_fails() -> None:
 
     response = client.post(
         "/chat",
-        json={"session_id": session_id, "batch": "hello"},
+        json={"session_id": session_id, "input_xml": "<batch />"},
     )
 
     assert response.status_code == 500
     assert response.json()["detail"] == "stub failure"
 
 
-def test_chat_returns_422_when_batch_empty() -> None:
+def test_chat_returns_422_when_input_xml_empty() -> None:
     client = build_client(StubLlmClient())
     session_id = _create_session(client)
 
-    response = client.post("/chat", json={"session_id": session_id, "batch": ""})
+    response = client.post("/chat", json={"session_id": session_id, "input_xml": ""})
 
     assert response.status_code == 422
+
+
+def test_chat_wraps_non_xml_llm_output() -> None:
+    llm_client = StubLlmClient()
+    llm_client.output = "plain < text"
+    client = build_client(llm_client=llm_client)
+    session_id = _create_session(client)
+
+    response = client.post(
+        "/chat",
+        json={"session_id": session_id, "input_xml": "<batch />"},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"output_xml": "<reply><text>plain &lt; text</text></reply>"}
 
 
 def test_chat_returns_422_when_legacy_extra_fields_passed() -> None:
@@ -220,6 +235,7 @@ def test_chat_returns_422_when_legacy_extra_fields_passed() -> None:
         "/chat",
         json={
             "session_id": session_id,
+            "input_xml": "<batch />",
             "batch": "hello",
             "messages": [{"user_id": "qq_1", "content": "legacy"}],
             "metadata": {"session_id": "legacy"},

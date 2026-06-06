@@ -1,6 +1,6 @@
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Literal, Mapping
+from typing import Any, Mapping
 
 from pydantic import BaseModel, ConfigDict, StrictInt, StrictStr, ValidationError, field_validator
 import yaml
@@ -21,7 +21,7 @@ class HubSettings(BaseModel):
 
     agent_url: StrictStr
     debounce_seconds: float
-    allowed_message_types: tuple[Literal["private", "group"], ...]
+    allowed_user_ids: tuple[StrictInt, ...]
 
     @field_validator("debounce_seconds", mode="before")
     @classmethod
@@ -30,14 +30,19 @@ class HubSettings(BaseModel):
             raise TypeError("必须是数字")
         return float(value)
 
-    @field_validator("allowed_message_types", mode="before")
+    @field_validator("allowed_user_ids", mode="before")
     @classmethod
-    def _validate_allowed_message_types(cls, value: Any) -> tuple[str, ...]:
+    def _validate_allowed_user_ids(cls, value: Any) -> tuple[int, ...]:
         if not isinstance(value, (list, tuple)):
             raise TypeError("必须是数组")
-        if not value:
-            raise ValueError("至少包含一个 message_type")
-        return tuple(str(item) for item in value)
+        user_ids: list[int] = []
+        for item in value:
+            if isinstance(item, bool) or not isinstance(item, int):
+                raise TypeError("user_id 必须是整数")
+            if item < 1:
+                raise ValueError("user_id 必须为正整数")
+            user_ids.append(item)
+        return tuple(user_ids)
 
 
 class NapcatSettings(BaseModel):

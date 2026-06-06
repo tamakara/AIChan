@@ -2,81 +2,79 @@
 
 ## 1. 协议定位
 
-AICHAN 全链路使用 OneBot v11 原生 JSON 格式。`hub-service` 透传 OneBot v11 事件给 `agent-service`，`agent-service` 解析 LLM 最终 JSON 为 `reply/auto_escape`，`hub-service` 只负责把结构化回复投递给 NapCat。
+AICHAN 在 `hub-service` 与 `agent-service` 之间使用自有 XML 协议。OneBot v11 只存在于 NapCat 接入和 QQ 动作发送边界，`hub-service` 负责把 QQ 私聊事件转换为 `<batch>`，并把 agent 的 `<reply>` 转回 OneBot v11 私聊消息段。
 
-## 2. 输入格式（事件）
+## 2. 输入格式
 
-hub-service 将收到的 OneBot v11 事件原样透传：
+`hub-service` 在防抖窗口结束后，将同一 QQ 私聊会话内的消息合并为一个 `<batch>`：
 
-```json
-[{
-  "post_type": "message",
-  "message_type": "private",
-  "user_id": 123456,
-  "message_id": 999,
-  "sender": {"nickname": "小明", "card": ""},
-  "message": [
-    {"type": "text", "data": {"text": "你好"}},
-    {"type": "image", "data": {"file": "http://..."}},
-    {"type": "at", "data": {"qq": "10001"}}
-  ]
-}]
+```xml
+<batch>
+  <message id="999" time="1710000000" sub_type="friend" nickname="小明">
+    <text>你好</text>
+    <image file="abc.jpg" url="https://..." type="flash" />
+    <face id="123" />
+    <reply id="998" />
+    <record file="a.amr" url="https://..." />
+    <video file="a.mp4" url="https://..." />
+    <at qq="10001" />
+    <share url="https://..." title="标题" content="摘要" image="https://..." />
+    <location lat="39.9" lon="116.3" title="位置" content="说明" />
+    <contact type="qq" id="123456" />
+    <unsupported type="unknown" />
+  </message>
+</batch>
 ```
 
-## 3. 输出格式（回复）
+`user_id`、`self_id` 等稳定身份信息不写入每条消息，而是在创建 agent session 时通过 metadata 写入 `<session_info>` 系统消息。
 
-agent-service 的 LLM 被指示直接输出如下结构：
+## 3. 输出格式
+
+LLM 最终回复必须是 `<reply>`：
+
+```xml
+<reply>
+  <text>笨蛋，找我有什么事喵？</text>
+  <image file="https://..." />
+  <face id="123" />
+</reply>
+```
+
+hub-service 支持的回复节点：
+
+| 节点 | 属性 | OneBot v11 映射 |
+|------|------|-----------------|
+| `text` | 文本内容 | `{"type":"text","data":{"text":"..."}}` |
+| `image` | `file` | `image` 段 |
+| `face` | `id` | `face` 段 |
+| `record` | `file` | `record` 段 |
+| `video` | `file` | `video` 段 |
+
+空 `<reply />` 不发送 QQ 消息。私聊回复对象由 hub-service 的会话路由固定决定，agent 不指定 `user_id`。
+
+## 4. HTTP 契约
+
+`POST /chat` 请求：
 
 ```json
 {
-  "reply": [
-    {"type": "text", "data": {"text": "笨蛋，找我有什么事喵？"}}
-  ],
-  "auto_escape": false
+  "session_id": "uuid",
+  "input_xml": "<batch>...</batch>"
 }
 ```
 
-### 字段说明
+响应：
 
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| `reply` | `str | list[dict]` | 回复内容；字符串会转为 OneBot `text` 段，数组则按消息段透传 |
-| `auto_escape` | `bool` | 是否作为纯文本发送（不解析 CQ 码），默认 `false` |
-
-### 消息段类型
-
-| type | data | 说明 |
-|------|------|------|
-| `text` | `{"text": "..."}` | 文本内容 |
-| `image` | `{"file": "url或base64"}` | 图片 |
-| `at` | `{"qq": "QQ号"}` | @某人 |
-| `reply` | `{"id": "消息ID"}` | 回复某条消息 |
-
-## 4. hub 透传映射
-
-hub-service 将 agent 返回的字段直接映射到 NapCat 的 OneBot v11 动作：
-
-```python
-# agent 返回
-{"reply": [...], "auto_escape": false}
-
-# hub 发送的 OneBot v11 动作
+```json
 {
-  "action": "send_private_msg",
-  "params": {
-    "user_id": 123456,
-    "message": [...],    # ← reply 直接透传
-    "auto_escape": false # ← auto_escape 直接透传
-  }
+  "output_xml": "<reply><text>...</text></reply>"
 }
 ```
 
-## 5. 兼容处理
+## 5. 容错处理
 
-agent-service 的 `_parse_agent_reply()` 对 LLM 输出做容错解析：
+agent-service 只接受最终 `<reply>` 作为标准输出。LLM 若返回非法 XML 或非 `<reply>` 根节点，agent-service 会将原始内容包装为：
 
-| LLM 实际输出 | 处理方式 |
-|-------------|---------|
-| `{"reply":[...], "auto_escape":false}` | 标准解析 |
-| `{"reply":{...}, "auto_escape":false}` | 单对象自动包装为数组 |
-| 纯文本字符串 | fallback：视为 `Message(text)`，`auto_escape=false` |
+```xml
+<reply><text>原始内容</text></reply>
+```

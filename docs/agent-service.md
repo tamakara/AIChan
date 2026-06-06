@@ -2,9 +2,9 @@
 
 ## 1. 模块定位
 
-`agent-service` 是 LLM 推理执行层：维护 `Session` 上下文、驱动多轮 LLM 推理与 MCP 工具调用，通过 HTTP 返回 OneBot v11 格式回复。
+`agent-service` 是 LLM 推理执行层：维护 `Session` 上下文、驱动多轮 LLM 推理与 MCP 工具调用，通过 HTTP 返回 AICHAN XML 回复。
 
-不负责消息接入与投递（由 `hub-service` 处理）。
+不负责 QQ 消息接入、OneBot v11 解析与投递；这些职责由 `hub-service` 处理。
 
 ## 2. 接口契约
 
@@ -20,6 +20,7 @@
     - `session_id: str`（服务端生成 UUIDv4）
     - `metadata: dict[str, Any]`
   - 语义：每次调用创建新会话，不做幂等去重。
+  - QQ 私聊入口由 hub-service 传入 `platform/user_id/self_id`，agent-service 会写入 `<session_info>` 系统消息。
 
 - `DELETE /sessions/{session_id}`
   - 成功：`{"deleted": true}`
@@ -33,32 +34,36 @@
 - `POST /chat`
   - 请求（`ChatRequest`）：
     - `session_id: str`（必填）
-    - `batch: str`（必填，OneBot v11 事件 JSON 数组字符串）
+    - `input_xml: str`（必填，`<batch>` XML）
   - 响应（`ChatResponse`）：
-    - `reply: str | list[dict]` — OneBot v11 回复内容，字符串会在 hub-service 投递前转为 `text` 段
-    - `auto_escape: bool` — 是否转义 CQ 码，默认 `false`
+    - `output_xml: str`（`<reply>` XML）
   - 失败语义：
     - `session_id` 不存在：`404`
     - session 被显式中断：`409`
     - 运行期异常：`500`
 
-### 2.2 LLM 输出格式
+### 2.2 LLM 输入输出格式
 
-LLM 被指示直接输出完整的 OneBot v11 响应结构：
+用户消息是 hub-service 生成的 `<batch>`：
 
-```json
-{
-  "reply": [{"type": "text", "data": {"text": "回复内容"}}],
-  "auto_escape": false
-}
+```xml
+<batch>
+  <message id="999" time="1710000000" sub_type="friend" nickname="小明">
+    <text>你好</text>
+    <image file="abc.jpg" url="https://..." />
+  </message>
+</batch>
 ```
 
-`agent.py` 中的 `_parse_agent_reply()` 负责解析此格式，兼容以下情况：
-- 标准数组 `[{...}]`
-- LLM 误返回单对象 `{...}`（自动包装为数组）
-- 纯文本 fallback（视为 `Message(text)`）
+LLM 最终回复必须是 `<reply>`：
 
-`auto_escape` 由 LLM 决定，不再硬编码。
+```xml
+<reply>
+  <text>笨蛋，找我有什么事喵？</text>
+</reply>
+```
+
+`agent.py` 中的 `_parse_agent_reply()` 负责把 LLM 输出收敛为 `<reply>`。若模型返回非法 XML 或非 `<reply>` 根节点，会包装为 `<reply><text>原始内容</text></reply>`。
 
 ### 2.3 对外消费（LLM API）
 
@@ -84,6 +89,10 @@ LLM 被指示直接输出完整的 OneBot v11 响应结构：
 - `_generation: int` — 用于抢占检测的版本号
 - `_lock` — 线程锁，仅在修改 Context 时短暂持有
 
+初始化时写入两条 system 消息：
+- `SYSTEM_PROMPT`
+- `<session_info>`，包含 `session_id` 以及 metadata 中的 `platform/user_id/self_id`
+
 ### 3.2 上下文（`Context`）
 
 - `messages: list[Message]` — OpenAI Chat 消息历史
@@ -92,14 +101,14 @@ LLM 被指示直接输出完整的 OneBot v11 响应结构：
 ### 3.3 Agent 执行循环
 
 ```
-user message → add_message("user")
+input_xml → add_message("user")
   → for turn in max_turns:
     → LlmClient.generate()        # LLM 调用（不持锁）
     → add_message("assistant")    # 锁内写入
     → if finish_reason == "stop":
-        → _parse_agent_reply()    # 解析 OneBot v11 JSON
+        → _parse_agent_reply()    # 收敛为 <reply>
         → finish_run_success()    # 上报观测
-        → return AgentReply(reply, auto_escape)
+        → return AgentReply(output_xml)
     → if finish_reason == "tool_calls":
         → for each tool_call:
             → McpGateway.call_tool()
@@ -131,7 +140,7 @@ Langfuse trace 结构：
 ```
 agent.chat.run (chain)
 ├── metadata: {message_count, max_turns, run_id, status, duration_ms}
-├── output: {reply, auto_escape}
+├── output: {output_xml}
 ├── agent.llm.generation (generation) × N
 │   ├── input: context.messages
 │   ├── output: {content, tool_calls, finish_reason}
@@ -145,7 +154,7 @@ agent.chat.run (chain)
 ## 4. 异常处理
 
 - `LlmClient.generate()`：不捕获异常，直接向上抛
-- `Agent.run()`：不捕获通用异常（除 `SessionInterrupted`），直接向上抛
+- `Agent.run()`：除 `SessionInterrupted` 外，通用异常记录观测后继续向上抛
 - `Router.chat()`：统一捕获、记录日志、返回 HTTP 错误
 - 工具调用失败：写入 `tool` 错误消息，不中断回合
 - Langfuse 异常：降级吞掉，不中断主链路
@@ -180,4 +189,4 @@ agent.chat.run (chain)
 - 会话全内存：不支持多副本和重启恢复
 - `/sessions` 无回收机制：长期运行可能内存增长
 - `llm_max_retries=0`：认证失败立即报错，不等待
-- LLM 直接输出 OneBot v11 格式：全链路透传，观测一致
+- agent 只理解 AICHAN XML，不直接理解 OneBot v11 原始事件

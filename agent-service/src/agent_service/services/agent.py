@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from typing import Any
+from xml.etree import ElementTree
 
 from ..logger import elapsed_ms, start_timer
 from .llm_client import LlmClient
@@ -13,8 +14,7 @@ from .session import Session, SessionInterrupted
 
 @dataclass(frozen=True)
 class AgentReply:
-    reply: str | list[dict[str, Any]]
-    auto_escape: bool
+    output_xml: str
 
 
 class Agent:
@@ -43,7 +43,7 @@ class Agent:
     # ------------------------------------------------------------------
 
     def run(self, session: Session, user_message: str) -> AgentReply:
-        """在指定 Session 上执行一轮推理循环，返回 OneBot v11 回复结构。
+        """在指定 Session 上执行一轮推理循环，返回 AICHAN XML 回复。
 
         每次 run 开始时清除 interrupt 标记。
         LLM 返回后若检测到中断标记，抛 SessionInterrupted 且不写入上下文。
@@ -106,10 +106,7 @@ class Agent:
                         duration_ms = elapsed_ms(run_started_at)
                         self._observability.finish_run_success(
                             run=run_trace,
-                            output={
-                                "reply": reply.reply,
-                                "auto_escape": reply.auto_escape,
-                            },
+                            output={"output_xml": reply.output_xml},
                             duration_ms=duration_ms,
                         )
                         return reply
@@ -184,24 +181,26 @@ class Agent:
 
 
 def _parse_agent_reply(raw: str) -> AgentReply:
-    """把 LLM 最终输出收敛为唯一 HTTP 契约。
+    """把 LLM 最终输出收敛为 AICHAN XML 回复契约。
 
-    业务上允许模型最终输出 JSON 对象；一旦格式偏离，就退化为纯文本消息，
-    避免把解析职责泄漏给 hub-service，保证消息编排层只处理已确认的 OneBot 回复。
+    hub-service 只消费 `<reply>`，因此非法 XML 不继续向下游扩散，而是包装为文本。
+    这样模型偶发格式偏离时仍可回复用户，且不把容错逻辑分散到消息投递层。
     """
     try:
-        parsed = json.loads(raw)
-    except (json.JSONDecodeError, TypeError):
-        return AgentReply(reply=raw, auto_escape=False)
+        root = ElementTree.fromstring(raw)
+    except (ElementTree.ParseError, TypeError):
+        return AgentReply(output_xml=_text_reply_xml(raw))
 
-    if not isinstance(parsed, dict) or "reply" not in parsed:
-        return AgentReply(reply=raw, auto_escape=False)
+    if root.tag != "reply":
+        return AgentReply(output_xml=_text_reply_xml(raw))
 
-    reply = parsed["reply"]
-    if isinstance(reply, str):
-        return AgentReply(reply=reply, auto_escape=bool(parsed.get("auto_escape", False)))
-    if isinstance(reply, dict):
-        return AgentReply(reply=[reply], auto_escape=bool(parsed.get("auto_escape", False)))
-    if isinstance(reply, list) and all(isinstance(item, dict) for item in reply):
-        return AgentReply(reply=reply, auto_escape=bool(parsed.get("auto_escape", False)))
-    return AgentReply(reply=raw, auto_escape=False)
+    return AgentReply(
+        output_xml=ElementTree.tostring(root, encoding="unicode", short_empty_elements=True)
+    )
+
+
+def _text_reply_xml(text: str) -> str:
+    root = ElementTree.Element("reply")
+    child = ElementTree.SubElement(root, "text")
+    child.text = text
+    return ElementTree.tostring(root, encoding="unicode", short_empty_elements=True)
