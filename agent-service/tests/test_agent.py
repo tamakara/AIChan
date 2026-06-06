@@ -1,9 +1,9 @@
-import threading
-import time
+from openai.types.chat import ChatCompletionMessageFunctionToolCall
+from openai.types.chat.chat_completion_message_function_tool_call import Function
 
 from agent_service.services.agent import Agent
-from agent_service.services.session import SessionInterrupted, SessionRegistry
 from agent_service.services.observability import NoopObservability
+from agent_service.services.session import SessionRegistry
 from agent_service.services.types.llm import LlmResponse
 
 
@@ -17,6 +17,19 @@ class StubLlmClient:
         return LlmResponse(content="<reply><text>ok</text></reply>", tool_calls=[], finish_reason="stop")
 
 
+class SequencedLlmClient:
+    def __init__(self, responses: list[LlmResponse]) -> None:
+        self.model_name = "gpt-test"
+        self.calls: list[list] = []
+        self._responses = responses
+
+    def generate(self, messages, tools_schema, temperature) -> LlmResponse:
+        self.calls.append(messages)
+        if not self._responses:
+            raise RuntimeError("no response")
+        return self._responses.pop(0)
+
+
 class FailingLlmClient:
     def __init__(self) -> None:
         self.model_name = "gpt-test"
@@ -25,21 +38,6 @@ class FailingLlmClient:
     def generate(self, messages, tools_schema, temperature) -> LlmResponse:
         self.calls.append(messages)
         raise RuntimeError("stub failure")
-
-
-class BlockingLlmClient:
-    """第一次 generate 会阻塞直到 event 被设置，用于测试抢占。"""
-
-    def __init__(self, block_event: threading.Event) -> None:
-        self.model_name = "gpt-test"
-        self.calls: list[list] = []
-        self._block_event = block_event
-
-    def generate(self, messages, tools_schema, temperature) -> LlmResponse:
-        self.calls.append(messages)
-        if len(self.calls) == 1:
-            self._block_event.wait()
-        return LlmResponse(content="<reply><text>ok</text></reply>", tool_calls=[], finish_reason="stop")
 
 
 class StubMcpGateway:
@@ -62,6 +60,14 @@ def _build_agent() -> Agent:
 
 def _build_registry() -> SessionRegistry:
     return SessionRegistry()
+
+
+def _tool_call(tool_name: str) -> ChatCompletionMessageFunctionToolCall:
+    return ChatCompletionMessageFunctionToolCall(
+        id="call_1",
+        function=Function(name=tool_name, arguments='{"x": 1}'),
+        type="function",
+    )
 
 
 def test_create_session_generates_unique_id() -> None:
@@ -129,10 +135,13 @@ def test_session_info_contains_metadata() -> None:
     )
 
 
-def test_run_session_interrupted_by_registry_signal() -> None:
-    """agent 只响应显式中断信号，抢占触发由 hub-service 负责。"""
-    block_event = threading.Event()
-    llm_client = BlockingLlmClient(block_event)
+def test_stop_with_queued_message_drops_final_reply_and_continues() -> None:
+    llm_client = SequencedLlmClient(
+        [
+            LlmResponse(content="<reply><text>old</text></reply>", tool_calls=[], finish_reason="stop"),
+            LlmResponse(content="<reply><text>new</text></reply>", tool_calls=[], finish_reason="stop"),
+        ]
+    )
     agent = Agent(  # type: ignore[arg-type]
         llm_client=llm_client,
         mcp_gateway=StubMcpGateway(),
@@ -142,41 +151,52 @@ def test_run_session_interrupted_by_registry_signal() -> None:
     )
     registry = _build_registry()
     session = registry.create(metadata={"session_id": "s1"})
+    session.queue_user_message("<batch><message><text>queued</text></message></batch>")
 
-    result_holder: dict[str, object] = {}
-
-    def first_run() -> None:
-        try:
-            agent.run(
-                session=session,
-                user_message="msg_1",
-            )
-        except SessionInterrupted as exc:
-            result_holder["first"] = "interrupted"
-            result_holder["interrupted_exc"] = exc
-        except Exception as exc:
-            result_holder["first"] = f"error: {exc}"
-
-    t = threading.Thread(target=first_run)
-    t.start()
-
-    deadline_ts = time.time() + 5.0
-    while len(llm_client.calls) < 1 and time.time() < deadline_ts:
-        time.sleep(0.01)
-    assert len(llm_client.calls) == 1, "first run did not reach LLM call"
-
-    assert registry.interrupt(session.session_id) is True
-    block_event.set()
-    t.join(timeout=5.0)
-
-    assert result_holder.get("first") == "interrupted", (
-        f"expected interrupted, got {result_holder.get('first')}"
+    reply = agent.run(
+        session=session,
+        user_message="<batch><message><text>first</text></message></batch>",
     )
-    assert len(llm_client.calls) == 1
-    assert [msg["role"] for msg in session._context.messages] == [  # noqa: SLF001
-        "system",
-        "system",
-    ]
+
+    assert reply.output_xml == "<reply><text>new</text></reply>"
+    assert len(llm_client.calls) == 2
+    second_call_contents = [str(msg["content"]) for msg in llm_client.calls[1]]
+    assert "<reply><text>old</text></reply>" not in second_call_contents
+    assert "<batch><message><text>queued</text></message></batch>" in second_call_contents
+    persisted_contents = [str(msg["content"]) for msg in session._context.messages]  # noqa: SLF001
+    assert "<reply><text>old</text></reply>" not in persisted_contents
+    assert "<reply><text>new</text></reply>" in persisted_contents
+
+
+def test_tool_call_turn_inserts_queued_message_after_tool_result() -> None:
+    llm_client = SequencedLlmClient(
+        [
+            LlmResponse(content="", tool_calls=[_tool_call("history")], finish_reason="tool_calls"),
+            LlmResponse(content="<reply><text>done</text></reply>", tool_calls=[], finish_reason="stop"),
+        ]
+    )
+    agent = Agent(  # type: ignore[arg-type]
+        llm_client=llm_client,
+        mcp_gateway=StubMcpGateway(),
+        max_turns=3,
+        temperature=0.0,
+        observability=NoopObservability(),
+    )
+    registry = _build_registry()
+    session = registry.create(metadata={"session_id": "s1"})
+    session.queue_user_message("<batch><message><text>queued</text></message></batch>")
+
+    reply = agent.run(
+        session=session,
+        user_message="<batch><message><text>first</text></message></batch>",
+    )
+
+    assert reply.output_xml == "<reply><text>done</text></reply>"
+    second_call_roles = [msg["role"] for msg in llm_client.calls[1]]
+    second_call_contents = [str(msg["content"]) for msg in llm_client.calls[1]]
+    assert second_call_roles == ["system", "system", "user", "assistant", "tool", "user"]
+    assert second_call_contents[-2] == '{"ok": true}'
+    assert second_call_contents[-1] == "<batch><message><text>queued</text></message></batch>"
 
 
 def test_agent_run_failure_commits_user_and_fallback_reply() -> None:

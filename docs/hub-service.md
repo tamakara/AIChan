@@ -28,7 +28,7 @@ OneBot v11 复杂性只停留在本服务边界。agent-service 不接收原始 
 
 - `POST {agent_url}/sessions` — 创建 agent 会话，metadata 包含 `platform/user_id/self_id`
 - `POST {agent_url}/chat` — 发送 `<batch>` XML，接收 `<reply>` XML
-- `POST {agent_url}/sessions/{session_id}/interrupt` — 同一会话运行中收到新消息时中断旧 run；旧 run 输入会回队重跑
+- `POST {agent_url}/sessions/{session_id}/queue-message` — 同一会话运行中收到新消息时追加到 agent 会话队列
 
 ### 2.4 对外产出（WebSocket → NapCat）
 
@@ -73,7 +73,9 @@ OneBot v11 复杂性只停留在本服务边界。agent-service 不接收原始 
   → 窗口内无新消息 → 提取批次到 inflight_events
   → 转换为 <batch>
   → POST /chat({input_xml})
-  → 若运行期间有新消息或 agent 返回 409：inflight_events 前置回 pending_events
+  → 运行期间新消息：单条转换为 <batch> 并 POST /queue-message
+  → 若 /chat 返回后发现运行期间曾 queue 新消息：丢弃旧回复
+  → 重新等待防抖窗口，发送空 <batch /> 触发 agent 消化内部队列
   → 否则收到 {output_xml}
   → 转换为 OneBot 消息段并 send_private_msg
   → 仍有 pending → 重置窗口重跑
@@ -81,10 +83,10 @@ OneBot v11 复杂性只停留在本服务边界。agent-service 不接收原始 
 ```
 
 关键规则：
-- 正在运行时新消息会入队，并调用 agent-service interrupt 端点终止旧 run 后续写入
-- 运行期间收到新消息时，旧 run 回复即使成功返回也不会发送
-- 旧 run 输入会和运行中新到消息一起重跑，确保用户收到的回复读取了发送前所有消息
-- 重跑前重新等待完整防抖窗口
+- 非运行状态下，消息仍由 hub 的防抖窗口合并为一个 `<batch>` 后调用 `/chat`
+- 正在运行时，同一会话新消息不进入 hub 的下一轮 pending 队列，而是立即调用 `/queue-message` 交给 agent 会话内部队列
+- `/chat` 返回后、发送 QQ 回复前有本地 send gate；只要运行期间成功 queue 过新消息，旧回复就不发送
+- send gate 丢弃旧回复后会重新等待完整防抖窗口，再用空 `<batch />` 触发 agent 继续运行并 drain queued messages
 
 ## 5. 配置项
 

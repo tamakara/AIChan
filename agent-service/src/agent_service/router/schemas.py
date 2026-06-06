@@ -23,6 +23,12 @@ class ChatRequest(BaseModel):
     input_xml: str = Field(min_length=1)
 
 
+class QueueMessageRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    input_xml: str = Field(min_length=1)
+
+
 class ChatResponse(BaseModel):
     """agent 返回 AICHAN XML 回复，由 hub-service 转为 QQ 私聊消息。"""
 

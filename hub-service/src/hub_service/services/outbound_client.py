@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
 import httpx
 
@@ -48,40 +49,29 @@ class OutboundClient:
         )
         return response.session_id
 
-    async def interrupt_session(self, agent_session_id: str) -> None:
-        """中断 agent-service 中正在运行的会话。忽略 404 等异常。"""
+    async def queue_session_message(self, agent_session_id: str, input_xml: str) -> None:
+        """向正在运行的 agent 会话追加用户消息。忽略下游短暂失败。"""
         try:
             await self._post_json(
-                f"{self._agent_service_url}/sessions/{agent_session_id}/interrupt",
-                {},
+                f"{self._agent_service_url}/sessions/{agent_session_id}/queue-message",
+                {"input_xml": input_xml},
             )
         except RuntimeError:
-            pass  # session 不存在或未被中断，不影响主流程
+            pass
 
     async def call_session(
         self,
         hub_session_key: str,
         agent_session_id: str,
         input_xml: str,
-    ) -> AgentReply | None:
-        """向 agent-service 发送消息，返回已解析的回复。被中断返回 None。"""
+    ) -> AgentReply:
+        """向 agent-service 发送消息，返回已解析的 XML 回复。"""
         started_at = start_timer()
         payload = SessionChatRequest(
             session_id=agent_session_id,
             input_xml=input_xml,
         )
-        try:
-            data = await self._post_json(f"{self._agent_service_url}/chat", payload.model_dump())
-        except RuntimeError as exc:
-            if "status=409" in str(exc):
-                log_info(
-                    self._logger,
-                    "hub.downstream_interrupted",
-                    session_key=hub_session_key,
-                    elapsed_ms=elapsed_ms(started_at),
-                )
-                return None
-            raise
+        data = await self._post_json(f"{self._agent_service_url}/chat", payload.model_dump())
         response = SessionChatResponse.model_validate(data)
         log_info(
             self._logger,

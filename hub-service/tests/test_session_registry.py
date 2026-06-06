@@ -11,20 +11,20 @@ class StubOutboundClient:
         self.session_call_started_ats: list[float] = []
         self.replies: list[tuple[str, str | list[dict], bool]] = []
         self.call_delays: list[float] = []
-        self.interrupt_calls: list[str] = []
-        self.call_results: list[AgentReply | None] = []
+        self.queued_calls: list[tuple[str, str]] = []
+        self.call_results: list[AgentReply] = []
 
     async def create_session(self, hub_session_key: str, metadata: dict[str, str]) -> str:
         self.create_calls.append((hub_session_key, metadata))
         return f"agent-{hub_session_key}"
 
-    async def interrupt_session(self, agent_session_id: str) -> None:
-        self.interrupt_calls.append(agent_session_id)
+    async def queue_session_message(self, agent_session_id: str, input_xml: str) -> None:
+        self.queued_calls.append((agent_session_id, input_xml))
         return
 
     async def call_session(
         self, hub_session_key: str, agent_session_id: str, input_xml: str
-    ) -> AgentReply | None:
+    ) -> AgentReply:
         self.session_call_started_ats.append(asyncio.get_running_loop().time())
         self.session_calls.append((hub_session_key, agent_session_id, input_xml))
         delay = self.call_delays.pop(0) if self.call_delays else 0.05
@@ -83,7 +83,7 @@ def test_debounce_merges_messages_for_same_session() -> None:
     assert state["runner_count"] == 0
 
 
-def test_running_session_requeues_inflight_and_drops_stale_reply() -> None:
+def test_running_session_queues_new_messages_to_agent() -> None:
     outbound = StubOutboundClient()
     outbound.call_delays = [0.08, 0.02]
     registry = SessionRegistry(
@@ -103,34 +103,12 @@ def test_running_session_requeues_inflight_and_drops_stale_reply() -> None:
 
     assert len(outbound.session_calls) == 2
     assert '<message id="first"' in outbound.session_calls[0][2]
-    assert '<message id="first"' in outbound.session_calls[1][2]
-    assert '<message id="second"' in outbound.session_calls[1][2]
-    assert '<message id="third"' in outbound.session_calls[1][2]
+    assert outbound.session_calls[1][2] == "<batch />"
+    assert len(outbound.queued_calls) == 2
+    assert '<message id="second"' in outbound.queued_calls[0][1]
+    assert '<message id="third"' in outbound.queued_calls[1][1]
     assert len(outbound.replies) == 1
-    assert outbound.interrupt_calls == ["agent-private:1"]
-
-
-def test_interrupted_run_requeues_inflight_for_next_batch() -> None:
-    outbound = StubOutboundClient()
-    outbound.call_results = [None]
-    registry = SessionRegistry(
-        outbound_client=outbound,  # type: ignore[arg-type]
-        debounce_seconds=0.01,
-    )
-
-    async def run() -> None:
-        await registry.submit_event(_event(1, "first"))
-        await asyncio.sleep(0.03)
-        await registry.submit_event(_event(1, "second"))
-        await asyncio.sleep(0.2)
-        await registry.shutdown()
-
-    asyncio.run(run())
-
-    assert len(outbound.session_calls) == 2
-    assert '<message id="first"' in outbound.session_calls[1][2]
-    assert '<message id="second"' in outbound.session_calls[1][2]
-    assert len(outbound.replies) == 1
+    assert outbound.replies[0][1] == "<reply><text>reply:<batch /></text></reply>"
 
 
 def test_different_sessions_are_dispatched_independently() -> None:

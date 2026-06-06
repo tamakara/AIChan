@@ -26,10 +26,12 @@
   - 成功：`{"deleted": true}`
   - 失败：`404`（session 不存在）
 
-- `POST /sessions/{session_id}/interrupt`
-  - 成功：`{"interrupted": true}`
+- `POST /sessions/{session_id}/queue-message`
+  - 请求（`QueueMessageRequest`）：
+    - `input_xml: str`（必填，`<batch>` XML）
+  - 成功：`{"queued": true}`
   - 失败：`404`（session 不存在）
-  - 语义：由 hub-service 在同一会话运行中收到新消息时调用，用于停止旧 run 的后续写入。
+  - 语义：同一会话运行中收到的新用户消息追加到 session 内部队列，等待 agent turn 边界插入。
 
 - `POST /chat`
   - 请求（`ChatRequest`）：
@@ -39,7 +41,6 @@
     - `output_xml: str`（`<reply>` XML）
   - 失败语义：
     - `session_id` 不存在：`404`
-    - session 被显式中断：`409`
     - LLM/API/MCP 运行期异常：返回固定 `<reply><text>...</text></reply>` 兜底文案
 
 ### 2.2 LLM 输入输出格式
@@ -86,7 +87,7 @@ LLM 最终回复必须是 `<reply>`：
 - `session_id: str` — 会话标识
 - `metadata: dict` — 创建时快照
 - `_context: Context` — 消息历史
-- `_generation: int` — 用于抢占检测的版本号
+- `_queued_user_messages: list[str]` — 运行中追加的新用户 XML 消息队列
 - `_lock` — 线程锁，仅在修改 Context 时短暂持有
 
 初始化时写入两条 system 消息：
@@ -106,22 +107,31 @@ input_xml → staged add_message("user")
     → LlmClient.generate(context.messages + staged_messages)
     → staged add_message("assistant")
     → if finish_reason == "stop":
-        → _parse_agent_reply()    # 收敛为 <reply>
-        → commit staged_messages  # 未被中断才写入持久 Context
-        → finish_run_success()    # 上报观测
-        → return AgentReply(output_xml)
+        → drain queued_user_messages
+        → if 有 queued:
+            → 丢弃本轮 final assistant
+            → staged add_message("user") × queued
+            → continue
+        → else:
+            → _parse_agent_reply()    # 收敛为 <reply>
+            → commit staged_messages
+            → finish_run_success()    # 上报观测
+            → return AgentReply(output_xml)
     → if finish_reason == "tool_calls":
         → for each tool_call:
             → McpGateway.call_tool()
             → staged add_message("tool")
+        → drain queued_user_messages
+        → staged add_message("user") × queued
     → else: raise
 ```
 
 关键设计：
-- LLM 调用期间不持锁；中断由 `/sessions/{id}/interrupt` 设置 generation 标记
-- 本轮 user/assistant/tool 消息先暂存在 staged messages，成功且未被中断时一次性提交
-- 被中断的 run 丢弃 staged messages，避免未发送回复污染会话历史
-- `SessionInterrupted` 继续抛给 router；其他运行期异常记录观测后返回固定兜底回复
+- LLM 调用期间不持锁；`/queue-message` 可以在运行中安全追加同会话用户消息
+- 本轮 user/assistant/tool 消息先暂存在 staged messages，成功返回最终 `<reply>` 时一次性提交
+- tool-call 分支先写入所有 tool result，再插入 queued user messages，保持 OpenAI tool-call 消息顺序合法
+- stop 分支若发现 queued user messages，丢弃尚未发送的 final assistant，插入新 user 后继续推理
+- 运行期异常记录观测后返回固定兜底回复，并提交本轮 user + fallback assistant，因为这条回复会实际发给用户
 
 ### 3.4 LLM 客户端（`LlmClient`）
 
@@ -156,7 +166,7 @@ agent.chat.run (chain)
 ## 4. 异常处理
 
 - `LlmClient.generate()`：不捕获异常，直接向上抛
-- `Agent.run()`：`SessionInterrupted` 继续向上抛；其他通用异常记录观测后返回固定 XML 兜底回复
+- `Agent.run()`：通用异常记录观测后返回固定 XML 兜底回复
 - `Router.chat()`：统一捕获、记录日志、返回 HTTP 错误
 - 工具调用失败：写入 `tool` 错误消息，不中断回合
 - Langfuse 异常：降级吞掉，不中断主链路

@@ -9,10 +9,6 @@ from .prompts import SYSTEM_PROMPT
 from .types.context import Context
 
 
-class SessionInterrupted(Exception):
-    """外部中断请求导致 run 被中止。"""
-
-
 class Session:
     """一次会话的上下文，独立于 Agent 进行管理。"""
 
@@ -20,8 +16,7 @@ class Session:
         self._session_id = session_id
         self._metadata = dict(metadata)
         self._lock = Lock()
-        self._generation = 0
-        self._interrupt_target = -1
+        self._queued_user_messages: list[str] = []
         self._context = Context()
         # 系统提示词 + 会话标识
         self._context.add_message(role="system", content=SYSTEM_PROMPT)
@@ -30,19 +25,14 @@ class Session:
             content=_session_info_xml(session_id=session_id, metadata=self._metadata),
         )
 
-    def begin_run(self) -> int:
-        """开始新 run，返回递增后的 generation 用于中断检测。"""
-        self._generation += 1
-        return self._generation
+    def queue_user_message(self, user_message: str) -> None:
+        with self._lock:
+            self._queued_user_messages.append(user_message)
 
-    def interrupt(self) -> None:
-        """标记当前 generation 为已中断。不影响后续的新 run。"""
-        self._interrupt_target = self._generation
-
-    def check_interrupt(self, my_gen: int) -> None:
-        """仅当本 run 是中断目标时才抛出。"""
-        if my_gen == self._interrupt_target:
-            raise SessionInterrupted
+    def drain_queued_user_messages_locked(self) -> list[str]:
+        queued = self._queued_user_messages.copy()
+        self._queued_user_messages.clear()
+        return queued
 
     @property
     def session_id(self) -> str:
@@ -72,12 +62,12 @@ class SessionRegistry:
         with self._lock:
             return self._sessions.get(session_id)
 
-    def interrupt(self, session_id: str) -> bool:
+    def queue_message(self, session_id: str, user_message: str) -> bool:
         with self._lock:
             session = self._sessions.get(session_id)
             if session is None:
                 return False
-            session.interrupt()
+            session.queue_user_message(user_message)
             return True
 
     def delete(self, session_id: str) -> bool:

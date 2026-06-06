@@ -9,7 +9,7 @@ from ..logger import elapsed_ms, start_timer
 from .llm_client import LlmClient
 from .mcp_gateway import McpGateway
 from .observability import Observability
-from .session import Session, SessionInterrupted
+from .session import Session
 from .types.context import Context
 from .types.llm import Message, ToolCall
 
@@ -47,12 +47,7 @@ class Agent:
     # ------------------------------------------------------------------
 
     def run(self, session: Session, user_message: str) -> AgentReply:
-        """在指定 Session 上执行一轮推理循环，返回 AICHAN XML 回复。
-
-        每次 run 开始时清除 interrupt 标记。
-        LLM 返回后若检测到中断标记，抛 SessionInterrupted 且不写入上下文。
-        """
-        my_gen = session.begin_run()
+        """在指定 Session 上执行一轮推理循环，返回 AICHAN XML 回复。"""
         run_started_at = start_timer()
 
         # ── 1. 暂存用户消息、启动观测 trace ──
@@ -85,9 +80,6 @@ class Agent:
                 )
                 llm_elapsed_ms = elapsed_ms(llm_started_at)
 
-                # LLM 返回后检测中断——仅针对本 run 的 generation，新 run 不受影响
-                session.check_interrupt(my_gen)
-
                 self._observability.llm_generation(
                     run=run_trace,
                     turn=turn,
@@ -108,9 +100,16 @@ class Agent:
 
                 if llm_response.finish_reason != "tool_calls":
                     if llm_response.finish_reason == "stop":
+                        queued_messages = _drain_queued_user_messages(session)
+                        if queued_messages:
+                            # 模型刚准备结束时若用户又发了消息，旧 final reply 已不再覆盖最新输入。
+                            # 丢弃这条 assistant，插入新 user 后继续推理，避免未发送回复污染上下文。
+                            staged_messages.pop()
+                            _stage_user_messages(staged_messages, queued_messages)
+                            continue
+
                         reply = _parse_agent_reply(llm_response.content)
-                        session.check_interrupt(my_gen)
-                        _commit_staged_messages(session, my_gen, staged_messages)
+                        _commit_staged_messages(session, staged_messages)
                         duration_ms = elapsed_ms(run_started_at)
                         self._observability.finish_run_success(
                             run=run_trace,
@@ -172,12 +171,15 @@ class Agent:
                         tool_call_id=tool_call_id,
                     )
 
+                queued_messages = _drain_queued_user_messages(session)
+                # 工具结果必须紧跟对应 tool_calls；新消息只能插在工具结果之后，
+                # 否则会破坏 OpenAI tool-call 消息顺序约束。
+                _stage_user_messages(staged_messages, queued_messages)
+
             raise RuntimeError(
                 "Agent failed to complete the task within "
                 f"{self._max_turns} turns of interaction."
             )
-        except SessionInterrupted:
-            raise
         except Exception as exc:
             duration_ms = elapsed_ms(run_started_at)
             self._observability.finish_run_error(
@@ -193,7 +195,7 @@ class Agent:
                 role="assistant",
                 content=output_xml,
             )
-            _commit_staged_messages(session, my_gen, staged_messages)
+            _commit_staged_messages(session, staged_messages)
             return AgentReply(output_xml=output_xml)
 
 
@@ -243,10 +245,20 @@ def _stage_message(
 
 def _commit_staged_messages(
     session: Session,
-    my_gen: int,
     staged_messages: list[Message],
 ) -> None:
-    session.check_interrupt(my_gen)
     with session._lock:
-        session.check_interrupt(my_gen)
         session._context.messages.extend(staged_messages)
+
+
+def _drain_queued_user_messages(session: Session) -> list[str]:
+    with session._lock:
+        return session.drain_queued_user_messages_locked()
+
+
+def _stage_user_messages(
+    staged_messages: list[Message],
+    user_messages: list[str],
+) -> None:
+    for user_message in user_messages:
+        _stage_message(staged_messages, role="user", content=user_message)

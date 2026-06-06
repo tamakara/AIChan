@@ -110,6 +110,31 @@ def test_delete_session_returns_404_for_unknown() -> None:
     assert response.json()["detail"] == "session not found"
 
 
+def test_queue_message_adds_message_to_existing_session() -> None:
+    client = build_client(StubLlmClient())
+    session_id = _create_session(client)
+
+    response = client.post(
+        f"/sessions/{session_id}/queue-message",
+        json={"input_xml": "<batch><message><text>queued</text></message></batch>"},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"queued": True}
+
+
+def test_queue_message_returns_404_for_unknown_session() -> None:
+    client = build_client(StubLlmClient())
+
+    response = client.post(
+        "/sessions/missing/queue-message",
+        json={"input_xml": "<batch />"},
+    )
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "session not found"
+
+
 def test_chat_returns_404_when_session_not_created() -> None:
     client = build_client(StubLlmClient())
 
