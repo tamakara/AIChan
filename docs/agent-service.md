@@ -194,7 +194,19 @@ agent.chat.run (chain)
 | `agent.langfuse.flush_interval` | float | 上报间隔（秒） |
 | `agent.langfuse.request_timeout` | float | Langfuse 请求超时（秒） |
 
-密钥字段在仓库中只保留占位值。真实 `agent.openai_api_key`、`agent.langfuse.public_key`、`agent.langfuse.secret_key` 只应写入本地运行配置；如果真实值曾经进入仓库，需要先在对应平台轮换。
+配置加载由 `pydantic-settings` 统一处理，优先级为：显式初始化参数 > 环境变量 > 根目录 `.env` > `agent-service/config.yml`。`config.yml` 只保留普通配置和空密钥占位，真实密钥通过 `AGENT__...` 嵌套环境变量覆盖。
+
+`docker-compose.yml` 会读取根目录 `.env` 做变量插值，并通过 `agent-service.environment` 显式传递本服务需要的变量；`.env` 已被 Git 忽略，仓库只保留 `.env.example`。如果真实值曾经进入仓库，需要先在对应平台轮换。
+
+当前密钥环境变量：
+
+| 环境变量 | 对应配置 | 必填 |
+|----------|----------|------|
+| `AGENT__OPENAI_API_KEY` | `agent.openai_api_key` | 是 |
+| `AGENT__OPENAI_BASE_URL` | `agent.openai_base_url` | 否，默认 `config.yml` 中的 `https://api.xiaomimimo.com/v1` |
+| `AGENT__MCP_AUTH_TOKEN` | `agent.mcp_auth_token` | 否，默认空字符串 |
+| `AGENT__LANGFUSE__PUBLIC_KEY` | `agent.langfuse.public_key` | 启用 Langfuse 时必填 |
+| `AGENT__LANGFUSE__SECRET_KEY` | `agent.langfuse.secret_key` | 启用 Langfuse 时必填 |
 
 ## 6. 设计权衡
 

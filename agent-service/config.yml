@@ -8,15 +8,15 @@ agent:
   temperature: 0.5
   llm_timeout: 30.0
   llm_max_retries: 3
-  openai_api_key: sk-cv0wje8s8deyhlr8uos99g80c7b8l3bthzg01wt32h7wnjtg
+  openai_api_key: ""
   openai_base_url: https://api.xiaomimimo.com/v1
   mcp_sse_url: http://mcp-gateway:9000/sse
   mcp_auth_token: ""
   langfuse:
     enabled: true
     host: https://us.cloud.langfuse.com
-    public_key: "pk-lf-e4c024fa-db84-432a-a284-07dc7de6aa44"
-    secret_key: "sk-lf-cc887c45-7975-4af6-aab7-dee9ece0a9d1"
+    public_key: ""
+    secret_key: ""
     flush_at: 16
     flush_interval: 0.5
     request_timeout: 15.0

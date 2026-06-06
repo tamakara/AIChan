@@ -30,6 +30,8 @@ napcat-mcp-mcp
 | `mcp.base_url` | str | QQ 查询 HTTP API 地址，当前指向 `http://hub-service:8020` |
 | `mcp.timeout_seconds` | float | 调用 hub-service 的超时秒数 |
 
+配置加载由 `pydantic-settings` 统一处理，优先级为：显式初始化参数 > 环境变量 > 根目录 `.env` > `napcat-mcp-server/config.yml`。当前 napcat-mcp-server 的配置均为非敏感拓扑与超时参数，默认直接维护在 `napcat-mcp-server/config.yml`；HTTP 占位服务和 MCP 命令入口都复用同一份配置文件。
+
 ## 5. 边界约束
 
 - NapCat 反向 WS 只连接 `hub-service`。

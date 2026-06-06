@@ -100,6 +100,8 @@ OneBot v11 复杂性只停留在本服务边界。agent-service 不接收原始 
 | `hub.allowed_user_ids` | list[int] | 允许对话的 QQ 用户 ID；空数组表示全部忽略 |
 | `napcat.ws_action_timeout_seconds` | int | NapCat 动作超时（秒） |
 
+配置加载由 `pydantic-settings` 统一处理，优先级为：显式初始化参数 > 环境变量 > 根目录 `.env` > `hub-service/config.yml`。当前 hub-service 的配置均为非敏感拓扑与行为参数，默认直接维护在 `hub-service/config.yml`，`docker-compose.yml` 不额外传递 `HUB__...` 或 `NAPCAT__...` 环境变量。
+
 ## 6. 设计权衡
 
 - 会话状态全内存：不支持多副本和重启恢复
