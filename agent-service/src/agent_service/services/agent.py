@@ -11,6 +11,8 @@ from .mcp_gateway import McpGateway
 from .observability import Observability
 from .session import Session, SessionInterrupted
 
+LLM_FALLBACK_REPLY = "笨蛋，刚才脑袋短路了一下，稍后再试试喵。"
+
 
 @dataclass(frozen=True)
 class AgentReply:
@@ -177,7 +179,9 @@ class Agent:
                 error=str(exc),
                 duration_ms=duration_ms,
             )
-            raise
+            # LLM/API/MCP 边界的瞬时失败不再向 QQ 用户暴露 500。
+            # 这里统一返回固定文案，避免按网络错误类型扩散细粒度异常分支。
+            return AgentReply(output_xml=_text_reply_xml(LLM_FALLBACK_REPLY))
 
 
 def _parse_agent_reply(raw: str) -> AgentReply:

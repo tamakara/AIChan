@@ -188,7 +188,7 @@ def test_chat_reuses_existing_session() -> None:
     assert "<reply><text>ok</text></reply>" in second_call_contents
 
 
-def test_chat_returns_500_when_agent_fails() -> None:
+def test_chat_returns_fallback_when_agent_fails() -> None:
     llm_client = StubLlmClient()
     llm_client.fail = True
     client = build_client(llm_client=llm_client)
@@ -199,8 +199,10 @@ def test_chat_returns_500_when_agent_fails() -> None:
         json={"session_id": session_id, "input_xml": "<batch />"},
     )
 
-    assert response.status_code == 500
-    assert response.json()["detail"] == "stub failure"
+    assert response.status_code == 200
+    assert response.json() == {
+        "output_xml": "<reply><text>笨蛋，刚才脑袋短路了一下，稍后再试试喵。</text></reply>"
+    }
 
 
 def test_chat_returns_422_when_input_xml_empty() -> None:

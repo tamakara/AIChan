@@ -40,7 +40,7 @@
   - 失败语义：
     - `session_id` 不存在：`404`
     - session 被显式中断：`409`
-    - 运行期异常：`500`
+    - LLM/API/MCP 运行期异常：返回固定 `<reply><text>...</text></reply>` 兜底文案
 
 ### 2.2 LLM 输入输出格式
 
@@ -119,7 +119,7 @@ input_xml → add_message("user")
 关键设计：
 - LLM 调用期间不持锁；中断由 `/sessions/{id}/interrupt` 设置 generation 标记
 - LLM 返回后检查本 run 是否被中断，被中断则抛 `SessionInterrupted`
-- 错误只在内层抛出，router 统一 catch + log
+- `SessionInterrupted` 继续抛给 router；其他运行期异常记录观测后返回固定兜底回复
 
 ### 3.4 LLM 客户端（`LlmClient`）
 
@@ -154,7 +154,7 @@ agent.chat.run (chain)
 ## 4. 异常处理
 
 - `LlmClient.generate()`：不捕获异常，直接向上抛
-- `Agent.run()`：除 `SessionInterrupted` 外，通用异常记录观测后继续向上抛
+- `Agent.run()`：`SessionInterrupted` 继续向上抛；其他通用异常记录观测后返回固定 XML 兜底回复
 - `Router.chat()`：统一捕获、记录日志、返回 HTTP 错误
 - 工具调用失败：写入 `tool` 错误消息，不中断回合
 - Langfuse 异常：降级吞掉，不中断主链路
@@ -169,7 +169,7 @@ agent.chat.run (chain)
 | `agent.max_turns` | int | 最大推理轮次 |
 | `agent.temperature` | float | LLM 温度 |
 | `agent.llm_timeout` | float | LLM 请求超时（秒） |
-| `agent.llm_max_retries` | int | LLM 请求重试次数（建议 0，避免 401 等错误长时间等待） |
+| `agent.llm_max_retries` | int | LLM 请求重试次数；当前配置为 3，全部失败后返回固定兜底回复 |
 | `agent.openai_api_key` | str | OpenAI 兼容 API Key |
 | `agent.openai_base_url` | str | OpenAI 兼容 API 地址 |
 | `agent.mcp_sse_url` | str | MCP SSE 网关地址 |

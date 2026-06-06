@@ -7,7 +7,7 @@ services:
       - --port=9000
       - --servers=playwright,fetch,time,docker://napcat-mcp-server:latest
     ports:
-      - "9000:9000"
+      - "19000:9000"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
 

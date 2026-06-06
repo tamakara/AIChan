@@ -6,7 +6,7 @@ server:
 hub:
   agent_url: http://agent-service:8000
   debounce_seconds: 2.0
-  allowed_user_ids: []
+  allowed_user_ids: [2041214551]
 
 napcat:
   ws_action_timeout_seconds: 5
