@@ -10,6 +10,8 @@ from .llm_client import LlmClient
 from .mcp_gateway import McpGateway
 from .observability import Observability
 from .session import Session, SessionInterrupted
+from .types.context import Context
+from .types.llm import Message, ToolCall
 
 LLM_FALLBACK_REPLY = "笨蛋，刚才脑袋短路了一下，稍后再试试喵。"
 
@@ -53,10 +55,12 @@ class Agent:
         my_gen = session.begin_run()
         run_started_at = start_timer()
 
-        # ── 1. 写入用户消息、启动观测 trace ──
+        # ── 1. 暂存用户消息、启动观测 trace ──
+        staged_messages: list[Message] = []
+        _stage_message(staged_messages, role="user", content=user_message)
+
         with session._lock:
-            session._context.add_message(role="user", content=user_message)
-            message_count = len(session._context.messages)
+            message_count = len(session._context.messages) + len(staged_messages)
 
         run_trace = self._observability.start_run(
             session_id=session.session_id,
@@ -71,7 +75,7 @@ class Agent:
                 turn = turn_idx + 1
 
                 with session._lock:
-                    input_messages = list(session._context.messages)
+                    input_messages = list(session._context.messages) + list(staged_messages)
 
                 llm_started_at = start_timer()
                 llm_response = self._llm_client.generate(
@@ -95,16 +99,18 @@ class Agent:
                     duration_ms=llm_elapsed_ms,
                 )
 
-                with session._lock:
-                    session._context.add_message(
-                        role="assistant",
-                        content=llm_response.content,
-                        tool_calls=llm_response.tool_calls,
-                    )
+                _stage_message(
+                    staged_messages,
+                    role="assistant",
+                    content=llm_response.content,
+                    tool_calls=llm_response.tool_calls,
+                )
 
                 if llm_response.finish_reason != "tool_calls":
                     if llm_response.finish_reason == "stop":
                         reply = _parse_agent_reply(llm_response.content)
+                        session.check_interrupt(my_gen)
+                        _commit_staged_messages(session, my_gen, staged_messages)
                         duration_ms = elapsed_ms(run_started_at)
                         self._observability.finish_run_success(
                             run=run_trace,
@@ -159,12 +165,12 @@ class Agent:
                             output=tool_call_result,
                         )
 
-                    with session._lock:
-                        session._context.add_message(
-                            role="tool",
-                            content=tool_call_result,
-                            tool_call_id=tool_call_id,
-                        )
+                    _stage_message(
+                        staged_messages,
+                        role="tool",
+                        content=tool_call_result,
+                        tool_call_id=tool_call_id,
+                    )
 
             raise RuntimeError(
                 "Agent failed to complete the task within "
@@ -181,7 +187,14 @@ class Agent:
             )
             # LLM/API/MCP 边界的瞬时失败不再向 QQ 用户暴露 500。
             # 这里统一返回固定文案，避免按网络错误类型扩散细粒度异常分支。
-            return AgentReply(output_xml=_text_reply_xml(LLM_FALLBACK_REPLY))
+            output_xml = _text_reply_xml(LLM_FALLBACK_REPLY)
+            _stage_message(
+                staged_messages,
+                role="assistant",
+                content=output_xml,
+            )
+            _commit_staged_messages(session, my_gen, staged_messages)
+            return AgentReply(output_xml=output_xml)
 
 
 def _parse_agent_reply(raw: str) -> AgentReply:
@@ -208,3 +221,32 @@ def _text_reply_xml(text: str) -> str:
     child = ElementTree.SubElement(root, "text")
     child.text = text
     return ElementTree.tostring(root, encoding="unicode", short_empty_elements=True)
+
+
+def _stage_message(
+    staged_messages: list[Message],
+    *,
+    role: str,
+    content: str,
+    tool_calls: list[ToolCall] | None = None,
+    tool_call_id: str | None = None,
+) -> None:
+    staged = Context()
+    staged.add_message(
+        role=role,
+        content=content,
+        tool_calls=tool_calls,
+        tool_call_id=tool_call_id,
+    )
+    staged_messages.extend(staged.messages)
+
+
+def _commit_staged_messages(
+    session: Session,
+    my_gen: int,
+    staged_messages: list[Message],
+) -> None:
+    session.check_interrupt(my_gen)
+    with session._lock:
+        session.check_interrupt(my_gen)
+        session._context.messages.extend(staged_messages)

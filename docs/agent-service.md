@@ -101,24 +101,26 @@ LLM 最终回复必须是 `<reply>`：
 ### 3.3 Agent 执行循环
 
 ```
-input_xml → add_message("user")
+input_xml → staged add_message("user")
   → for turn in max_turns:
-    → LlmClient.generate()        # LLM 调用（不持锁）
-    → add_message("assistant")    # 锁内写入
+    → LlmClient.generate(context.messages + staged_messages)
+    → staged add_message("assistant")
     → if finish_reason == "stop":
         → _parse_agent_reply()    # 收敛为 <reply>
+        → commit staged_messages  # 未被中断才写入持久 Context
         → finish_run_success()    # 上报观测
         → return AgentReply(output_xml)
     → if finish_reason == "tool_calls":
         → for each tool_call:
             → McpGateway.call_tool()
-            → add_message("tool")  # 锁内写入
+            → staged add_message("tool")
     → else: raise
 ```
 
 关键设计：
 - LLM 调用期间不持锁；中断由 `/sessions/{id}/interrupt` 设置 generation 标记
-- LLM 返回后检查本 run 是否被中断，被中断则抛 `SessionInterrupted`
+- 本轮 user/assistant/tool 消息先暂存在 staged messages，成功且未被中断时一次性提交
+- 被中断的 run 丢弃 staged messages，避免未发送回复污染会话历史
 - `SessionInterrupted` 继续抛给 router；其他运行期异常记录观测后返回固定兜底回复
 
 ### 3.4 LLM 客户端（`LlmClient`）
@@ -188,5 +190,5 @@ agent.chat.run (chain)
 
 - 会话全内存：不支持多副本和重启恢复
 - `/sessions` 无回收机制：长期运行可能内存增长
-- `llm_max_retries=0`：认证失败立即报错，不等待
+- `llm_max_retries=3`：瞬时连接失败优先由 SDK 重试，全部失败后返回固定兜底回复
 - agent 只理解 AICHAN XML，不直接理解 OneBot v11 原始事件

@@ -29,9 +29,12 @@ class SessionRunner:
         self._debounce_seconds = debounce_seconds
         self._on_idle = on_idle
         self._pending_events: list[AgentInboundEvent] = []
+        self._inflight_events: list[AgentInboundEvent] = []
         self._debounce_deadline: float | None = None
         self._debounce_task: asyncio.Task[None] | None = None
         self._running = False
+        self._run_stale = False
+        self._interrupt_sent = False
         self._stopping = False
         self._lock = asyncio.Lock()
 
@@ -48,11 +51,15 @@ class SessionRunner:
                 return
             # 当前有 run 正在执行时触发中断
             if self._running:
-                should_interrupt = True
+                self._run_stale = True
+                if not self._interrupt_sent:
+                    should_interrupt = True
+                    self._interrupt_sent = True
 
             self._pending_events.append(message)
             self._debounce_deadline = loop.time() + self._debounce_seconds
-            self._schedule_debounce_locked()
+            if not self._running:
+                self._schedule_debounce_locked()
 
         if should_interrupt:
             await self._outbound_client.interrupt_session(self._agent_session_id)
@@ -105,7 +112,10 @@ class SessionRunner:
 
                 batched_events = self._pending_events.copy()
                 self._pending_events.clear()
+                self._inflight_events = batched_events.copy()
                 self._running = True
+                self._run_stale = False
+                self._interrupt_sent = False
                 self._debounce_deadline = None
                 self._debounce_task = None
                 should_notify_idle = False
@@ -135,7 +145,11 @@ class SessionRunner:
                 input_xml=input_xml,
             )
             if reply is None:
-                # 被中断，不发送回复
+                await self._requeue_inflight()
+                # 被中断，不发送回复，下一轮带上本次输入重跑。
+                return
+            if await self._consume_stale_run():
+                # 运行期间收到新消息，不发送旧回复。
                 return
             await self._outbound_client.send_reply(
                 session_key=self._session_key,
@@ -161,6 +175,9 @@ class SessionRunner:
             should_notify_idle = False
             async with self._lock:
                 self._running = False
+                self._inflight_events.clear()
+                self._run_stale = False
+                self._interrupt_sent = False
                 if self._pending_events and not self._stopping:
                     self._debounce_deadline = (
                         asyncio.get_running_loop().time() + self._debounce_seconds
@@ -177,6 +194,26 @@ class SessionRunner:
             return False
         if self._pending_events:
             return False
+        if self._inflight_events:
+            return False
         if self._debounce_task is not None and not self._debounce_task.done():
             return False
         return True
+
+    async def _consume_stale_run(self) -> bool:
+        async with self._lock:
+            if not self._run_stale:
+                return False
+            self._requeue_inflight_locked()
+            return True
+
+    async def _requeue_inflight(self) -> None:
+        async with self._lock:
+            self._requeue_inflight_locked()
+
+    def _requeue_inflight_locked(self) -> None:
+        # 当前 run 的输入尚未形成对用户可见的回复，必须回到队首参与下一轮生成。
+        if not self._inflight_events:
+            return
+        self._pending_events = self._inflight_events.copy() + self._pending_events
+        self._inflight_events.clear()

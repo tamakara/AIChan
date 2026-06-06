@@ -28,7 +28,7 @@ OneBot v11 复杂性只停留在本服务边界。agent-service 不接收原始 
 
 - `POST {agent_url}/sessions` — 创建 agent 会话，metadata 包含 `platform/user_id/self_id`
 - `POST {agent_url}/chat` — 发送 `<batch>` XML，接收 `<reply>` XML
-- `POST {agent_url}/sessions/{session_id}/interrupt` — 同一会话运行中收到新消息时中断旧 run
+- `POST {agent_url}/sessions/{session_id}/interrupt` — 同一会话运行中收到新消息时中断旧 run；旧 run 输入会回队重跑
 
 ### 2.4 对外产出（WebSocket → NapCat）
 
@@ -70,10 +70,11 @@ OneBot v11 复杂性只停留在本服务边界。agent-service 不接收原始 
 事件到达 → 私聊 + 白名单过滤 → 入队 pending_events
   → 重置 debounce_deadline
   → 防抖静默窗口等待
-  → 窗口内无新消息 → 提取批次
+  → 窗口内无新消息 → 提取批次到 inflight_events
   → 转换为 <batch>
   → POST /chat({input_xml})
-  → 收到 {output_xml}
+  → 若运行期间有新消息或 agent 返回 409：inflight_events 前置回 pending_events
+  → 否则收到 {output_xml}
   → 转换为 OneBot 消息段并 send_private_msg
   → 仍有 pending → 重置窗口重跑
   → 无 pending → 会话空闲
@@ -81,7 +82,8 @@ OneBot v11 复杂性只停留在本服务边界。agent-service 不接收原始 
 
 关键规则：
 - 正在运行时新消息会入队，并调用 agent-service interrupt 端点终止旧 run 后续写入
-- 运行结束后检查是否有新消息，有则重跑
+- 运行期间收到新消息时，旧 run 回复即使成功返回也不会发送
+- 旧 run 输入会和运行中新到消息一起重跑，确保用户收到的回复读取了发送前所有消息
 - 重跑前重新等待完整防抖窗口
 
 ## 5. 配置项

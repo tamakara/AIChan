@@ -17,6 +17,16 @@ class StubLlmClient:
         return LlmResponse(content="<reply><text>ok</text></reply>", tool_calls=[], finish_reason="stop")
 
 
+class FailingLlmClient:
+    def __init__(self) -> None:
+        self.model_name = "gpt-test"
+        self.calls: list[list] = []
+
+    def generate(self, messages, tools_schema, temperature) -> LlmResponse:
+        self.calls.append(messages)
+        raise RuntimeError("stub failure")
+
+
 class BlockingLlmClient:
     """第一次 generate 会阻塞直到 event 被设置，用于测试抢占。"""
 
@@ -99,6 +109,12 @@ def test_agent_run_session() -> None:
     )
 
     assert reply.output_xml == "<reply><text>ok</text></reply>"
+    assert [msg["role"] for msg in session._context.messages] == [  # noqa: SLF001
+        "system",
+        "system",
+        "user",
+        "assistant",
+    ]
 
 
 def test_session_info_contains_metadata() -> None:
@@ -157,3 +173,35 @@ def test_run_session_interrupted_by_registry_signal() -> None:
         f"expected interrupted, got {result_holder.get('first')}"
     )
     assert len(llm_client.calls) == 1
+    assert [msg["role"] for msg in session._context.messages] == [  # noqa: SLF001
+        "system",
+        "system",
+    ]
+
+
+def test_agent_run_failure_commits_user_and_fallback_reply() -> None:
+    llm_client = FailingLlmClient()
+    agent = Agent(  # type: ignore[arg-type]
+        llm_client=llm_client,
+        mcp_gateway=StubMcpGateway(),
+        max_turns=3,
+        temperature=0.0,
+        observability=NoopObservability(),
+    )
+    registry = _build_registry()
+    session = registry.create(metadata={"session_id": "s1"})
+
+    reply = agent.run(
+        session=session,
+        user_message="msg_1",
+    )
+
+    assert reply.output_xml == (
+        "<reply><text>笨蛋，刚才脑袋短路了一下，稍后再试试喵。</text></reply>"
+    )
+    assert [msg["role"] for msg in session._context.messages] == [  # noqa: SLF001
+        "system",
+        "system",
+        "user",
+        "assistant",
+    ]
