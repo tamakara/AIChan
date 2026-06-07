@@ -12,7 +12,7 @@ from .types.context import Context
 class Session:
     """一次会话的上下文，独立于 Agent 进行管理。"""
 
-    def __init__(self, session_id: str, metadata: dict[str, Any]) -> None:
+    def __init__(self, session_id: str, metadata: dict[str, Any], max_turns: int) -> None:
         self._session_id = session_id
         self._metadata = dict(metadata)
         self._lock = Lock()
@@ -22,7 +22,11 @@ class Session:
         self._context.add_message(role="system", content=SYSTEM_PROMPT)
         self._context.add_message(
             role="system",
-            content=_session_info_xml(session_id=session_id, metadata=self._metadata),
+            content=_session_info_xml(
+                session_id=session_id,
+                metadata=self._metadata,
+                max_turns=max_turns,
+            ),
         )
 
     def queue_user_message(self, user_message: str) -> None:
@@ -46,7 +50,8 @@ class Session:
 class SessionRegistry:
     """会话注册中心，管理 Session 的创建/查找/删除。"""
 
-    def __init__(self) -> None:
+    def __init__(self, max_turns: int) -> None:
+        self._max_turns = max_turns
         self._sessions: dict[str, Session] = {}
         self._lock = Lock()
 
@@ -54,7 +59,11 @@ class SessionRegistry:
         with self._lock:
             session_id = str(uuid4())
             metadata_with_id = {"session_id": session_id, **metadata}
-            session = Session(session_id=session_id, metadata=metadata_with_id)
+            session = Session(
+                session_id=session_id,
+                metadata=metadata_with_id,
+                max_turns=self._max_turns,
+            )
             self._sessions[session_id] = session
             return session
 
@@ -78,11 +87,14 @@ class SessionRegistry:
             return False
 
 
-def _session_info_xml(session_id: str, metadata: dict[str, Any]) -> str:
-    root = ElementTree.Element("session_info")
-    ElementTree.SubElement(root, "session_id").text = session_id
+def _session_info_xml(session_id: str, metadata: dict[str, Any], max_turns: int) -> str:
+    attributes = {
+        "session_id": session_id,
+        "max_turn": str(max_turns),
+    }
     for key in ("platform", "user_id", "self_id"):
         value = metadata.get(key)
         if value is not None:
-            ElementTree.SubElement(root, key).text = str(value)
+            attributes[key] = str(value)
+    root = ElementTree.Element("session_info", attributes)
     return ElementTree.tostring(root, encoding="unicode", short_empty_elements=True)

@@ -61,6 +61,13 @@ class AgentSettings(BaseModel):
     llm_max_retries: StrictInt
     langfuse: LangfuseSettings
 
+    @field_validator("model")
+    @classmethod
+    def _validate_model(cls, value: str) -> str:
+        if not value:
+            raise ValueError("必须配置 AGENT__MODEL")
+        return value
+
     @field_validator("openai_api_key")
     @classmethod
     def _validate_openai_api_key(cls, value: str) -> str:

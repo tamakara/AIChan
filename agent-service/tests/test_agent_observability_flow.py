@@ -87,7 +87,7 @@ def test_agent_reports_full_observability_flow() -> None:
         temperature=0.0,
         observability=observability,
     )
-    registry = SessionRegistry()
+    registry = SessionRegistry(max_turns=3)
     session = registry.create(metadata={"session_id": "private_1"})
 
     reply = agent.run(
@@ -120,7 +120,7 @@ def test_agent_reports_failed_tool_span_but_can_continue() -> None:
         temperature=0.0,
         observability=observability,
     )
-    registry = SessionRegistry()
+    registry = SessionRegistry(max_turns=3)
     session = registry.create(metadata={"session_id": "private_2"})
 
     reply = agent.run(

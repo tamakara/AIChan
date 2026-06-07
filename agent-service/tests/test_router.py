@@ -44,7 +44,7 @@ def build_client(
         temperature=0.0,
         observability=NoopObservability(),
     )
-    _registry = registry or SessionRegistry()
+    _registry = registry or SessionRegistry(max_turns=3)
     app.include_router(create_router(agent=_agent, session_registry=_registry))
     return TestClient(app)
 
@@ -149,7 +149,7 @@ def test_chat_returns_404_when_session_not_created() -> None:
 
 def test_chat_uses_existing_session_and_injects_context() -> None:
     llm_client = StubLlmClient()
-    registry = SessionRegistry()
+    registry = SessionRegistry(max_turns=3)
     agent = Agent(  # type: ignore[arg-type]
         llm_client=llm_client,
         mcp_gateway=StubMcpGateway(),
@@ -170,19 +170,21 @@ def test_chat_uses_existing_session_and_injects_context() -> None:
     assert len(llm_client.calls) == 1
 
     called_messages = llm_client.calls[0]
-    assert called_messages[-1]["content"] == "<batch><message><text>hello</text></message></batch>"
+    assert called_messages[-2]["content"] == "<batch><message><text>hello</text></message></batch>"
+    assert called_messages[-1]["content"] == '<turn index="1" />'
 
-    # Session 内保留角色提示词和会话信息两条 system 消息，再追加用户消息。
-    assert len(called_messages) == 3
+    # Session 内保留角色提示词和会话信息两条 system 消息，再追加用户消息和当前 turn。
+    assert len(called_messages) == 4
     assert called_messages[0]["role"] == "system"
     assert called_messages[1]["role"] == "system"
     assert called_messages[2]["role"] == "user"
+    assert called_messages[3]["role"] == "system"
 
     session = registry.get(session_id)
     assert session is not None
     persisted_messages = session._context.messages  # noqa: SLF001
-    assert len(persisted_messages) == 4
-    assert persisted_messages[3]["role"] == "assistant"
+    assert len(persisted_messages) == 5
+    assert persisted_messages[4]["role"] == "assistant"
 
 
 def test_chat_reuses_existing_session() -> None:
@@ -208,7 +210,7 @@ def test_chat_reuses_existing_session() -> None:
     second_call_roles = [msg["role"] for msg in llm_client.calls[1]]
     second_call_contents = [str(msg["content"]) for msg in llm_client.calls[1]]
 
-    assert second_call_roles == ["system", "system", "user", "assistant", "user"]
+    assert second_call_roles == ["system", "system", "user", "system", "assistant", "user", "system"]
     assert first_user_xml in second_call_contents
     assert "<reply><text>ok</text></reply>" in second_call_contents
 

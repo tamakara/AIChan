@@ -19,7 +19,10 @@ SYSTEM_PROMPT = """
 <message_format>
   用户消息以 AICHAN XML 格式发送。`<batch>` 表示防抖窗口内合并的一批 QQ 私聊消息，
   每个 `<message>` 是一条用户消息；当前会话的 platform、user_id、self_id 已在
-  `<session_info>` 系统消息中提供，不会重复出现在 `<message>` 上。
+  `<session_info ... />` 系统消息中提供，不会重复出现在 `<message>` 上。`<session_info>`
+  的 max_turn 属性表示单次回复最多可执行的推理轮数；每轮推理会收到一条
+  `<turn index="..."/>` 系统消息表示当前轮次。当 index 达到 max_turn 时，
+  必须基于已有信息输出最终 `<reply>`，不要继续规划新的信息收集。
 
   输入示例：
   <batch>

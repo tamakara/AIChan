@@ -59,7 +59,7 @@ def _build_agent() -> Agent:
 
 
 def _build_registry() -> SessionRegistry:
-    return SessionRegistry()
+    return SessionRegistry(max_turns=3)
 
 
 def _tool_call(tool_name: str) -> ChatCompletionMessageFunctionToolCall:
@@ -119,6 +119,7 @@ def test_agent_run_session() -> None:
         "system",
         "system",
         "user",
+        "system",
         "assistant",
     ]
 
@@ -128,10 +129,8 @@ def test_session_info_contains_metadata() -> None:
     session = registry.create(metadata={"platform": "qq", "user_id": 1, "self_id": 10001})
 
     assert session._context.messages[1]["content"] == (  # noqa: SLF001
-        "<session_info><session_id>"
-        f"{session.session_id}"
-        "</session_id><platform>qq</platform><user_id>1</user_id>"
-        "<self_id>10001</self_id></session_info>"
+        f'<session_info session_id="{session.session_id}" max_turn="3" '
+        'platform="qq" user_id="1" self_id="10001" />'
     )
 
 
@@ -194,9 +193,19 @@ def test_tool_call_turn_inserts_queued_message_after_tool_result() -> None:
     assert reply.output_xml == "<reply><text>done</text></reply>"
     second_call_roles = [msg["role"] for msg in llm_client.calls[1]]
     second_call_contents = [str(msg["content"]) for msg in llm_client.calls[1]]
-    assert second_call_roles == ["system", "system", "user", "assistant", "tool", "user"]
-    assert second_call_contents[-2] == '{"ok": true}'
-    assert second_call_contents[-1] == "<batch><message><text>queued</text></message></batch>"
+    assert second_call_roles == [
+        "system",
+        "system",
+        "user",
+        "system",
+        "assistant",
+        "tool",
+        "user",
+        "system",
+    ]
+    assert second_call_contents[-3] == '{"ok": true}'
+    assert second_call_contents[-1] == '<turn index="2" />'
+    assert second_call_contents[-2] == "<batch><message><text>queued</text></message></batch>"
 
 
 def test_agent_run_failure_commits_user_and_fallback_reply() -> None:
@@ -223,5 +232,6 @@ def test_agent_run_failure_commits_user_and_fallback_reply() -> None:
         "system",
         "system",
         "user",
+        "system",
         "assistant",
     ]

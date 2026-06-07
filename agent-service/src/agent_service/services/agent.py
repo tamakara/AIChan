@@ -68,6 +68,7 @@ class Agent:
             # ── 2. turn-loop：LLM 推理 + 工具调用 ──
             for turn_idx in range(self._max_turns):
                 turn = turn_idx + 1
+                _stage_message(staged_messages, role="system", content=_turn_xml(index=turn))
 
                 with session._lock:
                     input_messages = list(session._context.messages) + list(staged_messages)
@@ -241,6 +242,11 @@ def _stage_message(
         tool_call_id=tool_call_id,
     )
     staged_messages.extend(staged.messages)
+
+
+def _turn_xml(index: int) -> str:
+    root = ElementTree.Element("turn", {"index": str(index)})
+    return ElementTree.tostring(root, encoding="unicode", short_empty_elements=True)
 
 
 def _commit_staged_messages(

@@ -32,7 +32,7 @@ def create_app() -> FastAPI:
         observability=observability,
     )
 
-    session_registry = SessionRegistry()
+    session_registry = SessionRegistry(max_turns=settings.agent.max_turns)
 
     app = FastAPI(
         title="agent-service FastAPI service",

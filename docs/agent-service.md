@@ -20,7 +20,7 @@
     - `session_id: str`（服务端生成 UUIDv4）
     - `metadata: dict[str, Any]`
   - 语义：每次调用创建新会话，不做幂等去重。
-  - QQ 私聊入口由 hub-service 传入 `platform/user_id/self_id`，agent-service 会写入 `<session_info>` 系统消息。
+  - QQ 私聊入口由 hub-service 传入 `platform/user_id/self_id`，agent-service 会写入 `<session_info session_id="..." max_turn="..." ... />` 系统消息。
 
 - `DELETE /sessions/{session_id}`
   - 成功：`{"deleted": true}`
@@ -56,6 +56,8 @@
 </batch>
 ```
 
+当前会话的 `session_id/platform/user_id/self_id` 和最大推理轮次会通过 `<session_info session_id="..." max_turn="..." ... />` system 消息提供。每轮推理还会写入一条 `<turn index="..."/>` system 消息，作为普通会话消息进入上下文。
+
 LLM 最终回复必须是 `<reply>`：
 
 ```xml
@@ -69,7 +71,7 @@ LLM 最终回复必须是 `<reply>`：
 ### 2.3 对外消费（LLM API）
 
 - 客户端：`openai.OpenAI`
-- 配置：`timeout`、`max_retries` 由 `config.yml` 的 `llm_timeout` / `llm_max_retries` 控制
+- 配置：`model` 由 `.env` 的 `AGENT__MODEL` 控制；`timeout`、`max_retries` 由 `config.yml` 的 `llm_timeout` / `llm_max_retries` 控制
 - 请求参数：`model`、`messages`、`temperature`、`tool_choice="auto"`、`tools`
 - 响应字段：`content`、`tool_calls`、`finish_reason`
 - 错误处理：不在此层捕获，原始异常直接向上抛到 router
@@ -92,7 +94,7 @@ LLM 最终回复必须是 `<reply>`：
 
 初始化时写入两条 system 消息：
 - `SYSTEM_PROMPT`
-- `<session_info>`，包含 `session_id` 以及 metadata 中的 `platform/user_id/self_id`
+- `<session_info session_id="..." max_turn="..." ... />`，包含 `session_id`、最大推理轮次，以及 metadata 中的 `platform/user_id/self_id`
 
 ### 3.2 上下文（`Context`）
 
@@ -104,6 +106,7 @@ LLM 最终回复必须是 `<reply>`：
 ```
 input_xml → staged add_message("user")
   → for turn in max_turns:
+    → staged add_message("system", "<turn index=... />")
     → LlmClient.generate(context.messages + staged_messages)
     → staged add_message("assistant")
     → if finish_reason == "stop":
@@ -194,16 +197,17 @@ agent.chat.run (chain)
 | `agent.langfuse.flush_interval` | float | 上报间隔（秒） |
 | `agent.langfuse.request_timeout` | float | Langfuse 请求超时（秒） |
 
-配置加载由 `pydantic-settings` 统一处理，优先级为：显式初始化参数 > 环境变量 > 根目录 `.env` > `agent-service/config.yml`。`config.yml` 只保留普通配置和空密钥占位，真实密钥通过 `AGENT__...` 嵌套环境变量覆盖。
+配置加载由 `pydantic-settings` 统一处理，优先级为：显式初始化参数 > 环境变量 > 根目录 `.env` > `agent-service/config.yml`。`config.yml` 只保留普通配置和空占位，模型名与真实密钥通过 `AGENT__...` 嵌套环境变量覆盖。
 
-`docker-compose.yml` 会读取根目录 `.env` 做变量插值，并通过 `agent-service.environment` 显式传递本服务需要的变量；`.env` 已被 Git 忽略，仓库只保留 `.env.example`。如果真实值曾经进入仓库，需要先在对应平台轮换。
+`docker-compose.yml` 会读取根目录 `.env` 做变量插值，并通过 `agent-service.environment` 显式传递本服务需要的变量；`.env` 已被 Git 忽略，仓库只保留 `.env.example`。如果真实值曾经进入仓库，需要先在对应平台轮换。YAML 中 `key:` 会解析为 `null`，`key: ""` 会解析为空字符串；`agent.model` 和 `agent.openai_api_key` 都禁止为空，因此必须由环境变量提供有效值。
 
-当前密钥环境变量：
+当前 agent-service 环境变量：
 
 | 环境变量 | 对应配置 | 必填 |
 |----------|----------|------|
+| `AGENT__MODEL` | `agent.model` | 是 |
 | `AGENT__OPENAI_API_KEY` | `agent.openai_api_key` | 是 |
-| `AGENT__OPENAI_BASE_URL` | `agent.openai_base_url` | 否，默认 `config.yml` 中的 `https://api.xiaomimimo.com/v1` |
+| `AGENT__OPENAI_BASE_URL` | `agent.openai_base_url` | 否，Docker Compose 默认 `https://api.xiaomimimo.com/v1` |
 | `AGENT__MCP_AUTH_TOKEN` | `agent.mcp_auth_token` | 否，默认空字符串 |
 | `AGENT__LANGFUSE__PUBLIC_KEY` | `agent.langfuse.public_key` | 启用 Langfuse 时必填 |
 | `AGENT__LANGFUSE__SECRET_KEY` | `agent.langfuse.secret_key` | 启用 Langfuse 时必填 |

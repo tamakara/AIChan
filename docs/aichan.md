@@ -68,9 +68,9 @@ hub-service 将 `output_xml` 转为 OneBot v11 私聊消息段并发送给当前
 
 ## 5. 配置
 
-每个服务只读取各自目录下的 `config.yml`，不使用 `.env` 别名层。
+每个服务读取各自目录下的 `config.yml`；`agent-service` 额外读取根目录 `.env` 中的 `AGENT__...` 环境变量，用于覆盖模型名、OpenAI 兼容接口与 Langfuse 密钥。
 
-提交到仓库的密钥字段只保留占位值。首次启动前需要在本地填写 `agent-service/config.yml` 的 OpenAI 兼容 API Key、Langfuse Key，以及 `napcat/config/webui.json` 的 WebUI token；如果这些值曾经提交过，必须先在对应平台轮换。
+提交到仓库的密钥字段只保留占位值。首次启动前需要在本地 `.env` 填写 `AGENT__MODEL`、OpenAI 兼容 API Key、Langfuse Key，以及在 `napcat/config/webui.json` 填写 WebUI token；如果这些值曾经进入仓库，需要先在对应平台轮换。
 
 | 服务 | 配置文件 |
 |------|----------|

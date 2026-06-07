@@ -3,13 +3,13 @@ server:
   port: 8000
 
 agent:
-  model: mimo-v2-flash
+  model: ""
   max_turns: 50
   temperature: 0.5
   llm_timeout: 30.0
   llm_max_retries: 3
   openai_api_key: ""
-  openai_base_url: https://api.xiaomimimo.com/v1
+  openai_base_url: ""
   mcp_sse_url: http://mcp-gateway:9000/sse
   mcp_auth_token: ""
   langfuse:

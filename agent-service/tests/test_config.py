@@ -65,7 +65,7 @@ server:
   host: 0.0.0.0
   port: 8000
 agent:
-  model: gpt-4.1-mini
+  model: ""
   max_turns: 5
   temperature: 0.3
   openai_api_key: ""
@@ -86,6 +86,7 @@ agent:
         encoding="utf-8",
     )
     monkeypatch.setattr(config_module, "CONFIG_PATH", config_path)
+    monkeypatch.setenv("AGENT__MODEL", "env-model")
     monkeypatch.setenv("AGENT__OPENAI_API_KEY", "env-key")
     monkeypatch.setenv("AGENT__OPENAI_BASE_URL", "https://env.example/v1")
     monkeypatch.setenv("AGENT__LANGFUSE__PUBLIC_KEY", "env-public")
@@ -93,10 +94,22 @@ agent:
 
     settings = Settings(_env_file=None)
 
+    assert settings.agent.model == "env-model"
     assert settings.agent.openai_api_key == "env-key"
     assert settings.agent.openai_base_url == "https://env.example/v1"
     assert settings.agent.langfuse.public_key == "env-public"
     assert settings.agent.langfuse.secret_key == "env-secret"
+
+
+def test_settings_reject_empty_model() -> None:
+    payload = _base_settings_payload()
+    payload["agent"]["model"] = ""
+
+    try:
+        Settings.model_validate(payload)
+        assert False, "expected ValidationError"
+    except ValidationError as exc:
+        assert "AGENT__MODEL" in str(exc)
 
 
 def test_settings_reject_empty_openai_api_key() -> None:

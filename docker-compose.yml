@@ -18,6 +18,7 @@ services:
     depends_on:
       - mcp-gateway
     environment:
+      AGENT__MODEL: "${AGENT__MODEL:?AGENT__MODEL is required}"
       AGENT__OPENAI_API_KEY: "${AGENT__OPENAI_API_KEY:?AGENT__OPENAI_API_KEY is required}"
       AGENT__OPENAI_BASE_URL: "${AGENT__OPENAI_BASE_URL:-https://api.xiaomimimo.com/v1}"
       AGENT__MCP_AUTH_TOKEN: "${AGENT__MCP_AUTH_TOKEN:-}"
