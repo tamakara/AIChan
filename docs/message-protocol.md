@@ -2,14 +2,14 @@
 
 ## 1. 协议定位
 
-AICHAN 在 `hub-service` 与 `agent-service` 之间使用自有 XML 协议。OneBot v11 只存在于 NapCat 接入和 QQ 动作发送边界，`hub-service` 负责把 QQ 私聊事件转换为 `<batch>`，并把 agent 的 `<reply>` 转回 OneBot v11 私聊消息段。
+AICHAN 在 `hub-service` 与 `agent-service` 之间使用自有 XML 协议。OneBot v11 只存在于 NapCat 接入和 QQ 动作发送边界，`hub-service` 负责把 QQ 私聊事件转换为 `<messages>`，并把 agent 的 `<reply>` 转回 OneBot v11 私聊消息段。
 
 ## 2. 输入格式
 
-`hub-service` 在防抖窗口结束后，将同一 QQ 私聊会话内的消息合并为一个 `<batch>`：
+`hub-service` 在防抖窗口结束后，将同一 QQ 私聊会话内的消息合并为一个 `<messages>`：
 
 ```xml
-<batch>
+<messages>
   <message id="999" time="1710000000" sub_type="friend" nickname="小明">
     <text>你好</text>
     <image file="abc.jpg" url="https://..." type="flash" />
@@ -23,7 +23,7 @@ AICHAN 在 `hub-service` 与 `agent-service` 之间使用自有 XML 协议。One
     <contact type="qq" id="123456" />
     <unsupported type="unknown" />
   </message>
-</batch>
+</messages>
 ```
 
 `user_id`、`self_id` 等稳定身份信息不写入每条消息，而是在创建 agent session 时通过 metadata 写入 `<session_info>` 系统消息。
@@ -59,7 +59,7 @@ hub-service 支持的回复节点：
 ```json
 {
   "session_id": "uuid",
-  "input_xml": "<batch>...</batch>"
+  "input_xml": "<messages>...</messages>"
 }
 ```
 

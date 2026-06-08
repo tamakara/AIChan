@@ -73,13 +73,13 @@ def test_call_session_returns_structured_reply() -> None:
         [DummyResponse({"output_xml": "<reply><text>ok!</text></reply>"})]
     )
 
-    reply = asyncio.run(client.call_session("private:1", "agent-1", "<batch />"))
+    reply = asyncio.run(client.call_session("private:1", "agent-1", "<messages />"))
 
     assert reply is not None
     assert reply.output_xml == "<reply><text>ok!</text></reply>"
     called_url, called_payload = client._client.calls[0]  # type: ignore[attr-defined]
     assert called_url == "http://agent-service:8000/chat"
-    assert called_payload == {"session_id": "agent-1", "input_xml": "<batch />"}
+    assert called_payload == {"session_id": "agent-1", "input_xml": "<messages />"}
 
 
 def test_call_session_invalid_response_raises() -> None:

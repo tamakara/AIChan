@@ -77,7 +77,7 @@ def test_debounce_merges_messages_for_same_session() -> None:
     assert len(outbound.session_calls) == 1
     assert outbound.session_calls[0][0] == "private:1"
     assert outbound.session_calls[0][1] == "agent-private:1"
-    assert '<batch><message id="a"' in outbound.session_calls[0][2]
+    assert '<messages><message id="a"' in outbound.session_calls[0][2]
     assert '<message id="b"' in outbound.session_calls[0][2]
     assert outbound.replies[0][0] == "private:1"
     assert state["runner_count"] == 0

@@ -116,7 +116,7 @@ def test_queue_message_adds_message_to_existing_session() -> None:
 
     response = client.post(
         f"/sessions/{session_id}/queue-message",
-        json={"input_xml": "<batch><message><text>queued</text></message></batch>"},
+        json={"input_xml": "<messages><message><text>queued</text></message></messages>"},
     )
 
     assert response.status_code == 200
@@ -128,7 +128,7 @@ def test_queue_message_returns_404_for_unknown_session() -> None:
 
     response = client.post(
         "/sessions/missing/queue-message",
-        json={"input_xml": "<batch />"},
+        json={"input_xml": "<messages />"},
     )
 
     assert response.status_code == 404
@@ -140,7 +140,7 @@ def test_chat_returns_404_when_session_not_created() -> None:
 
     response = client.post(
         "/chat",
-        json={"session_id": "not-created", "input_xml": "<batch />"},
+        json={"session_id": "not-created", "input_xml": "<messages />"},
     )
 
     assert response.status_code == 404
@@ -162,7 +162,7 @@ def test_chat_uses_existing_session_and_injects_context() -> None:
 
     response = client.post(
         "/chat",
-        json={"session_id": session_id, "input_xml": "<batch><message><text>hello</text></message></batch>"},
+        json={"session_id": session_id, "input_xml": "<messages><message><text>hello</text></message></messages>"},
     )
 
     assert response.status_code == 200
@@ -171,7 +171,7 @@ def test_chat_uses_existing_session_and_injects_context() -> None:
 
     called_messages = llm_client.calls[0]
     assert called_messages[-2]["content"] == '<turn index="1" />'
-    assert called_messages[-1]["content"] == "<batch><message><text>hello</text></message></batch>"
+    assert called_messages[-1]["content"] == "<messages><message><text>hello</text></message></messages>"
 
     # Session 内保留角色提示词和会话信息两条 system 消息，再追加用户消息和当前 turn。
     assert len(called_messages) == 4
@@ -194,11 +194,11 @@ def test_chat_reuses_existing_session() -> None:
 
     first = client.post(
         "/chat",
-        json={"session_id": session_id, "input_xml": "<batch><message><text>hello</text></message></batch>"},
+        json={"session_id": session_id, "input_xml": "<messages><message><text>hello</text></message></messages>"},
     )
     second = client.post(
         "/chat",
-        json={"session_id": session_id, "input_xml": "<batch><message><text>again</text></message></batch>"},
+        json={"session_id": session_id, "input_xml": "<messages><message><text>again</text></message></messages>"},
     )
 
     assert first.status_code == 200
@@ -223,7 +223,7 @@ def test_chat_returns_fallback_when_agent_fails() -> None:
 
     response = client.post(
         "/chat",
-        json={"session_id": session_id, "input_xml": "<batch />"},
+        json={"session_id": session_id, "input_xml": "<messages />"},
     )
 
     assert response.status_code == 200
@@ -249,7 +249,7 @@ def test_chat_wraps_non_xml_llm_output() -> None:
 
     response = client.post(
         "/chat",
-        json={"session_id": session_id, "input_xml": "<batch />"},
+        json={"session_id": session_id, "input_xml": "<messages />"},
     )
 
     assert response.status_code == 200
@@ -264,7 +264,7 @@ def test_chat_returns_422_when_legacy_extra_fields_passed() -> None:
         "/chat",
         json={
             "session_id": session_id,
-            "input_xml": "<batch />",
+            "input_xml": "<messages />",
             "batch": "hello",
             "messages": [{"user_id": "qq_1", "content": "legacy"}],
             "metadata": {"session_id": "legacy"},

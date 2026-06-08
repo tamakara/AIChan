@@ -150,18 +150,18 @@ def test_stop_with_queued_message_drops_final_reply_and_continues() -> None:
     )
     registry = _build_registry()
     session = registry.create(metadata={"session_id": "s1"})
-    session.queue_user_message("<batch><message><text>queued</text></message></batch>")
+    session.queue_user_message("<messages><message><text>queued</text></message></messages>")
 
     reply = agent.run(
         session=session,
-        user_message="<batch><message><text>first</text></message></batch>",
+        user_message="<messages><message><text>first</text></message></messages>",
     )
 
     assert reply.output_xml == "<reply><text>new</text></reply>"
     assert len(llm_client.calls) == 2
     second_call_contents = [str(msg["content"]) for msg in llm_client.calls[1]]
     assert "<reply><text>old</text></reply>" not in second_call_contents
-    assert "<batch><message><text>queued</text></message></batch>" in second_call_contents
+    assert "<messages><message><text>queued</text></message></messages>" in second_call_contents
     persisted_contents = [str(msg["content"]) for msg in session._context.messages]  # noqa: SLF001
     assert "<reply><text>old</text></reply>" not in persisted_contents
     assert "<reply><text>new</text></reply>" in persisted_contents
@@ -183,11 +183,11 @@ def test_tool_call_turn_inserts_queued_message_after_tool_result() -> None:
     )
     registry = _build_registry()
     session = registry.create(metadata={"session_id": "s1"})
-    session.queue_user_message("<batch><message><text>queued</text></message></batch>")
+    session.queue_user_message("<messages><message><text>queued</text></message></messages>")
 
     reply = agent.run(
         session=session,
-        user_message="<batch><message><text>first</text></message></batch>",
+        user_message="<messages><message><text>first</text></message></messages>",
     )
 
     assert reply.output_xml == "<reply><text>done</text></reply>"
@@ -205,7 +205,7 @@ def test_tool_call_turn_inserts_queued_message_after_tool_result() -> None:
     ]
     assert second_call_contents[-3] == '{"ok": true}'
     assert second_call_contents[-2] == '<turn index="2" />'
-    assert second_call_contents[-1] == "<batch><message><text>queued</text></message></batch>"
+    assert second_call_contents[-1] == "<messages><message><text>queued</text></message></messages>"
 
 
 def test_agent_run_failure_commits_user_and_fallback_reply() -> None:

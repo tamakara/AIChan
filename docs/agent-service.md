@@ -28,7 +28,7 @@
 
 - `POST /sessions/{session_id}/queue-message`
   - 请求（`QueueMessageRequest`）：
-    - `input_xml: str`（必填，`<batch>` XML）
+    - `input_xml: str`（必填，`<messages>` XML）
   - 成功：`{"queued": true}`
   - 失败：`404`（session 不存在）
   - 语义：同一会话运行中收到的新用户消息追加到 session 内部队列，等待 agent turn 边界插入。
@@ -36,7 +36,7 @@
 - `POST /chat`
   - 请求（`ChatRequest`）：
     - `session_id: str`（必填）
-    - `input_xml: str`（必填，`<batch>` XML）
+    - `input_xml: str`（必填，`<messages>` XML）
   - 响应（`ChatResponse`）：
     - `output_xml: str`（`<reply>` XML）
   - 失败语义：
@@ -45,15 +45,15 @@
 
 ### 2.2 LLM 输入输出格式
 
-用户消息是 hub-service 生成的 `<batch>`：
+用户消息是 hub-service 生成的 `<messages>`：
 
 ```xml
-<batch>
+<messages>
   <message id="999" time="1710000000" sub_type="friend" nickname="小明">
     <text>你好</text>
     <image file="abc.jpg" url="https://..." />
   </message>
-</batch>
+</messages>
 ```
 
 当前会话的 `session_id/platform/user_id/self_id` 和最大推理轮次会通过 `<session_info session_id="..." max_turn="..." ... />` system 消息提供。每轮推理还会写入一条 `<turn index="..."/>` system 消息，作为普通会话消息进入上下文。

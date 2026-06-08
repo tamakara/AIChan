@@ -29,7 +29,7 @@ def test_onebot_private_events_to_input_xml_keeps_only_dialog_fields() -> None:
         ]
     )
 
-    assert xml.startswith("<batch>")
+    assert xml.startswith("<messages>")
     assert 'id="9"' in xml
     assert 'nickname="小明"' in xml
     assert "<text>1 &lt; 2 &amp; ok</text>" in xml

@@ -30,7 +30,7 @@ AICHAN 是一个基于 NapCat + OneBot v11 接入的 QQ 私聊助理系统：Nap
   → NapCat OneBot v11 WS 事件 → hub-service 接收
   → 私聊 + user_id 白名单过滤
   → 按 session_key 防抖合并多轮输入
-  → OneBot v11 私聊事件转换为 <batch>
+  → OneBot v11 私聊事件转换为 <messages>
   → POST /chat → agent-service
   → Agent 多轮 LLM 推理 + MCP 工具调用
   → LLM 输出 <reply>
@@ -47,7 +47,7 @@ AICHAN 是一个基于 NapCat + OneBot v11 接入的 QQ 私聊助理系统：Nap
 | `agent-service` | `GET /healthz` | 存活探针 |
 | `agent-service` | `POST /sessions` | 创建会话 |
 | `agent-service` | `DELETE /sessions/{id}` | 删除会话 |
-| `agent-service` | `POST /chat` | 发送 `<batch>`，返回 `<reply>` |
+| `agent-service` | `POST /chat` | 发送 `<messages>`，返回 `<reply>` |
 | `hub-service` | `GET /healthz` | 存活探针 |
 | `hub-service` | `GET /api/v1/user/{id}/info` | QQ 用户信息查询，供 MCP 工具调用 |
 | `hub-service` | `GET /api/v1/message/history` | QQ 历史消息查询，供 MCP 工具调用 |
@@ -56,7 +56,7 @@ AICHAN 是一个基于 NapCat + OneBot v11 接入的 QQ 私聊助理系统：Nap
 
 请求：
 ```json
-{"session_id": "uuid", "input_xml": "<batch>...</batch>"}
+{"session_id": "uuid", "input_xml": "<messages>...</messages>"}
 ```
 
 响应：

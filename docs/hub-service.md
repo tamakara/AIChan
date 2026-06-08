@@ -27,7 +27,7 @@ OneBot v11 复杂性只停留在本服务边界。agent-service 不接收原始 
 ### 2.3 对外消费（HTTP → agent-service）
 
 - `POST {agent_url}/sessions` — 创建 agent 会话，metadata 包含 `platform/user_id/self_id`
-- `POST {agent_url}/chat` — 发送 `<batch>` XML，接收 `<reply>` XML
+- `POST {agent_url}/chat` — 发送 `<messages>` XML，接收 `<reply>` XML
 - `POST {agent_url}/sessions/{session_id}/queue-message` — 同一会话运行中收到新消息时追加到 agent 会话队列
 
 ### 2.4 对外产出（WebSocket → NapCat）
@@ -60,7 +60,7 @@ OneBot v11 复杂性只停留在本服务边界。agent-service 不接收原始 
 
 ### 3.3 XML 转换
 
-- `onebot_private_events_to_input_xml(events)`：把防抖批次转换为 `<batch>`
+- `onebot_private_events_to_input_xml(events)`：把防抖批次转换为 `<messages>`
 - `reply_xml_to_onebot_segments(xml)`：把 `<reply>` 转换为 OneBot v11 私聊消息段
 - 转换层丢弃 `raw_message`、`font`、群字段和无关 sender 字段
 
@@ -71,9 +71,9 @@ OneBot v11 复杂性只停留在本服务边界。agent-service 不接收原始 
   → 重置 debounce_deadline
   → 防抖静默窗口等待
   → 窗口内无新消息 → 提取批次到 inflight_events
-  → 转换为 <batch>
+  → 转换为 <messages>
   → POST /chat({input_xml})
-  → 运行期间新消息：单条转换为 <batch> 并 POST /queue-message
+  → 运行期间新消息：单条转换为 <messages> 并 POST /queue-message
   → agent-service 在同一轮推理内 drain queued messages 并收敛为最终 {output_xml}
   → 转换为 OneBot 消息段并 send_private_msg
   → 仍有 pending → 重置窗口重跑
@@ -81,9 +81,9 @@ OneBot v11 复杂性只停留在本服务边界。agent-service 不接收原始 
 ```
 
 关键规则：
-- 非运行状态下，消息仍由 hub 的防抖窗口合并为一个 `<batch>` 后调用 `/chat`
+- 非运行状态下，消息仍由 hub 的防抖窗口合并为一个 `<messages>` 后调用 `/chat`
 - 正在运行时，同一会话新消息不进入 hub 的下一轮 pending 队列，而是立即调用 `/queue-message` 交给 agent 会话内部队列
-- hub 不再发送空 `<batch />` 触发补跑；运行中新消息是否覆盖旧回复由 agent-service 的 turn-loop 和 queued message drain 逻辑统一收口
+- hub 不再发送空 `<messages />` 触发补跑；运行中新消息是否覆盖旧回复由 agent-service 的 turn-loop 和 queued message drain 逻辑统一收口
 
 ## 5. 配置项
 

@@ -29,16 +29,16 @@ def onebot_private_events_to_input_xml(events: list[dict[str, Any]]) -> str:
     hub 是唯一理解 OneBot11 的 adapter，因此这里只保留“理解对话”需要的字段。
     用户身份等稳定信息放在 session metadata，避免同一会话每条消息重复消耗 token。
     """
-    batch = ElementTree.Element("batch")
+    messages = ElementTree.Element("messages")
     for event in events:
         message = ElementTree.SubElement(
-            batch,
+            messages,
             "message",
             _message_attrs(event),
         )
         for segment in _message_segments(event.get("message")):
             _append_input_segment(message, segment)
-    return ElementTree.tostring(batch, encoding="unicode", short_empty_elements=True)
+    return ElementTree.tostring(messages, encoding="unicode", short_empty_elements=True)
 
 
 def reply_xml_to_onebot_segments(xml: str) -> list[dict[str, Any]]:
