@@ -3,33 +3,23 @@ from time import perf_counter
 from typing import Any
 
 
-LOGGER_NAME_PREFIX = "napcat_mcp"
+LOGGER_NAME_PREFIX = "tool_mcp"
 EVENT_LABELS = {
-    "napcat_mcp.boot": "服务初始化",
-    "napcat_mcp.ready": "服务启动完成",
-    "napcat_mcp.stopping": "服务停止中",
-    "napcat_mcp.stopped": "服务已停止",
-    "napcat_mcp.ws_connected": "NapCat WS 已连接",
-    "napcat_mcp.ws_disconnected": "NapCat WS 已断开",
-    "napcat_mcp.ws_action_completed": "OneBot Action 调用完成",
-    "napcat_mcp.ws_action_timeout": "OneBot Action 调用超时",
+    "tool_mcp.boot": "服务初始化",
+    "tool_mcp.ready": "服务启动完成",
+    "tool_mcp.stopping": "服务停止中",
+    "tool_mcp.stopped": "服务已停止",
 }
 FIELD_LABELS = {
-    "action_type": "动作类型",
-    "status": "状态",
     "elapsed_ms": "耗时",
 }
 DEFAULT_HIGHLIGHT_KEYS = (
-    "action_type",
-    "status",
     "elapsed_ms",
 )
 EVENT_HIGHLIGHT_KEYS = {
-    "napcat_mcp.boot": (),
-    "napcat_mcp.ready": ("elapsed_ms",),
-    "napcat_mcp.stopped": ("elapsed_ms",),
-    "napcat_mcp.ws_action_completed": ("action_type", "status", "elapsed_ms"),
-    "napcat_mcp.ws_action_timeout": ("action_type", "elapsed_ms"),
+    "tool_mcp.boot": (),
+    "tool_mcp.ready": ("elapsed_ms",),
+    "tool_mcp.stopped": ("elapsed_ms",),
 }
 
 

@@ -1,19 +1,22 @@
 from __future__ import annotations
 
+from typing import Protocol
 from typing import Any
 from xml.etree import ElementTree
 
+from .media_storage import StoredMedia
+
 INPUT_SEGMENT_ATTRS: dict[str, tuple[str, ...]] = {
-    "image": ("file", "url", "type"),
     "face": ("id",),
     "reply": ("id",),
-    "record": ("file", "url"),
-    "video": ("file", "url"),
     "at": ("qq",),
     "share": ("url", "title", "content", "image"),
     "location": ("lat", "lon", "title", "content"),
     "contact": ("type", "id"),
 }
+
+MEDIA_SEGMENT_TYPES = {"image", "file", "record", "video"}
+MEDIA_SEGMENT_ATTRS = ("object_key", "name", "mime", "size", "sha256")
 
 OUTPUT_SEGMENT_ATTRS: dict[str, tuple[str, ...]] = {
     "image": ("file",),
@@ -23,7 +26,22 @@ OUTPUT_SEGMENT_ATTRS: dict[str, tuple[str, ...]] = {
 }
 
 
-def onebot_private_events_to_input_xml(events: list[dict[str, Any]]) -> str:
+class MediaStorageProtocol(Protocol):
+    async def store_segment(
+        self,
+        *,
+        event: dict[str, Any],
+        segment_type: str,
+        segment_index: int,
+        data: dict[str, Any],
+    ) -> StoredMedia:
+        ...
+
+
+async def onebot_private_events_to_input_xml(
+    events: list[dict[str, Any]],
+    media_storage: MediaStorageProtocol | None = None,
+) -> str:
     """把 OneBot11 私聊事件压缩成 agent 可读 XML。
 
     hub 是唯一理解 OneBot11 的 adapter，因此这里只保留“理解对话”需要的字段。
@@ -36,8 +54,8 @@ def onebot_private_events_to_input_xml(events: list[dict[str, Any]]) -> str:
             "message",
             _message_attrs(event),
         )
-        for segment in _message_segments(event.get("message")):
-            _append_input_segment(message, segment)
+        for index, segment in enumerate(_message_segments(event.get("message"))):
+            await _append_input_segment(message, event, index, segment, media_storage)
     return ElementTree.tostring(messages, encoding="unicode", short_empty_elements=True)
 
 
@@ -72,7 +90,13 @@ def _message_attrs(event: dict[str, Any]) -> dict[str, str]:
     return attrs
 
 
-def _append_input_segment(parent: ElementTree.Element, segment: dict[str, Any]) -> None:
+async def _append_input_segment(
+    parent: ElementTree.Element,
+    event: dict[str, Any],
+    segment_index: int,
+    segment: dict[str, Any],
+    media_storage: MediaStorageProtocol | None,
+) -> None:
     segment_type = str(segment.get("type", ""))
     data = segment.get("data")
     if not isinstance(data, dict):
@@ -83,6 +107,24 @@ def _append_input_segment(parent: ElementTree.Element, segment: dict[str, Any]) 
         if text is not None:
             child = ElementTree.SubElement(parent, "text")
             child.text = str(text)
+        return
+
+    if segment_type in MEDIA_SEGMENT_TYPES:
+        if media_storage is None or not data.get("url"):
+            ElementTree.SubElement(parent, "unsupported", {"type": segment_type or "unknown"})
+            return
+        try:
+            stored = await media_storage.store_segment(
+                event=event,
+                segment_type=segment_type,
+                segment_index=segment_index,
+                data=data,
+            )
+        except Exception:
+            # 媒体入库失败时仍保留“用户发过媒体”的事实，但不泄漏 NapCat 临时 URL。
+            ElementTree.SubElement(parent, "unsupported", {"type": segment_type, "reason": "storage_failed"})
+            return
+        ElementTree.SubElement(parent, segment_type, _stored_media_attrs(stored))
         return
 
     if segment_type in INPUT_SEGMENT_ATTRS:
@@ -104,6 +146,16 @@ def _attrs(data: dict[str, Any], names: tuple[str, ...]) -> dict[str, str]:
     for name in names:
         _set_attr(attrs, name, data.get(name))
     return attrs
+
+
+def _stored_media_attrs(stored: StoredMedia) -> dict[str, str]:
+    return {
+        "object_key": stored.object_key,
+        "name": stored.name,
+        "mime": stored.mime,
+        "size": str(stored.size),
+        "sha256": stored.sha256,
+    }
 
 
 def _set_attr(attrs: dict[str, str], name: str, value: object) -> None:

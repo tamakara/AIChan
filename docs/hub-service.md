@@ -2,7 +2,7 @@
 
 ## 1. 模块定位
 
-`hub-service` 是 QQ 私聊会话编排中枢：通过唯一的 NapCat WebSocket 接收 OneBot v11 事件，按内部 `session_key` 做防抖合并与串行调度，调用 `agent-service` 生成 XML 回复，再通过同一条 NapCat WS 发送私聊消息。
+`hub-service` 是 QQ 私聊会话编排中枢：通过唯一的 NapCat WebSocket 接收 OneBot v11 事件，按内部 `session_key` 做防抖合并与串行调度，把 NapCat 媒体 URL 下载到 MinIO，调用 `agent-service` 生成 XML 回复，再通过同一条 NapCat WS 发送私聊消息。
 
 OneBot v11 复杂性只停留在本服务边界。agent-service 不接收原始 OneBot 事件，也不直接输出 OneBot 消息段。
 
@@ -16,6 +16,12 @@ OneBot v11 复杂性只停留在本服务边界。agent-service 不接收原始 
   - 通过 NapCat `get_stranger_info` 动作查询用户信息
 - `GET /api/v1/message/history?message_type=private|group&peer_id=...`
   - 通过 NapCat 历史消息动作查询私聊或群聊记录，供 MCP 工具调用
+- `GET /api/v1/files/{object_key:path}/metadata`
+  - 返回已入库文件的 `object_key/name/mime/size/sha256`
+- `GET /api/v1/files/{object_key:path}/content`
+  - 返回原始 bytes，供图片理解工具读取
+- `GET /api/v1/files/{object_key:path}/text?max_chars=12000`
+  - 仅支持 `text/*` 或常见文本扩展名；非文本返回 422
 
 ### 2.2 对外消费（WebSocket）
 
@@ -58,9 +64,17 @@ OneBot v11 复杂性只停留在本服务边界。agent-service 不接收原始 
 }
 ```
 
-### 3.3 XML 转换
+### 3.3 媒体入库
 
-- `onebot_private_events_to_input_xml(events)`：把防抖批次转换为 `<messages>`
+- `MediaStorage.ensure_bucket()`：启动时确保 MinIO bucket 存在
+- `MediaStorage.store_segment()`：下载带 `url` 的 `image/file/record/video` segment，计算 `sha256/size/mime/name` 并写入 MinIO
+- object key 固定格式：`qq/private/{user_id}/{message_id}/{segment_index}-{sha256}.{ext}`
+- `<messages>` 中只暴露 `object_key/name/mime/size/sha256`，不暴露 NapCat 原始 URL
+- 无 `url` 的 `file` 输出 `<unsupported type="file" />`
+
+### 3.4 XML 转换
+
+- `onebot_private_events_to_input_xml(events, media_storage)`：把防抖批次转换为 `<messages>`，需要 I/O 时会先完成媒体入库
 - `reply_xml_to_onebot_segments(xml)`：把 `<reply>` 转换为 OneBot v11 私聊消息段
 - 转换层丢弃 `raw_message`、`font`、群字段和无关 sender 字段
 
@@ -71,6 +85,7 @@ OneBot v11 复杂性只停留在本服务边界。agent-service 不接收原始 
   → 重置 debounce_deadline
   → 防抖静默窗口等待
   → 窗口内无新消息 → 提取批次到 inflight_events
+  → 带 url 的媒体入库 MinIO
   → 转换为 <messages>
   → POST /chat({input_xml})
   → 运行期间新消息：单条转换为 <messages> 并 POST /queue-message
@@ -96,8 +111,15 @@ OneBot v11 复杂性只停留在本服务边界。agent-service 不接收原始 
 | `hub.debounce_seconds` | float | 防抖窗口（秒） |
 | `hub.allowed_user_ids` | list[int] | 允许对话的 QQ 用户 ID；空数组表示全部忽略 |
 | `napcat.ws_action_timeout_seconds` | int | NapCat 动作超时（秒） |
+| `storage.endpoint` | str | MinIO S3 endpoint，compose 默认 `minio:9000` |
+| `storage.bucket` | str | 媒体文件 bucket |
+| `storage.access_key` | str | MinIO access key；通过 `STORAGE__ACCESS_KEY` 覆盖 |
+| `storage.secret_key` | str | MinIO secret key；通过 `STORAGE__SECRET_KEY` 覆盖 |
+| `storage.secure` | bool | 是否使用 HTTPS |
+| `storage.download_timeout_seconds` | float | 下载 NapCat 媒体 URL 的超时秒数 |
+| `storage.max_object_bytes` | int | 单个媒体对象最大字节数 |
 
-配置加载由 `pydantic-settings` 统一处理，优先级为：显式初始化参数 > 环境变量 > 根目录 `.env` > `hub-service/config.yml`。当前 hub-service 的配置均为非敏感拓扑与行为参数，默认直接维护在 `hub-service/config.yml`，`docker-compose.yml` 不额外传递 `HUB__...` 或 `NAPCAT__...` 环境变量。
+配置加载由 `pydantic-settings` 统一处理，优先级为：显式初始化参数 > 环境变量 > 根目录 `.env` > `hub-service/config.yml`。内部 endpoint、bucket、timeout、大小限制固定维护在 `hub-service/config.yml`；`docker-compose.yml` 只额外传入 `STORAGE__ACCESS_KEY` / `STORAGE__SECRET_KEY`，默认复用 `.env` 中的 `MINIO_ROOT_USER` / `MINIO_ROOT_PASSWORD`。
 
 ## 6. 设计权衡
 
@@ -106,3 +128,4 @@ OneBot v11 复杂性只停留在本服务边界。agent-service 不接收原始 
 - 下游 HTTP `timeout=None`：避免误超时，但缺少硬超时保护
 - 高频连发若持续未达静默窗口，会延后触发 agent
 - NapCat WS 是单连接内存状态，当前部署目标是单实例
+- 第一版文件读取只支持文本类；PDF/DOCX/OCR 抽取不在 hub-service 内实现

@@ -2,14 +2,19 @@ services:
   mcp-gateway:
     image: docker/mcp-gateway:latest
     restart: unless-stopped
+    depends_on:
+      tool-mcp-server:
+        condition: service_started
     command:
       - --transport=sse
       - --port=9000
-      - --servers=playwright,fetch,time,docker://napcat-mcp-server:latest
+      - --additional-catalog=/app/tool-mcp-server/docker-mcp-catalog.yml
+      - --servers=playwright,fetch,time,tool-mcp-server
     ports:
       - "19000:9000"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
+      - ./tool-mcp-server/docker-mcp-catalog.yml:/app/tool-mcp-server/docker-mcp-catalog.yml:ro
 
   agent-service:
     build:
@@ -29,15 +34,37 @@ services:
     ports:
       - "18000:8000"
 
-  napcat-mcp-server:
-    image: napcat-mcp-server:latest
+  tool-mcp-server:
+    image: tool-mcp-server:latest
     build:
-      context: ./napcat-mcp-server
+      context: ./tool-mcp-server
     restart: unless-stopped
     command:
-      - napcat-mcp-server
+      - tool-mcp-mcp
+      - --transport
+      - streamable-http
+    environment:
+      VISION__OPENAI_BASE_URL: "${VISION__OPENAI_BASE_URL:-}"
+      VISION__OPENAI_API_KEY: "${VISION__OPENAI_API_KEY:-}"
+      VISION__MODEL: "${VISION__MODEL:-}"
     volumes:
-      - ./napcat-mcp-server/config.yml:/app/napcat-mcp-server/config.yml:ro
+      - ./tool-mcp-server/config.yml:/app/tool-mcp-server/config.yml:ro
+
+  minio:
+    image: minio/minio:latest
+    restart: unless-stopped
+    command:
+      - server
+      - /data
+      - --console-address
+      - :9001
+    environment:
+      MINIO_ROOT_USER: "${MINIO_ROOT_USER:-minio_user}"
+      MINIO_ROOT_PASSWORD: "${MINIO_ROOT_PASSWORD:-minio_password}"
+    volumes:
+      - minio-data:/data
+    ports:
+      - "19001:9001"
 
   napcat:
     image: mlikiowa/napcat-docker:latest
@@ -63,7 +90,15 @@ services:
     depends_on:
       agent-service:
         condition: service_started
+      minio:
+        condition: service_started
+    environment:
+      STORAGE__ACCESS_KEY: "${MINIO_ROOT_USER:-minio_user}"
+      STORAGE__SECRET_KEY: "${MINIO_ROOT_PASSWORD:-minio_password}"
     volumes:
       - ./hub-service/config.yml:/app/hub-service/config.yml:ro
     ports:
       - "18020:8020"
+
+volumes:
+  minio-data:

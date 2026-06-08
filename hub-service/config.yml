@@ -10,3 +10,12 @@ hub:
 
 napcat:
   ws_action_timeout_seconds: 5
+
+storage:
+  endpoint: minio:9000
+  bucket: aichan-media
+  access_key: ""
+  secret_key: ""
+  secure: false
+  download_timeout_seconds: 20
+  max_object_bytes: 10485760

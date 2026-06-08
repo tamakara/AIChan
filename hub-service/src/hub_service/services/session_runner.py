@@ -5,7 +5,7 @@ from collections.abc import Awaitable, Callable
 
 from ..logger import elapsed_ms, get_logger, log_exception, log_info, start_timer
 from ..router.schemas import AgentInboundEvent
-from .message_xml import onebot_private_events_to_input_xml
+from .message_xml import MediaStorageProtocol, onebot_private_events_to_input_xml
 from .outbound_client import OutboundClient
 
 IdleCallback = Callable[[str, "SessionRunner"], Awaitable[None]]
@@ -19,6 +19,7 @@ class SessionRunner:
         session_key: str,
         agent_session_id: str,
         outbound_client: OutboundClient,
+        media_storage: MediaStorageProtocol | None,
         debounce_seconds: float,
         on_idle: IdleCallback,
     ) -> None:
@@ -26,6 +27,7 @@ class SessionRunner:
         self._session_key = session_key
         self._agent_session_id = agent_session_id
         self._outbound_client = outbound_client
+        self._media_storage = media_storage
         self._debounce_seconds = debounce_seconds
         self._on_idle = on_idle
         self._pending_events: list[AgentInboundEvent] = []
@@ -54,7 +56,10 @@ class SessionRunner:
                 self._schedule_debounce_locked()
 
         if should_queue_to_agent:
-            input_xml = onebot_private_events_to_input_xml([message.event])
+            input_xml = await onebot_private_events_to_input_xml(
+                [message.event],
+                media_storage=self._media_storage,
+            )
             await self._outbound_client.queue_session_message(
                 self._agent_session_id,
                 input_xml,
@@ -122,7 +127,10 @@ class SessionRunner:
     async def _run_once(self, events: list[AgentInboundEvent]) -> None:
         run_started_at = start_timer()
         raw_events = [e.event for e in events]
-        input_xml = onebot_private_events_to_input_xml(raw_events)
+        input_xml = await onebot_private_events_to_input_xml(
+            raw_events,
+            media_storage=self._media_storage,
+        )
 
         log_info(
             self._logger,

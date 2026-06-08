@@ -1,13 +1,24 @@
-from fastapi import APIRouter, HTTPException, Query, WebSocket, status
+from fastapi import APIRouter, HTTPException, Query, Response, WebSocket, status
 
 from ..services.connection_state import NapcatConnectionState
+from ..services.media_storage import MediaNotFoundError, MediaStorage, UnsupportedTextFileError
 from ..services.napcat_ws import NapcatWsGateway
-from .schemas import HealthResponse, MessageHistoryData, MessageHistoryResponse, UserInfoResponse
+from .schemas import (
+    FileMetadataData,
+    FileMetadataResponse,
+    FileTextData,
+    FileTextResponse,
+    HealthResponse,
+    MessageHistoryData,
+    MessageHistoryResponse,
+    UserInfoResponse,
+)
 
 
 def create_router(
     napcat_ws_gateway: NapcatWsGateway,
     napcat_connection_state: NapcatConnectionState,
+    media_storage: MediaStorage,
 ) -> APIRouter:
     router = APIRouter()
 
@@ -39,6 +50,48 @@ def create_router(
                 detail="napcat action timeout",
             ) from exc
         return UserInfoResponse(ok=True, data=result)
+
+    @router.get("/api/v1/files/{object_key:path}/metadata", response_model=FileMetadataResponse)
+    async def get_file_metadata(object_key: str) -> FileMetadataResponse:
+        try:
+            metadata = await media_storage.metadata(object_key)
+        except MediaNotFoundError as exc:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="file not found") from exc
+        return FileMetadataResponse(
+            ok=True,
+            data=FileMetadataData(
+                object_key=metadata.object_key,
+                name=metadata.name,
+                mime=metadata.mime,
+                size=metadata.size,
+                sha256=metadata.sha256,
+            ),
+        )
+
+    @router.get("/api/v1/files/{object_key:path}/content")
+    async def get_file_content(object_key: str) -> Response:
+        try:
+            metadata = await media_storage.metadata(object_key)
+            content = await media_storage.content(object_key)
+        except MediaNotFoundError as exc:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="file not found") from exc
+        return Response(content=content, media_type=metadata.mime)
+
+    @router.get("/api/v1/files/{object_key:path}/text", response_model=FileTextResponse)
+    async def get_file_text(
+        object_key: str,
+        max_chars: int = Query(default=12000, ge=1, le=50000),
+    ) -> FileTextResponse:
+        try:
+            text, truncated = await media_storage.text(object_key, max_chars=max_chars)
+        except MediaNotFoundError as exc:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="file not found") from exc
+        except UnsupportedTextFileError as exc:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="file is not text") from exc
+        return FileTextResponse(
+            ok=True,
+            data=FileTextData(object_key=object_key, text=text, truncated=truncated),
+        )
 
     @router.get("/api/v1/message/history", response_model=MessageHistoryResponse)
     async def get_message_history(

@@ -58,6 +58,7 @@ def test_debounce_merges_messages_for_same_session() -> None:
     outbound = StubOutboundClient()
     registry = SessionRegistry(
         outbound_client=outbound,  # type: ignore[arg-type]
+        media_storage=None,
         debounce_seconds=0.05,
     )
     state: dict[str, int] = {}
@@ -88,6 +89,7 @@ def test_running_session_queues_new_messages_to_agent() -> None:
     outbound.call_delays = [0.08]
     registry = SessionRegistry(
         outbound_client=outbound,  # type: ignore[arg-type]
+        media_storage=None,
         debounce_seconds=0.01,
     )
 
@@ -114,6 +116,7 @@ def test_different_sessions_are_dispatched_independently() -> None:
     outbound = StubOutboundClient()
     registry = SessionRegistry(
         outbound_client=outbound,  # type: ignore[arg-type]
+        media_storage=None,
         debounce_seconds=0.01,
     )
 

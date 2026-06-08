@@ -1,7 +1,7 @@
 [project]
-name = "napcat-mcp-server"
+name = "tool-mcp-server"
 version = "0.1.0"
-description = "NapCat MCP server — exposes OneBot v11 tools via MCP for agent-service."
+description = "AICHAN custom MCP tools for QQ context, files, and image understanding."
 authors = [
     { name = "魂辛カラ", email = "tamakara@qq.com" }
 ]
@@ -10,6 +10,7 @@ dependencies = [
     "fastapi>=0.115.6",
     "httpx>=0.28.1",
     "mcp>=1.13.0",
+    "openai>=1.99.9",
     "pydantic>=2.11.7",
     "pydantic-settings>=2.14.0",
     "pyyaml>=6.0.3",
@@ -23,8 +24,8 @@ test = [
 ]
 
 [project.scripts]
-napcat-mcp-server = "napcat_mcp_server.main:main"
-napcat-mcp-mcp = "napcat_mcp_server.mcp_main:main"
+tool-mcp-server = "tool_mcp_server.main:main"
+tool-mcp-mcp = "tool_mcp_server.mcp_main:main"
 
 [build-system]
 requires = ["uv_build>=0.11.7,<0.12.0"]

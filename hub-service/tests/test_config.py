@@ -16,6 +16,14 @@ hub:
   allowed_user_ids: [1]
 napcat:
   ws_action_timeout_seconds: 5
+storage:
+  endpoint: minio:9000
+  bucket: aichan-media
+  access_key: minio_user
+  secret_key: minio_password
+  secure: false
+  download_timeout_seconds: 20
+  max_object_bytes: 10485760
 """,
         encoding="utf-8",
     )
@@ -24,6 +32,8 @@ napcat:
     monkeypatch.setenv("HUB__DEBOUNCE_SECONDS", "3.5")
     monkeypatch.setenv("HUB__ALLOWED_USER_IDS", "[2041214551,2041214552]")
     monkeypatch.setenv("NAPCAT__WS_ACTION_TIMEOUT_SECONDS", "7")
+    monkeypatch.setenv("STORAGE__BUCKET", "media-env")
+    monkeypatch.setenv("STORAGE__DOWNLOAD_TIMEOUT_SECONDS", "9")
 
     settings = Settings(_env_file=None)
 
@@ -31,3 +41,5 @@ napcat:
     assert settings.hub.debounce_seconds == 3.5
     assert settings.hub.allowed_user_ids == (2041214551, 2041214552)
     assert settings.napcat.ws_action_timeout_seconds == 7.0
+    assert settings.storage.bucket == "media-env"
+    assert settings.storage.download_timeout_seconds == 9.0

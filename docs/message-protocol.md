@@ -12,11 +12,12 @@ AICHAN 在 `hub-service` 与 `agent-service` 之间使用自有 XML 协议。One
 <messages>
   <message id="999" time="1710000000" sub_type="friend" nickname="小明">
     <text>你好</text>
-    <image file="abc.jpg" url="https://..." type="flash" />
+    <image object_key="qq/private/123/999/1-abc.jpg" name="abc.jpg" mime="image/jpeg" size="123" sha256="abc" />
+    <file object_key="qq/private/123/999/2-def.txt" name="note.txt" mime="text/plain" size="456" sha256="def" />
     <face id="123" />
     <reply id="998" />
-    <record file="a.amr" url="https://..." />
-    <video file="a.mp4" url="https://..." />
+    <record object_key="qq/private/123/999/5-ghi.amr" name="a.amr" mime="audio/amr" size="789" sha256="ghi" />
+    <video object_key="qq/private/123/999/6-jkl.mp4" name="a.mp4" mime="video/mp4" size="1024" sha256="jkl" />
     <at qq="10001" />
     <share url="https://..." title="标题" content="摘要" image="https://..." />
     <location lat="39.9" lon="116.3" title="位置" content="说明" />
@@ -27,6 +28,13 @@ AICHAN 在 `hub-service` 与 `agent-service` 之间使用自有 XML 协议。One
 ```
 
 `user_id`、`self_id` 等稳定身份信息不写入每条消息，而是在创建 agent session 时通过 metadata 写入 `<session_info>` 系统消息。
+
+媒体段规则：
+- 第一版只处理 OneBot message segment 中带 `url` 的 `image/file/record/video`
+- hub-service 会先下载媒体并写入私有 MinIO，XML 中只暴露 `object_key/name/mime/size/sha256`
+- object key 固定格式：`qq/private/{user_id}/{message_id}/{segment_index}-{sha256}.{ext}`
+- 原始 NapCat URL 不会出现在 XML 中
+- 无下载 URL 的文件段输出 `<unsupported type="file" />`
 
 ## 3. 输出格式
 

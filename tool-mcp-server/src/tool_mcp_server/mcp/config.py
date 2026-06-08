@@ -2,7 +2,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, StrictStr, ValidationError, field_validator
+from pydantic import BaseModel, ConfigDict, StrictInt, StrictStr, ValidationError, field_validator
 from pydantic_settings import (
     BaseSettings,
     PydanticBaseSettingsSource,
@@ -10,7 +10,14 @@ from pydantic_settings import (
     YamlConfigSettingsSource,
 )
 
-CONFIG_PATH = Path.cwd() / "napcat-mcp-server" / "config.yml"
+CONFIG_PATH = Path.cwd() / "tool-mcp-server" / "config.yml"
+
+
+class ServerSettings(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    host: StrictStr
+    port: StrictInt
 
 
 class McpSettings(BaseModel):
@@ -29,6 +36,26 @@ class McpSettings(BaseModel):
         return float(value)
 
 
+class VisionSettings(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    openai_base_url: StrictStr
+    openai_api_key: StrictStr
+    model: StrictStr
+    timeout_seconds: float
+
+    @field_validator("timeout_seconds", mode="before")
+    @classmethod
+    def _validate_timeout_seconds(cls, value: Any) -> float:
+        if isinstance(value, str):
+            value = _parse_float_env(value)
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise TypeError("必须是数字")
+        if value <= 0:
+            raise ValueError("必须大于 0")
+        return float(value)
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         frozen=True,
@@ -38,7 +65,9 @@ class Settings(BaseSettings):
         env_nested_delimiter="__",
     )
 
+    server: ServerSettings
     mcp: McpSettings
+    vision: VisionSettings
 
     @classmethod
     def settings_customise_sources(

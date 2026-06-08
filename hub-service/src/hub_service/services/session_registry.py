@@ -4,6 +4,7 @@ import asyncio
 from typing import Any
 
 from ..router.schemas import AgentInboundEvent
+from .message_xml import MediaStorageProtocol
 from .napcat_ws import get_session_key
 from .outbound_client import OutboundClient
 from .session_runner import SessionRunner
@@ -15,9 +16,11 @@ class SessionRegistry:
     def __init__(
         self,
         outbound_client: OutboundClient,
+        media_storage: MediaStorageProtocol | None,
         debounce_seconds: float,
     ) -> None:
         self._outbound_client = outbound_client
+        self._media_storage = media_storage
         self._debounce_seconds = debounce_seconds
         self._runners: dict[str, SessionRunner] = {}
         self._agent_session_ids: dict[str, str] = {}
@@ -43,6 +46,7 @@ class SessionRegistry:
                     session_key=session_key,
                     agent_session_id=agent_session_id,
                     outbound_client=self._outbound_client,
+                    media_storage=self._media_storage,
                     debounce_seconds=self._debounce_seconds,
                     on_idle=self._on_runner_idle,
                 )

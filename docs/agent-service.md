@@ -51,12 +51,14 @@
 <messages>
   <message id="999" time="1710000000" sub_type="friend" nickname="小明">
     <text>你好</text>
-    <image file="abc.jpg" url="https://..." />
+    <image object_key="qq/private/1/999/1-abc.jpg" name="abc.jpg" mime="image/jpeg" size="123" sha256="abc" />
+    <file object_key="qq/private/1/999/2-def.txt" name="note.txt" mime="text/plain" size="456" sha256="def" />
   </message>
 </messages>
 ```
 
 当前会话的 `session_id/platform/user_id/self_id` 和最大推理轮次会通过 `<session_info session_id="..." max_turn="..." ... />` system 消息提供。每轮推理还会写入一条 `<turn index="..."/>` system 消息，作为普通会话消息进入上下文。
+图片和文件节点只携带 hub-service 入库后的 `object_key`，agent 需要通过 MCP 工具 `image_describe` / `file_read_text` 获取内容，不能根据文件名或消息文字猜测媒体内容。
 
 LLM 最终回复必须是 `<reply>`：
 
@@ -81,6 +83,7 @@ LLM 最终回复必须是 `<reply>`：
 - 启动阶段：`list_tools` 拉取并固化工具列表
 - 运行阶段：`call_tool` 执行，返回 JSON 字符串写回 `tool` 消息
 - 鉴权：`mcp_auth_token` 通过 `Authorization: Bearer` 发送
+- 当前自定义工具由 `tool-mcp-server` 提供：`qq_get_message_history`、`qq_get_user_info`、`file_get_metadata`、`file_read_text`、`image_describe`
 
 ## 3. 核心数据模型
 

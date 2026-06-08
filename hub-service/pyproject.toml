@@ -9,6 +9,7 @@ requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.115.6",
     "httpx>=0.28.1",
+    "minio>=7.2.16",
     "nonebot-adapter-onebot>=2.4.0",
     "pydantic>=2.11.7",
     "pydantic-settings>=2.14.0",
