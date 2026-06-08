@@ -74,9 +74,7 @@ OneBot v11 复杂性只停留在本服务边界。agent-service 不接收原始 
   → 转换为 <batch>
   → POST /chat({input_xml})
   → 运行期间新消息：单条转换为 <batch> 并 POST /queue-message
-  → 若 /chat 返回后发现运行期间曾 queue 新消息：丢弃旧回复
-  → 重新等待防抖窗口，发送空 <batch /> 触发 agent 消化内部队列
-  → 否则收到 {output_xml}
+  → agent-service 在同一轮推理内 drain queued messages 并收敛为最终 {output_xml}
   → 转换为 OneBot 消息段并 send_private_msg
   → 仍有 pending → 重置窗口重跑
   → 无 pending → 会话空闲
@@ -85,8 +83,7 @@ OneBot v11 复杂性只停留在本服务边界。agent-service 不接收原始 
 关键规则：
 - 非运行状态下，消息仍由 hub 的防抖窗口合并为一个 `<batch>` 后调用 `/chat`
 - 正在运行时，同一会话新消息不进入 hub 的下一轮 pending 队列，而是立即调用 `/queue-message` 交给 agent 会话内部队列
-- `/chat` 返回后、发送 QQ 回复前有本地 send gate；只要运行期间成功 queue 过新消息，旧回复就不发送
-- send gate 丢弃旧回复后会重新等待完整防抖窗口，再用空 `<batch />` 触发 agent 继续运行并 drain queued messages
+- hub 不再发送空 `<batch />` 触发补跑；运行中新消息是否覆盖旧回复由 agent-service 的 turn-loop 和 queued message drain 逻辑统一收口
 
 ## 5. 配置项
 

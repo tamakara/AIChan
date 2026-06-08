@@ -85,7 +85,7 @@ def test_debounce_merges_messages_for_same_session() -> None:
 
 def test_running_session_queues_new_messages_to_agent() -> None:
     outbound = StubOutboundClient()
-    outbound.call_delays = [0.08, 0.02]
+    outbound.call_delays = [0.08]
     registry = SessionRegistry(
         outbound_client=outbound,  # type: ignore[arg-type]
         debounce_seconds=0.01,
@@ -101,14 +101,13 @@ def test_running_session_queues_new_messages_to_agent() -> None:
 
     asyncio.run(run())
 
-    assert len(outbound.session_calls) == 2
+    assert len(outbound.session_calls) == 1
     assert '<message id="first"' in outbound.session_calls[0][2]
-    assert outbound.session_calls[1][2] == "<batch />"
     assert len(outbound.queued_calls) == 2
     assert '<message id="second"' in outbound.queued_calls[0][1]
     assert '<message id="third"' in outbound.queued_calls[1][1]
     assert len(outbound.replies) == 1
-    assert outbound.replies[0][1] == "<reply><text>reply:<batch /></text></reply>"
+    assert '<message id="first"' in str(outbound.replies[0][1])
 
 
 def test_different_sessions_are_dispatched_independently() -> None:

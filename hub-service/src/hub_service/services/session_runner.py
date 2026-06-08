@@ -32,8 +32,6 @@ class SessionRunner:
         self._debounce_deadline: float | None = None
         self._debounce_task: asyncio.Task[None] | None = None
         self._running = False
-        self._queue_version = 0
-        self._needs_queue_drain_run = False
         self._stopping = False
         self._lock = asyncio.Lock()
 
@@ -50,8 +48,6 @@ class SessionRunner:
                 return
             if self._running:
                 should_queue_to_agent = True
-                self._queue_version += 1
-                self._needs_queue_drain_run = True
             else:
                 self._pending_events.append(message)
                 self._debounce_deadline = loop.time() + self._debounce_seconds
@@ -105,14 +101,13 @@ class SessionRunner:
                     break
                 if now < self._debounce_deadline:
                     continue
-                if not self._pending_events and not self._needs_queue_drain_run:
+                if not self._pending_events:
                     self._debounce_task = None
                     should_notify_idle = self._is_idle_locked()
                     break
 
                 batched_events = self._pending_events.copy()
                 self._pending_events.clear()
-                self._needs_queue_drain_run = False
                 self._running = True
                 self._debounce_deadline = None
                 self._debounce_task = None
@@ -128,8 +123,6 @@ class SessionRunner:
         run_started_at = start_timer()
         raw_events = [e.event for e in events]
         input_xml = onebot_private_events_to_input_xml(raw_events)
-        async with self._lock:
-            queue_version_at_start = self._queue_version
 
         log_info(
             self._logger,
@@ -144,8 +137,6 @@ class SessionRunner:
                 agent_session_id=self._agent_session_id,
                 input_xml=input_xml,
             )
-            if await self._did_queue_change(queue_version_at_start):
-                return
             await self._outbound_client.send_reply(
                 session_key=self._session_key,
                 output_xml=reply.output_xml,
@@ -170,12 +161,7 @@ class SessionRunner:
             should_notify_idle = False
             async with self._lock:
                 self._running = False
-                if self._needs_queue_drain_run and not self._stopping:
-                    self._debounce_deadline = (
-                        asyncio.get_running_loop().time() + self._debounce_seconds
-                    )
-                    self._schedule_debounce_locked()
-                elif self._pending_events and not self._stopping:
+                if self._pending_events and not self._stopping:
                     self._debounce_deadline = (
                         asyncio.get_running_loop().time() + self._debounce_seconds
                     )
@@ -191,12 +177,6 @@ class SessionRunner:
             return False
         if self._pending_events:
             return False
-        if self._needs_queue_drain_run:
-            return False
         if self._debounce_task is not None and not self._debounce_task.done():
             return False
         return True
-
-    async def _did_queue_change(self, queue_version_at_start: int) -> bool:
-        async with self._lock:
-            return self._queue_version != queue_version_at_start
