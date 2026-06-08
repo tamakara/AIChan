@@ -170,15 +170,15 @@ def test_chat_uses_existing_session_and_injects_context() -> None:
     assert len(llm_client.calls) == 1
 
     called_messages = llm_client.calls[0]
-    assert called_messages[-2]["content"] == "<batch><message><text>hello</text></message></batch>"
-    assert called_messages[-1]["content"] == '<turn index="1" />'
+    assert called_messages[-2]["content"] == '<turn index="1" />'
+    assert called_messages[-1]["content"] == "<batch><message><text>hello</text></message></batch>"
 
     # Session 内保留角色提示词和会话信息两条 system 消息，再追加用户消息和当前 turn。
     assert len(called_messages) == 4
     assert called_messages[0]["role"] == "system"
     assert called_messages[1]["role"] == "system"
-    assert called_messages[2]["role"] == "user"
-    assert called_messages[3]["role"] == "system"
+    assert called_messages[2]["role"] == "system"
+    assert called_messages[3]["role"] == "user"
 
     session = registry.get(session_id)
     assert session is not None
@@ -210,7 +210,7 @@ def test_chat_reuses_existing_session() -> None:
     second_call_roles = [msg["role"] for msg in llm_client.calls[1]]
     second_call_contents = [str(msg["content"]) for msg in llm_client.calls[1]]
 
-    assert second_call_roles == ["system", "system", "user", "system", "assistant", "user", "system"]
+    assert second_call_roles == ["system", "system", "system", "user", "assistant", "system", "user"]
     assert first_user_xml in second_call_contents
     assert "<reply><text>ok</text></reply>" in second_call_contents
 

@@ -104,16 +104,17 @@ LLM 最终回复必须是 `<reply>`：
 ### 3.3 Agent 执行循环
 
 ```
-input_xml → staged add_message("user")
+pending_user_messages = [input_xml]
   → for turn in max_turns:
     → staged add_message("system", "<turn index=... />")
+    → staged add_message("user") × pending_user_messages
     → LlmClient.generate(context.messages + staged_messages)
     → staged add_message("assistant")
     → if finish_reason == "stop":
         → drain queued_user_messages
         → if 有 queued:
             → 丢弃本轮 final assistant
-            → staged add_message("user") × queued
+            → pending_user_messages = queued
             → continue
         → else:
             → _parse_agent_reply()    # 收敛为 <reply>
@@ -125,14 +126,15 @@ input_xml → staged add_message("user")
             → McpGateway.call_tool()
             → staged add_message("tool")
         → drain queued_user_messages
-        → staged add_message("user") × queued
+        → pending_user_messages = queued
     → else: raise
 ```
 
 关键设计：
 - LLM 调用期间不持锁；`/queue-message` 可以在运行中安全追加同会话用户消息
 - 本轮 user/assistant/tool 消息先暂存在 staged messages，成功返回最终 `<reply>` 时一次性提交
-- tool-call 分支先写入所有 tool result，再插入 queued user messages，保持 OpenAI tool-call 消息顺序合法
+- 每轮先写入 `<turn index="..."/>` system 消息，再写入本轮待处理 user messages；该 turn 消息会作为普通上下文持久化
+- tool-call 分支先写入所有 tool result，queued user messages 延后到下一轮 `<turn>` 之后写入，保持 OpenAI tool-call 消息顺序合法
 - stop 分支若发现 queued user messages，丢弃尚未发送的 final assistant，插入新 user 后继续推理
 - 运行期异常记录观测后返回固定兜底回复，并提交本轮 user + fallback assistant，因为这条回复会实际发给用户
 

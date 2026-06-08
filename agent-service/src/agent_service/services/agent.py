@@ -52,10 +52,10 @@ class Agent:
 
         # ── 1. 暂存用户消息、启动观测 trace ──
         staged_messages: list[Message] = []
-        _stage_message(staged_messages, role="user", content=user_message)
+        pending_user_messages = [user_message]
 
         with session._lock:
-            message_count = len(session._context.messages) + len(staged_messages)
+            message_count = len(session._context.messages) + len(pending_user_messages)
 
         run_trace = self._observability.start_run(
             session_id=session.session_id,
@@ -69,6 +69,8 @@ class Agent:
             for turn_idx in range(self._max_turns):
                 turn = turn_idx + 1
                 _stage_message(staged_messages, role="system", content=_turn_xml(index=turn))
+                _stage_user_messages(staged_messages, pending_user_messages)
+                pending_user_messages = []
 
                 with session._lock:
                     input_messages = list(session._context.messages) + list(staged_messages)
@@ -106,7 +108,7 @@ class Agent:
                             # 模型刚准备结束时若用户又发了消息，旧 final reply 已不再覆盖最新输入。
                             # 丢弃这条 assistant，插入新 user 后继续推理，避免未发送回复污染上下文。
                             staged_messages.pop()
-                            _stage_user_messages(staged_messages, queued_messages)
+                            pending_user_messages = queued_messages
                             continue
 
                         reply = _parse_agent_reply(llm_response.content)
@@ -173,9 +175,9 @@ class Agent:
                     )
 
                 queued_messages = _drain_queued_user_messages(session)
-                # 工具结果必须紧跟对应 tool_calls；新消息只能插在工具结果之后，
-                # 否则会破坏 OpenAI tool-call 消息顺序约束。
-                _stage_user_messages(staged_messages, queued_messages)
+                # 工具结果必须紧跟对应 tool_calls；队列消息延后到下一轮 turn marker 后，
+                # 既保留轮次边界，也避免破坏 OpenAI tool-call 消息顺序约束。
+                pending_user_messages = queued_messages
 
             raise RuntimeError(
                 "Agent failed to complete the task within "

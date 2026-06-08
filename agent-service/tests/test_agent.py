@@ -118,8 +118,8 @@ def test_agent_run_session() -> None:
     assert [msg["role"] for msg in session._context.messages] == [  # noqa: SLF001
         "system",
         "system",
-        "user",
         "system",
+        "user",
         "assistant",
     ]
 
@@ -196,16 +196,16 @@ def test_tool_call_turn_inserts_queued_message_after_tool_result() -> None:
     assert second_call_roles == [
         "system",
         "system",
-        "user",
         "system",
+        "user",
         "assistant",
         "tool",
-        "user",
         "system",
+        "user",
     ]
     assert second_call_contents[-3] == '{"ok": true}'
-    assert second_call_contents[-1] == '<turn index="2" />'
-    assert second_call_contents[-2] == "<batch><message><text>queued</text></message></batch>"
+    assert second_call_contents[-2] == '<turn index="2" />'
+    assert second_call_contents[-1] == "<batch><message><text>queued</text></message></batch>"
 
 
 def test_agent_run_failure_commits_user_and_fallback_reply() -> None:
@@ -231,7 +231,7 @@ def test_agent_run_failure_commits_user_and_fallback_reply() -> None:
     assert [msg["role"] for msg in session._context.messages] == [  # noqa: SLF001
         "system",
         "system",
-        "user",
         "system",
+        "user",
         "assistant",
     ]
