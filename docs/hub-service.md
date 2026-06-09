@@ -73,7 +73,7 @@ OneBot v11 复杂性只停留在本服务边界。agent-service 不接收原始 
 - `NapcatFileResolver`：当 `file` segment 没有 `url` 但带有 `file_id/file/id` 时，通过 NapCat `get_private_file_url` / `get_file` 尝试换取下载 URL，再交给 `MediaStorage` 入库
 - object key 固定格式：`qq/private/{user_id}/{message_id}/{segment_index}-{sha256}.{ext}`
 - `<messages>` 中只暴露 `object_key/name/mime/size/sha256`，不暴露 NapCat 原始 URL
-- 无法换取下载 URL 的 `file` 输出 `<unsupported type="file" />`
+- 无法换取下载 URL 的 `file` 输出 `<unsupported type="file" name="..." />`，保留文件名等安全元信息，避免 agent 完全丢失“用户发过文件”的语义
 
 ### 3.4 XML 转换
 

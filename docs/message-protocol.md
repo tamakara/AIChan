@@ -35,7 +35,7 @@ AICHAN 在 `hub-service` 与 `agent-service` 之间使用自有 XML 协议。One
 - hub-service 会先下载媒体并写入私有 MinIO，XML 中只暴露 `object_key/name/mime/size/sha256`
 - object key 固定格式：`qq/private/{user_id}/{message_id}/{segment_index}-{sha256}.{ext}`
 - 原始 NapCat URL 不会出现在 XML 中
-- 无法换取下载 URL 的文件段输出 `<unsupported type="file" />`
+- 无法换取下载 URL 的文件段输出 `<unsupported type="file" name="..." />`，尽量保留文件名等安全元信息
 
 ## 3. 输出格式
 

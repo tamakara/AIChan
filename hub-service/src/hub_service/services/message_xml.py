@@ -21,6 +21,7 @@ INPUT_SEGMENT_ATTRS: dict[str, tuple[str, ...]] = {
 
 MEDIA_SEGMENT_TYPES = {"image", "file", "record", "video"}
 MEDIA_SEGMENT_ATTRS = ("object_key", "name", "mime", "size", "sha256")
+UNSUPPORTED_FILE_ATTRS = ("name", "size", "mime")
 
 OUTPUT_SEGMENT_ATTRS: dict[str, tuple[str, ...]] = {
     "face": ("id",),
@@ -260,12 +261,12 @@ async def _append_stored_media(
     file_resolver: FileUrlResolverProtocol | None,
 ) -> None:
     if media_storage is None:
-        _append_unsupported(parent, segment_type)
+        _append_unsupported(parent, segment_type, data=data)
         return
 
     data = await _with_resolved_media_url(segment_type, event, data, file_resolver)
     if not data.get("url"):
-        _append_unsupported(parent, segment_type)
+        _append_unsupported(parent, segment_type, data=data)
         return
 
     try:
@@ -277,7 +278,7 @@ async def _append_stored_media(
         )
     except Exception:
         # 媒体入库失败时仍保留“用户发过媒体”的事实，但不泄漏 NapCat 临时 URL。
-        _append_unsupported(parent, segment_type, reason="storage_failed")
+        _append_unsupported(parent, segment_type, reason="storage_failed", data=data)
         return
 
     ElementTree.SubElement(parent, segment_type, _stored_media_attrs(stored))
@@ -319,9 +320,12 @@ def _append_unsupported(
     segment_type: str,
     *,
     reason: str | None = None,
+    data: dict[str, Any] | None = None,
 ) -> None:
     attrs = {"type": segment_type or "unknown"}
     _set_attr(attrs, "reason", reason)
+    if segment_type == "file" and data is not None:
+        attrs.update(_attrs(data, UNSUPPORTED_FILE_ATTRS))
     ElementTree.SubElement(parent, "unsupported", attrs)
 
 

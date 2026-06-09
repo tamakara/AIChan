@@ -115,7 +115,7 @@ async def test_file_segment_without_url_is_unsupported() -> None:
     )
 
     assert '<unsupported type="file"' in xml
-    assert "a.txt" not in xml
+    assert 'name="a.txt"' in xml
 
 
 @pytest.mark.asyncio
