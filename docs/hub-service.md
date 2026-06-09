@@ -41,6 +41,7 @@ OneBot v11 复杂性只停留在本服务边界。agent-service 不接收原始 
 - 通过 NapCat WS `send_action` 发送 `send_private_msg`
 - `message` 由 `<reply>` 转换为 OneBot v11 消息段数组
 - `<image object_key="..." />`、`<record object_key="..." />`、`<video object_key="..." />` 会从 MinIO 读取 bytes，转换为 NapCat/OneBot v11 支持的 `base64://...` 后发送
+- `<file object_key="..." />` 会从 MinIO 读取 bytes，并通过 NapCat `upload_private_file` 发送私聊文件
 - `auto_escape` 固定为 `false`
 
 ## 3. 核心数据模型
@@ -69,14 +70,16 @@ OneBot v11 复杂性只停留在本服务边界。agent-service 不接收原始 
 
 - `MediaStorage.ensure_bucket()`：启动时确保 MinIO bucket 存在
 - `MediaStorage.store_segment()`：下载带 `url` 的 `image/file/record/video` segment，计算 `sha256/size/mime/name` 并写入 MinIO
+- `NapcatFileResolver`：当 `file` segment 没有 `url` 但带有 `file_id/file/id` 时，通过 NapCat `get_private_file_url` / `get_file` 尝试换取下载 URL，再交给 `MediaStorage` 入库
 - object key 固定格式：`qq/private/{user_id}/{message_id}/{segment_index}-{sha256}.{ext}`
 - `<messages>` 中只暴露 `object_key/name/mime/size/sha256`，不暴露 NapCat 原始 URL
-- 无 `url` 的 `file` 输出 `<unsupported type="file" />`
+- 无法换取下载 URL 的 `file` 输出 `<unsupported type="file" />`
 
 ### 3.4 XML 转换
 
 - `onebot_private_events_to_input_xml(events, media_storage)`：把防抖批次转换为 `<messages>`，需要 I/O 时会先完成媒体入库
-- `reply_xml_to_onebot_segments(xml, media_storage)`：把 `<reply>` 转换为 OneBot v11 私聊消息段；出站媒体 `object_key` 会在这里解析为 `base64://...`
+- `reply_xml_to_onebot_segments(xml, media_storage)`：把 `<reply>` 转换为 OneBot v11 私聊消息段；出站图片/语音/视频 `object_key` 会在这里解析为 `base64://...`
+- `reply_xml_to_file_uploads(xml, media_storage)`：把 `<file object_key="..." />` 转为 NapCat `upload_private_file` 参数
 - 转换层丢弃 `raw_message`、`font`、群字段和无关 sender 字段
 
 ## 4. 防抖调度流程
@@ -86,7 +89,7 @@ OneBot v11 复杂性只停留在本服务边界。agent-service 不接收原始 
   → 重置 debounce_deadline
   → 防抖静默窗口等待
   → 窗口内无新消息 → 提取批次到 inflight_events
-  → 带 url 的媒体入库 MinIO
+  → 带 url 的媒体入库 MinIO；无 url 的 file 先尝试通过 NapCat file_id 换取下载 URL
   → 转换为 <messages>
   → POST /chat({input_xml})
   → 运行期间新消息：单条转换为 <messages> 并 POST /queue-message

@@ -66,6 +66,8 @@ SYSTEM_PROMPT = """
   - `<text>...</text>`：文本内容；文本中的 `<`、`>`、`&` 必须按 XML 规则转义。
   - `<image object_key="..." />`：发送已由 hub-service 入库的图片，例如用户消息或历史消息中的图片。
   - `<image file="..." />`：发送外部可直接访问的图片 URL。
+  - `<file object_key="..." />`：发送已由 hub-service 入库的文件。
+  - `<file file="..." name="..." />`：发送外部可直接访问的文件 URL，name 为发送给用户看到的文件名。
   - `<face id="..." />`
   - `<record object_key="..." />` 或 `<record file="..." />`
   - `<video object_key="..." />` 或 `<video file="..." />`

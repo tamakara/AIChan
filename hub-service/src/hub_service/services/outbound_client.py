@@ -13,11 +13,14 @@ from ..router.schemas import (
     SessionChatRequest,
     SessionChatResponse,
 )
-from .message_xml import reply_xml_to_onebot_segments
+from .message_xml import reply_xml_to_file_uploads, reply_xml_to_onebot_segments
 from .napcat_ws import NapcatWsGateway
 
 
 class ReplyMediaStorageProtocol(Protocol):
+    async def metadata(self, object_key: str) -> Any:
+        ...
+
     async def content(self, object_key: str) -> bytes:
         ...
 
@@ -98,17 +101,24 @@ class OutboundClient:
         """将 agent-service 返回的 AICHAN XML 回复转为 OneBot v11 私聊动作。"""
         started_at = start_timer()
         message = await reply_xml_to_onebot_segments(output_xml, media_storage=self._media_storage)
-        if not message:
+        file_uploads = await reply_xml_to_file_uploads(output_xml, media_storage=self._media_storage)
+        if not message and not file_uploads:
             return
 
         if not session_key.startswith("private:"):
             raise ValueError(f"invalid session_key: {session_key}")
 
         user_id = int(session_key.split(":", 1)[1])
-        action = "send_private_msg"
-        params = {"user_id": user_id, "message": message, "auto_escape": False}
+        if message:
+            action = "send_private_msg"
+            params = {"user_id": user_id, "message": message, "auto_escape": False}
+            await self._napcat_ws.send_action(action=action, params=params)
 
-        await self._napcat_ws.send_action(action=action, params=params)
+        for upload in file_uploads:
+            await self._napcat_ws.send_action(
+                action="upload_private_file",
+                params={"user_id": user_id, "file": upload.file, "name": upload.name},
+            )
         log_info(
             self._logger,
             "hub.reply_sent",

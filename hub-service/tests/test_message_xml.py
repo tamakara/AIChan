@@ -28,6 +28,16 @@ class StubMediaStorage:
         return self.contents[object_key]
 
 
+class StubFileResolver:
+    def __init__(self, url: str | None) -> None:
+        self.url = url
+        self.calls: list[tuple[dict, dict]] = []
+
+    async def resolve_file_url(self, *, event, data) -> str | None:
+        self.calls.append((event, data))
+        return self.url
+
+
 @pytest.mark.asyncio
 async def test_onebot_private_events_to_input_xml_keeps_only_dialog_fields() -> None:
     storage = StubMediaStorage()
@@ -106,6 +116,29 @@ async def test_file_segment_without_url_is_unsupported() -> None:
 
     assert '<unsupported type="file"' in xml
     assert "a.txt" not in xml
+
+
+@pytest.mark.asyncio
+async def test_file_segment_without_url_uses_resolver() -> None:
+    storage = StubMediaStorage()
+    resolver = StubFileResolver(url="https://resolved-file")
+
+    xml = await onebot_private_events_to_input_xml(
+        [
+            {
+                "message_id": 10,
+                "user_id": 1,
+                "message": [{"type": "file", "data": {"name": "a.txt", "file_id": "file-1"}}],
+            }
+        ],
+        media_storage=storage,
+        file_resolver=resolver,
+    )
+
+    assert '<file object_key="qq/private/1/10/0-abc.txt" name="a.txt" mime="text/plain" size="123" sha256="abc"' in xml
+    assert resolver.calls[0][1] == {"name": "a.txt", "file_id": "file-1"}
+    assert storage.calls[0][2]["url"] == "https://resolved-file"
+    assert "https://resolved-file" not in xml
 
 
 @pytest.mark.asyncio

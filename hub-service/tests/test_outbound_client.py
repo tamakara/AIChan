@@ -2,6 +2,7 @@ import asyncio
 
 import pytest
 
+from hub_service.services.media_storage import StoredMedia
 from hub_service.services.outbound_client import OutboundClient
 
 
@@ -38,8 +39,21 @@ class StubNapcatWs:
 
 
 class StubMediaStorage:
-    def __init__(self, contents: dict[str, bytes]) -> None:
+    def __init__(self, contents: dict[str, bytes], metadata: dict[str, StoredMedia] | None = None) -> None:
         self.contents = contents
+        self.metadata_items = metadata or {}
+
+    async def metadata(self, object_key: str) -> StoredMedia:
+        return self.metadata_items.get(
+            object_key,
+            StoredMedia(
+                object_key=object_key,
+                name=object_key.rsplit("/", 1)[-1],
+                mime="application/octet-stream",
+                size=len(self.contents[object_key]),
+                sha256="",
+            ),
+        )
 
     async def content(self, object_key: str) -> bytes:
         return self.contents[object_key]
@@ -149,6 +163,49 @@ def test_send_reply_sends_storage_image_as_base64_segment() -> None:
                 "auto_escape": False,
             },
         )
+    ]
+
+
+def test_send_reply_uploads_storage_file() -> None:
+    napcat_ws = StubNapcatWs()
+    object_key = "qq/private/1/9/0-abc.txt"
+    client = OutboundClient(
+        agent_service_url="http://agent-service:8000",
+        napcat_ws=napcat_ws,  # type: ignore[arg-type]
+        media_storage=StubMediaStorage(
+            {object_key: b"hello"},
+            {
+                object_key: StoredMedia(
+                    object_key=object_key,
+                    name="note.txt",
+                    mime="text/plain",
+                    size=5,
+                    sha256="abc",
+                )
+            },
+        ),
+    )
+
+    asyncio.run(
+        client.send_reply(
+            "private:1",
+            f'<reply><text>see file</text><file object_key="{object_key}" /></reply>',
+        )
+    )
+
+    assert napcat_ws.actions == [
+        (
+            "send_private_msg",
+            {
+                "user_id": 1,
+                "message": [{"type": "text", "data": {"text": "see file"}}],
+                "auto_escape": False,
+            },
+        ),
+        (
+            "upload_private_file",
+            {"user_id": 1, "file": "base64://aGVsbG8=", "name": "note.txt"},
+        ),
     ]
 
 

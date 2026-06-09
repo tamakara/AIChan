@@ -30,11 +30,12 @@ AICHAN 在 `hub-service` 与 `agent-service` 之间使用自有 XML 协议。One
 `user_id`、`self_id` 等稳定身份信息不写入每条消息，而是在创建 agent session 时通过 metadata 写入 `<session_info>` 系统消息。
 
 媒体段规则：
-- 第一版只处理 OneBot message segment 中带 `url` 的 `image/file/record/video`
+- `image/record/video` 处理 OneBot message segment 中带 `url` 的内容
+- `file` 若自带 `url` 则直接下载；若没有 `url`，hub-service 会优先用 NapCat `get_private_file_url` / `get_file` 根据 `file_id` 换取下载 URL
 - hub-service 会先下载媒体并写入私有 MinIO，XML 中只暴露 `object_key/name/mime/size/sha256`
 - object key 固定格式：`qq/private/{user_id}/{message_id}/{segment_index}-{sha256}.{ext}`
 - 原始 NapCat URL 不会出现在 XML 中
-- 无下载 URL 的文件段输出 `<unsupported type="file" />`
+- 无法换取下载 URL 的文件段输出 `<unsupported type="file" />`
 
 ## 3. 输出格式
 
@@ -44,6 +45,7 @@ LLM 最终回复必须是 `<reply>`：
 <reply>
   <text>笨蛋，找我有什么事喵？</text>
   <image object_key="qq/private/123/999/1-abc.jpg" />
+  <file object_key="qq/private/123/999/2-def.txt" />
   <face id="123" />
 </reply>
 ```
@@ -55,6 +57,8 @@ hub-service 支持的回复节点：
 | `text` | 文本内容 | `{"type":"text","data":{"text":"..."}}` |
 | `image` | `object_key` | 从 MinIO 读取 bytes，转为 `image.file=base64://...` |
 | `image` | `file` | 直接透传为 `image.file`，用于外部可访问 URL |
+| `file` | `object_key` | 从 MinIO 读取 bytes，调用 NapCat `upload_private_file` |
+| `file` | `file` + `name` | 调用 NapCat `upload_private_file`，用于外部可访问 URL |
 | `face` | `id` | `face` 段 |
 | `record` | `object_key` | 从 MinIO 读取 bytes，转为 `record.file=base64://...` |
 | `record` | `file` | 直接透传为 `record.file`，用于外部可访问 URL |

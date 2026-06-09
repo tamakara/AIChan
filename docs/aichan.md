@@ -33,14 +33,14 @@ AICHAN 是一个基于 NapCat + OneBot v11 接入的 QQ 私聊助理系统：Nap
   → NapCat OneBot v11 WS 事件 → hub-service 接收
   → 私聊 + user_id 白名单过滤
   → 按 session_key 防抖合并多轮输入
-  → 带 url 的图片/文件/语音/视频下载到 MinIO
+  → 图片/文件/语音/视频下载到 MinIO；无 url 的 QQ 文件会先通过 NapCat file_id 尝试换取下载 URL
   → OneBot v11 私聊事件转换为 <messages>，媒体节点只保留 object_key
   → POST /chat → agent-service
   → Agent 多轮 LLM 推理 + MCP 工具调用
   → LLM 输出 <reply>
   → agent-service 返回 {output_xml}
-  → hub-service 转换为 OneBot v11 消息段
-  → NapCat WS send_action(send_private_msg)
+  → hub-service 转换为 OneBot v11 消息段 / 私聊文件上传动作
+  → NapCat WS send_action(send_private_msg / upload_private_file)
   → QQ 用户收到回复
 ```
 

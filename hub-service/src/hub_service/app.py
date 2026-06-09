@@ -5,6 +5,7 @@ from .logger import elapsed_ms, get_logger, log_info, start_timer
 from .router import create_router
 from .services import NapcatConnectionState, NapcatWsGateway, OutboundClient, SessionRegistry
 from .services.media_storage import MediaStorage
+from .services.napcat_file_resolver import NapcatFileResolver
 
 
 def create_app() -> FastAPI:
@@ -28,6 +29,7 @@ def create_app() -> FastAPI:
 
     # 下游通信与会话管理
     media_storage = MediaStorage(settings.storage)
+    file_resolver = NapcatFileResolver(napcat_ws_gateway)
     outbound_client = OutboundClient(
         agent_service_url=settings.hub.agent_url,
         napcat_ws=napcat_ws_gateway,
@@ -36,6 +38,7 @@ def create_app() -> FastAPI:
     session_registry = SessionRegistry(
         outbound_client=outbound_client,
         media_storage=media_storage,
+        file_resolver=file_resolver,
         debounce_seconds=settings.hub.debounce_seconds,
     )
 

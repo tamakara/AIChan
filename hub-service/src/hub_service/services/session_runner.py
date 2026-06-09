@@ -5,7 +5,7 @@ from collections.abc import Awaitable, Callable
 
 from ..logger import elapsed_ms, get_logger, log_exception, log_info, start_timer
 from ..router.schemas import AgentInboundEvent
-from .message_xml import InputMediaStorageProtocol, onebot_private_events_to_input_xml
+from .message_xml import FileUrlResolverProtocol, InputMediaStorageProtocol, onebot_private_events_to_input_xml
 from .outbound_client import OutboundClient
 
 IdleCallback = Callable[[str, "SessionRunner"], Awaitable[None]]
@@ -20,6 +20,7 @@ class SessionRunner:
         agent_session_id: str,
         outbound_client: OutboundClient,
         media_storage: InputMediaStorageProtocol | None,
+        file_resolver: FileUrlResolverProtocol | None,
         debounce_seconds: float,
         on_idle: IdleCallback,
     ) -> None:
@@ -28,6 +29,7 @@ class SessionRunner:
         self._agent_session_id = agent_session_id
         self._outbound_client = outbound_client
         self._media_storage = media_storage
+        self._file_resolver = file_resolver
         self._debounce_seconds = debounce_seconds
         self._on_idle = on_idle
         self._pending_events: list[AgentInboundEvent] = []
@@ -59,6 +61,7 @@ class SessionRunner:
             input_xml = await onebot_private_events_to_input_xml(
                 [message.event],
                 media_storage=self._media_storage,
+                file_resolver=self._file_resolver,
             )
             await self._outbound_client.queue_session_message(
                 self._agent_session_id,
@@ -130,6 +133,7 @@ class SessionRunner:
         input_xml = await onebot_private_events_to_input_xml(
             raw_events,
             media_storage=self._media_storage,
+            file_resolver=self._file_resolver,
         )
 
         log_info(

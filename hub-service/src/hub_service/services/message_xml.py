@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 from base64 import b64encode
+from dataclasses import dataclass
+from pathlib import PurePosixPath
 from typing import Protocol
 from typing import Any
+from urllib.parse import unquote, urlparse
 from xml.etree import ElementTree
 
 from .media_storage import StoredMedia
@@ -37,14 +40,34 @@ class InputMediaStorageProtocol(Protocol):
         ...
 
 
+class FileUrlResolverProtocol(Protocol):
+    async def resolve_file_url(
+        self,
+        *,
+        event: dict[str, Any],
+        data: dict[str, Any],
+    ) -> str | None:
+        ...
+
+
 class ReplyMediaStorageProtocol(Protocol):
+    async def metadata(self, object_key: str) -> StoredMedia:
+        ...
+
     async def content(self, object_key: str) -> bytes:
         ...
+
+
+@dataclass(frozen=True)
+class ReplyFileUpload:
+    file: str
+    name: str
 
 
 async def onebot_private_events_to_input_xml(
     events: list[dict[str, Any]],
     media_storage: InputMediaStorageProtocol | None = None,
+    file_resolver: FileUrlResolverProtocol | None = None,
 ) -> str:
     """把 OneBot11 私聊事件压缩成 agent 可读 XML。
 
@@ -59,7 +82,7 @@ async def onebot_private_events_to_input_xml(
             _message_attrs(event),
         )
         for index, segment in enumerate(_message_segments(event.get("message"))):
-            await _append_input_segment(message, event, index, segment, media_storage)
+            await _append_input_segment(message, event, index, segment, media_storage, file_resolver)
     return ElementTree.tostring(messages, encoding="unicode", short_empty_elements=True)
 
 
@@ -67,9 +90,7 @@ async def reply_xml_to_onebot_segments(
     xml: str,
     media_storage: ReplyMediaStorageProtocol | None = None,
 ) -> list[dict[str, Any]]:
-    root = ElementTree.fromstring(xml)
-    if root.tag != "reply":
-        raise ValueError("reply xml root must be <reply>")
+    root = _reply_root(xml)
 
     segments: list[dict[str, Any]] = []
     for child in list(root):
@@ -77,6 +98,22 @@ async def reply_xml_to_onebot_segments(
         if segment is not None:
             segments.append(segment)
     return segments
+
+
+async def reply_xml_to_file_uploads(
+    xml: str,
+    media_storage: ReplyMediaStorageProtocol | None = None,
+) -> list[ReplyFileUpload]:
+    root = _reply_root(xml)
+
+    uploads: list[ReplyFileUpload] = []
+    for child in list(root):
+        if child.tag != "file":
+            continue
+        upload = await _reply_file_to_upload(child, media_storage)
+        if upload is not None:
+            uploads.append(upload)
+    return uploads
 
 
 def _message_attrs(event: dict[str, Any]) -> dict[str, str]:
@@ -97,6 +134,7 @@ async def _append_input_segment(
     segment_index: int,
     segment: dict[str, Any],
     media_storage: InputMediaStorageProtocol | None,
+    file_resolver: FileUrlResolverProtocol | None,
 ) -> None:
     segment_type = str(segment.get("type", ""))
     data = segment.get("data")
@@ -108,7 +146,15 @@ async def _append_input_segment(
         return
 
     if segment_type in MEDIA_SEGMENT_TYPES:
-        await _append_stored_media(parent, event, segment_index, segment_type, data, media_storage)
+        await _append_stored_media(
+            parent,
+            event,
+            segment_index,
+            segment_type,
+            data,
+            media_storage,
+            file_resolver,
+        )
         return
 
     attr_names = INPUT_SEGMENT_ATTRS.get(segment_type)
@@ -159,6 +205,27 @@ async def _reply_child_to_onebot_segment(
     return _onebot_segment(child.tag, data)
 
 
+async def _reply_file_to_upload(
+    child: ElementTree.Element,
+    media_storage: ReplyMediaStorageProtocol | None,
+) -> ReplyFileUpload | None:
+    file = child.attrib.get("file")
+    if file:
+        name = child.attrib.get("name") or _name_from_file_ref(file)
+        return ReplyFileUpload(file=file, name=name)
+
+    object_key = child.attrib.get("object_key")
+    if not object_key:
+        return None
+    if media_storage is None:
+        raise ValueError("<file> with object_key requires media storage")
+
+    metadata = await media_storage.metadata(object_key)
+    content = await media_storage.content(object_key)
+    name = child.attrib.get("name") or metadata.name
+    return ReplyFileUpload(file="base64://" + b64encode(content).decode("ascii"), name=name)
+
+
 def _onebot_segment(segment_type: str, data: dict[str, str]) -> dict[str, Any]:
     return {"type": segment_type, "data": data}
 
@@ -190,8 +257,14 @@ async def _append_stored_media(
     segment_type: str,
     data: dict[str, Any],
     media_storage: InputMediaStorageProtocol | None,
+    file_resolver: FileUrlResolverProtocol | None,
 ) -> None:
-    if media_storage is None or not data.get("url"):
+    if media_storage is None:
+        _append_unsupported(parent, segment_type)
+        return
+
+    data = await _with_resolved_media_url(segment_type, event, data, file_resolver)
+    if not data.get("url"):
         _append_unsupported(parent, segment_type)
         return
 
@@ -208,6 +281,21 @@ async def _append_stored_media(
         return
 
     ElementTree.SubElement(parent, segment_type, _stored_media_attrs(stored))
+
+
+async def _with_resolved_media_url(
+    segment_type: str,
+    event: dict[str, Any],
+    data: dict[str, Any],
+    file_resolver: FileUrlResolverProtocol | None,
+) -> dict[str, Any]:
+    if data.get("url") or segment_type != "file" or file_resolver is None:
+        return data
+
+    resolved_url = await file_resolver.resolve_file_url(event=event, data=data)
+    if not resolved_url:
+        return data
+    return {**data, "url": resolved_url}
 
 
 def _append_text(parent: ElementTree.Element, text: object) -> None:
@@ -245,6 +333,21 @@ def _stored_media_attrs(stored: StoredMedia) -> dict[str, str]:
         "size": str(stored.size),
         "sha256": stored.sha256,
     }
+
+
+def _reply_root(xml: str) -> ElementTree.Element:
+    root = ElementTree.fromstring(xml)
+    if root.tag != "reply":
+        raise ValueError("reply xml root must be <reply>")
+    return root
+
+
+def _name_from_file_ref(file: str) -> str:
+    parsed = urlparse(file)
+    name = PurePosixPath(unquote(parsed.path)).name
+    if name:
+        return name
+    return "file"
 
 
 def _set_attr(attrs: dict[str, str], name: str, value: object) -> None:
