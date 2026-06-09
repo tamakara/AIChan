@@ -10,6 +10,7 @@ from hub_service.services.message_xml import (
 class StubMediaStorage:
     def __init__(self) -> None:
         self.calls: list[tuple[str, int, dict]] = []
+        self.contents: dict[str, bytes] = {}
 
     async def store_segment(self, *, event, segment_type, segment_index, data) -> StoredMedia:
         self.calls.append((segment_type, segment_index, data))
@@ -22,6 +23,9 @@ class StubMediaStorage:
             size=123,
             sha256="abc",
         )
+
+    async def content(self, object_key: str) -> bytes:
+        return self.contents[object_key]
 
 
 @pytest.mark.asyncio
@@ -104,8 +108,9 @@ async def test_file_segment_without_url_is_unsupported() -> None:
     assert "a.txt" not in xml
 
 
-def test_reply_xml_to_onebot_segments() -> None:
-    segments = reply_xml_to_onebot_segments(
+@pytest.mark.asyncio
+async def test_reply_xml_to_onebot_segments() -> None:
+    segments = await reply_xml_to_onebot_segments(
         '<reply><text>ok</text><image file="https://x" /><face id="123" /></reply>'
     )
 
@@ -113,4 +118,19 @@ def test_reply_xml_to_onebot_segments() -> None:
         {"type": "text", "data": {"text": "ok"}},
         {"type": "image", "data": {"file": "https://x"}},
         {"type": "face", "data": {"id": "123"}},
+    ]
+
+
+@pytest.mark.asyncio
+async def test_reply_xml_to_onebot_segments_loads_image_from_storage() -> None:
+    storage = StubMediaStorage()
+    storage.contents["qq/private/1/9/1-abc.jpg"] = b"image-bytes"
+
+    segments = await reply_xml_to_onebot_segments(
+        '<reply><image object_key="qq/private/1/9/1-abc.jpg" /></reply>',
+        media_storage=storage,
+    )
+
+    assert segments == [
+        {"type": "image", "data": {"file": "base64://aW1hZ2UtYnl0ZXM="}},
     ]

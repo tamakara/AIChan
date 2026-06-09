@@ -4,7 +4,7 @@ import asyncio
 from typing import Any
 
 from ..router.schemas import AgentInboundEvent
-from .message_xml import MediaStorageProtocol
+from .message_xml import InputMediaStorageProtocol
 from .napcat_ws import get_session_key
 from .outbound_client import OutboundClient
 from .session_runner import SessionRunner
@@ -16,7 +16,7 @@ class SessionRegistry:
     def __init__(
         self,
         outbound_client: OutboundClient,
-        media_storage: MediaStorageProtocol | None,
+        media_storage: InputMediaStorageProtocol | None,
         debounce_seconds: float,
     ) -> None:
         self._outbound_client = outbound_client

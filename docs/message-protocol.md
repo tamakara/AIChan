@@ -43,7 +43,7 @@ LLM 最终回复必须是 `<reply>`：
 ```xml
 <reply>
   <text>笨蛋，找我有什么事喵？</text>
-  <image file="https://..." />
+  <image object_key="qq/private/123/999/1-abc.jpg" />
   <face id="123" />
 </reply>
 ```
@@ -53,12 +53,15 @@ hub-service 支持的回复节点：
 | 节点 | 属性 | OneBot v11 映射 |
 |------|------|-----------------|
 | `text` | 文本内容 | `{"type":"text","data":{"text":"..."}}` |
-| `image` | `file` | `image` 段 |
+| `image` | `object_key` | 从 MinIO 读取 bytes，转为 `image.file=base64://...` |
+| `image` | `file` | 直接透传为 `image.file`，用于外部可访问 URL |
 | `face` | `id` | `face` 段 |
-| `record` | `file` | `record` 段 |
-| `video` | `file` | `video` 段 |
+| `record` | `object_key` | 从 MinIO 读取 bytes，转为 `record.file=base64://...` |
+| `record` | `file` | 直接透传为 `record.file`，用于外部可访问 URL |
+| `video` | `object_key` | 从 MinIO 读取 bytes，转为 `video.file=base64://...` |
+| `video` | `file` | 直接透传为 `video.file`，用于外部可访问 URL |
 
-空 `<reply />` 不发送 QQ 消息。私聊回复对象由 hub-service 的会话路由固定决定，agent 不指定 `user_id`。
+`object_key` 只能引用 `<messages>` 或工具结果里真实出现过的对象，不能编造。空 `<reply />` 不发送 QQ 消息。私聊回复对象由 hub-service 的会话路由固定决定，agent 不指定 `user_id`。
 
 ## 4. HTTP 契约
 

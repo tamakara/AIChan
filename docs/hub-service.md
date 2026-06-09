@@ -40,6 +40,7 @@ OneBot v11 复杂性只停留在本服务边界。agent-service 不接收原始 
 
 - 通过 NapCat WS `send_action` 发送 `send_private_msg`
 - `message` 由 `<reply>` 转换为 OneBot v11 消息段数组
+- `<image object_key="..." />`、`<record object_key="..." />`、`<video object_key="..." />` 会从 MinIO 读取 bytes，转换为 NapCat/OneBot v11 支持的 `base64://...` 后发送
 - `auto_escape` 固定为 `false`
 
 ## 3. 核心数据模型
@@ -75,7 +76,7 @@ OneBot v11 复杂性只停留在本服务边界。agent-service 不接收原始 
 ### 3.4 XML 转换
 
 - `onebot_private_events_to_input_xml(events, media_storage)`：把防抖批次转换为 `<messages>`，需要 I/O 时会先完成媒体入库
-- `reply_xml_to_onebot_segments(xml)`：把 `<reply>` 转换为 OneBot v11 私聊消息段
+- `reply_xml_to_onebot_segments(xml, media_storage)`：把 `<reply>` 转换为 OneBot v11 私聊消息段；出站媒体 `object_key` 会在这里解析为 `base64://...`
 - 转换层丢弃 `raw_message`、`font`、群字段和无关 sender 字段
 
 ## 4. 防抖调度流程

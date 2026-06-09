@@ -112,6 +112,9 @@ class Agent:
                             continue
 
                         reply = _parse_agent_reply(llm_response.content)
+                        # 会话历史是下一轮模型输入的协议边界：即使模型本轮输出了半截 XML，
+                        # 也只能持久化收敛后的 `<reply>`，否则坏标签会污染后续上下文。
+                        staged_messages[-1]["content"] = reply.output_xml
                         _commit_staged_messages(session, staged_messages)
                         duration_ms = elapsed_ms(run_started_at)
                         self._observability.finish_run_success(

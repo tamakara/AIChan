@@ -4,7 +4,7 @@ services:
     restart: unless-stopped
     depends_on:
       tool-mcp-server:
-        condition: service_started
+        condition: service_healthy
     command:
       - --transport=sse
       - --port=9000
@@ -47,6 +47,16 @@ services:
       VISION__OPENAI_BASE_URL: "${VISION__OPENAI_BASE_URL:-}"
       VISION__OPENAI_API_KEY: "${VISION__OPENAI_API_KEY:-}"
       VISION__MODEL: "${VISION__MODEL:-}"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import socket; sock = socket.create_connection(('127.0.0.1', 8030), 2); sock.close()"
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
     volumes:
       - ./tool-mcp-server/config.yml:/app/tool-mcp-server/config.yml:ro
 

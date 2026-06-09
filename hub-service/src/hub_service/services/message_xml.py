@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from base64 import b64encode
 from typing import Protocol
 from typing import Any
 from xml.etree import ElementTree
@@ -19,14 +20,12 @@ MEDIA_SEGMENT_TYPES = {"image", "file", "record", "video"}
 MEDIA_SEGMENT_ATTRS = ("object_key", "name", "mime", "size", "sha256")
 
 OUTPUT_SEGMENT_ATTRS: dict[str, tuple[str, ...]] = {
-    "image": ("file",),
     "face": ("id",),
-    "record": ("file",),
-    "video": ("file",),
 }
+OUTPUT_MEDIA_SEGMENT_TYPES = {"image", "record", "video"}
 
 
-class MediaStorageProtocol(Protocol):
+class InputMediaStorageProtocol(Protocol):
     async def store_segment(
         self,
         *,
@@ -38,9 +37,14 @@ class MediaStorageProtocol(Protocol):
         ...
 
 
+class ReplyMediaStorageProtocol(Protocol):
+    async def content(self, object_key: str) -> bytes:
+        ...
+
+
 async def onebot_private_events_to_input_xml(
     events: list[dict[str, Any]],
-    media_storage: MediaStorageProtocol | None = None,
+    media_storage: InputMediaStorageProtocol | None = None,
 ) -> str:
     """把 OneBot11 私聊事件压缩成 agent 可读 XML。
 
@@ -59,22 +63,19 @@ async def onebot_private_events_to_input_xml(
     return ElementTree.tostring(messages, encoding="unicode", short_empty_elements=True)
 
 
-def reply_xml_to_onebot_segments(xml: str) -> list[dict[str, Any]]:
+async def reply_xml_to_onebot_segments(
+    xml: str,
+    media_storage: ReplyMediaStorageProtocol | None = None,
+) -> list[dict[str, Any]]:
     root = ElementTree.fromstring(xml)
     if root.tag != "reply":
         raise ValueError("reply xml root must be <reply>")
 
     segments: list[dict[str, Any]] = []
     for child in list(root):
-        if child.tag == "text":
-            text = child.text or ""
-            if text:
-                segments.append({"type": "text", "data": {"text": text}})
-            continue
-        if child.tag in OUTPUT_SEGMENT_ATTRS:
-            data = _attrs(child.attrib, OUTPUT_SEGMENT_ATTRS[child.tag])
-            if data:
-                segments.append({"type": child.tag, "data": data})
+        segment = await _reply_child_to_onebot_segment(child, media_storage)
+        if segment is not None:
+            segments.append(segment)
     return segments
 
 
@@ -95,7 +96,7 @@ async def _append_input_segment(
     event: dict[str, Any],
     segment_index: int,
     segment: dict[str, Any],
-    media_storage: MediaStorageProtocol | None,
+    media_storage: InputMediaStorageProtocol | None,
 ) -> None:
     segment_type = str(segment.get("type", ""))
     data = segment.get("data")
@@ -103,36 +104,20 @@ async def _append_input_segment(
         data = {}
 
     if segment_type == "text":
-        text = data.get("text")
-        if text is not None:
-            child = ElementTree.SubElement(parent, "text")
-            child.text = str(text)
+        _append_text(parent, data.get("text"))
         return
 
     if segment_type in MEDIA_SEGMENT_TYPES:
-        if media_storage is None or not data.get("url"):
-            ElementTree.SubElement(parent, "unsupported", {"type": segment_type or "unknown"})
-            return
-        try:
-            stored = await media_storage.store_segment(
-                event=event,
-                segment_type=segment_type,
-                segment_index=segment_index,
-                data=data,
-            )
-        except Exception:
-            # 媒体入库失败时仍保留“用户发过媒体”的事实，但不泄漏 NapCat 临时 URL。
-            ElementTree.SubElement(parent, "unsupported", {"type": segment_type, "reason": "storage_failed"})
-            return
-        ElementTree.SubElement(parent, segment_type, _stored_media_attrs(stored))
+        await _append_stored_media(parent, event, segment_index, segment_type, data, media_storage)
         return
 
-    if segment_type in INPUT_SEGMENT_ATTRS:
-        ElementTree.SubElement(parent, segment_type, _attrs(data, INPUT_SEGMENT_ATTRS[segment_type]))
+    attr_names = INPUT_SEGMENT_ATTRS.get(segment_type)
+    if attr_names is not None:
+        _append_attrs(parent, segment_type, data, attr_names)
         return
 
     # 未覆盖的 OneBot 段不把原始 data 泄漏给 agent，只告知类型用于对话解释。
-    ElementTree.SubElement(parent, "unsupported", {"type": segment_type or "unknown"})
+    _append_unsupported(parent, segment_type)
 
 
 def _message_segments(value: object) -> list[dict[str, Any]]:
@@ -146,6 +131,110 @@ def _attrs(data: dict[str, Any], names: tuple[str, ...]) -> dict[str, str]:
     for name in names:
         _set_attr(attrs, name, data.get(name))
     return attrs
+
+
+async def _reply_child_to_onebot_segment(
+    child: ElementTree.Element,
+    media_storage: ReplyMediaStorageProtocol | None,
+) -> dict[str, Any] | None:
+    if child.tag == "text":
+        text = child.text or ""
+        if not text:
+            return None
+        return _onebot_segment("text", {"text": text})
+
+    if child.tag in OUTPUT_MEDIA_SEGMENT_TYPES:
+        data = await _output_media_attrs(child, media_storage)
+        if not data:
+            return None
+        return _onebot_segment(child.tag, data)
+
+    attr_names = OUTPUT_SEGMENT_ATTRS.get(child.tag)
+    if attr_names is None:
+        return None
+
+    data = _attrs(child.attrib, attr_names)
+    if not data:
+        return None
+    return _onebot_segment(child.tag, data)
+
+
+def _onebot_segment(segment_type: str, data: dict[str, str]) -> dict[str, Any]:
+    return {"type": segment_type, "data": data}
+
+
+async def _output_media_attrs(
+    child: ElementTree.Element,
+    media_storage: ReplyMediaStorageProtocol | None,
+) -> dict[str, str]:
+    file = child.attrib.get("file")
+    if file:
+        return {"file": file}
+
+    object_key = child.attrib.get("object_key")
+    if not object_key:
+        return {}
+    if media_storage is None:
+        raise ValueError(f"<{child.tag}> with object_key requires media storage")
+
+    # 出站媒体仍由 hub 从私有 MinIO 读取，agent 只引用 object_key。
+    # NapCat/OneBot v11 发送端支持 base64://，因此不需要把 MinIO 暴露成公网 URL。
+    content = await media_storage.content(object_key)
+    return {"file": "base64://" + b64encode(content).decode("ascii")}
+
+
+async def _append_stored_media(
+    parent: ElementTree.Element,
+    event: dict[str, Any],
+    segment_index: int,
+    segment_type: str,
+    data: dict[str, Any],
+    media_storage: InputMediaStorageProtocol | None,
+) -> None:
+    if media_storage is None or not data.get("url"):
+        _append_unsupported(parent, segment_type)
+        return
+
+    try:
+        stored = await media_storage.store_segment(
+            event=event,
+            segment_type=segment_type,
+            segment_index=segment_index,
+            data=data,
+        )
+    except Exception:
+        # 媒体入库失败时仍保留“用户发过媒体”的事实，但不泄漏 NapCat 临时 URL。
+        _append_unsupported(parent, segment_type, reason="storage_failed")
+        return
+
+    ElementTree.SubElement(parent, segment_type, _stored_media_attrs(stored))
+
+
+def _append_text(parent: ElementTree.Element, text: object) -> None:
+    if text is None:
+        return
+    child = ElementTree.SubElement(parent, "text")
+    child.text = str(text)
+
+
+def _append_attrs(
+    parent: ElementTree.Element,
+    tag: str,
+    data: dict[str, Any],
+    attr_names: tuple[str, ...],
+) -> None:
+    ElementTree.SubElement(parent, tag, _attrs(data, attr_names))
+
+
+def _append_unsupported(
+    parent: ElementTree.Element,
+    segment_type: str,
+    *,
+    reason: str | None = None,
+) -> None:
+    attrs = {"type": segment_type or "unknown"}
+    _set_attr(attrs, "reason", reason)
+    ElementTree.SubElement(parent, "unsupported", attrs)
 
 
 def _stored_media_attrs(stored: StoredMedia) -> dict[str, str]:

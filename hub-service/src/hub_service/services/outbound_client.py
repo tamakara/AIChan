@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any
+from typing import Protocol
 
 import httpx
 
@@ -16,6 +17,11 @@ from .message_xml import reply_xml_to_onebot_segments
 from .napcat_ws import NapcatWsGateway
 
 
+class ReplyMediaStorageProtocol(Protocol):
+    async def content(self, object_key: str) -> bytes:
+        ...
+
+
 @dataclass(frozen=True)
 class AgentReply:
     output_xml: str
@@ -28,10 +34,12 @@ class OutboundClient:
         self,
         agent_service_url: str,
         napcat_ws: NapcatWsGateway,
+        media_storage: ReplyMediaStorageProtocol | None = None,
     ) -> None:
         self._logger = get_logger("outbound_client")
         self._agent_service_url = agent_service_url.rstrip("/")
         self._napcat_ws = napcat_ws
+        self._media_storage = media_storage
         self._client = httpx.AsyncClient(timeout=None)
 
     async def create_session(self, hub_session_key: str, metadata: dict[str, Any]) -> str:
@@ -89,7 +97,7 @@ class OutboundClient:
     ) -> None:
         """将 agent-service 返回的 AICHAN XML 回复转为 OneBot v11 私聊动作。"""
         started_at = start_timer()
-        message = reply_xml_to_onebot_segments(output_xml)
+        message = await reply_xml_to_onebot_segments(output_xml, media_storage=self._media_storage)
         if not message:
             return
 

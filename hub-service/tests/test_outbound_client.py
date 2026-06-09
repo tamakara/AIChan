@@ -37,6 +37,14 @@ class StubNapcatWs:
         return {"status": "ok", "retcode": 0}
 
 
+class StubMediaStorage:
+    def __init__(self, contents: dict[str, bytes]) -> None:
+        self.contents = contents
+
+    async def content(self, object_key: str) -> bytes:
+        return self.contents[object_key]
+
+
 def test_create_session_calls_agent_endpoint() -> None:
     napcat_ws = StubNapcatWs()
     client = OutboundClient(
@@ -108,6 +116,36 @@ def test_send_reply_sends_private_message_action() -> None:
             {
                 "user_id": 1,
                 "message": [{"type": "text", "data": {"text": "hello!"}}],
+                "auto_escape": False,
+            },
+        )
+    ]
+
+
+def test_send_reply_sends_storage_image_as_base64_segment() -> None:
+    napcat_ws = StubNapcatWs()
+    client = OutboundClient(
+        agent_service_url="http://agent-service:8000",
+        napcat_ws=napcat_ws,  # type: ignore[arg-type]
+        media_storage=StubMediaStorage({"qq/private/1/9/1-abc.jpg": b"image-bytes"}),
+    )
+
+    asyncio.run(
+        client.send_reply(
+            "private:1",
+            '<reply><text>ok</text><image object_key="qq/private/1/9/1-abc.jpg" /></reply>',
+        )
+    )
+
+    assert napcat_ws.actions == [
+        (
+            "send_private_msg",
+            {
+                "user_id": 1,
+                "message": [
+                    {"type": "text", "data": {"text": "ok"}},
+                    {"type": "image", "data": {"file": "base64://aW1hZ2UtYnl0ZXM="}},
+                ],
                 "auto_escape": False,
             },
         )

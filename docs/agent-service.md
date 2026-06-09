@@ -68,7 +68,9 @@ LLM 最终回复必须是 `<reply>`：
 </reply>
 ```
 
-`agent.py` 中的 `_parse_agent_reply()` 负责把 LLM 输出收敛为 `<reply>`。若模型返回非法 XML 或非 `<reply>` 根节点，会包装为 `<reply><text>原始内容</text></reply>`。
+允许的回复子节点为 `<text>...</text>`、`<image object_key="..." />`、`<image file="..." />`、`<face id="..." />`、`<record object_key="..." />`、`<record file="..." />`、`<video object_key="..." />`、`<video file="..." />`。多媒体节点必须作为 `<reply>` 的直接子节点输出，不能写进 `<text>` 文本中；文本中的 `<`、`>`、`&` 必须按 XML 规则转义。`object_key` 只能复用上下文或工具结果中真实出现过的 MinIO 对象，不能编造。
+
+`agent.py` 中的 `_parse_agent_reply()` 负责把 LLM 输出收敛为 `<reply>`。若模型返回非法 XML 或非 `<reply>` 根节点，会包装为 `<reply><text>原始内容</text></reply>`。该逻辑只作为服务边界兜底，正常情况下应由系统提示词约束模型直接生成完整、闭合、可解析的 `<reply>`。
 
 ### 2.3 对外消费（LLM API）
 

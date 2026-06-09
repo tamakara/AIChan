@@ -124,6 +124,29 @@ def test_agent_run_session() -> None:
     ]
 
 
+def test_agent_run_commits_normalized_reply_when_llm_returns_broken_xml() -> None:
+    llm_client = SequencedLlmClient(
+        [LlmResponse(content="<reply><text>broken", tool_calls=[], finish_reason="stop")]
+    )
+    agent = Agent(  # type: ignore[arg-type]
+        llm_client=llm_client,
+        mcp_gateway=StubMcpGateway(),
+        max_turns=3,
+        temperature=0.0,
+        observability=NoopObservability(),
+    )
+    registry = _build_registry()
+    session = registry.create(metadata={"session_id": "s1"})
+
+    reply = agent.run(
+        session=session,
+        user_message="hello",
+    )
+
+    assert reply.output_xml == "<reply><text>&lt;reply&gt;&lt;text&gt;broken</text></reply>"
+    assert session._context.messages[-1]["content"] == reply.output_xml  # noqa: SLF001
+
+
 def test_session_info_contains_metadata() -> None:
     registry = _build_registry()
     session = registry.create(metadata={"platform": "qq", "user_id": 1, "self_id": 10001})

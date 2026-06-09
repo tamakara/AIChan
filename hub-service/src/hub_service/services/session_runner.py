@@ -5,7 +5,7 @@ from collections.abc import Awaitable, Callable
 
 from ..logger import elapsed_ms, get_logger, log_exception, log_info, start_timer
 from ..router.schemas import AgentInboundEvent
-from .message_xml import MediaStorageProtocol, onebot_private_events_to_input_xml
+from .message_xml import InputMediaStorageProtocol, onebot_private_events_to_input_xml
 from .outbound_client import OutboundClient
 
 IdleCallback = Callable[[str, "SessionRunner"], Awaitable[None]]
@@ -19,7 +19,7 @@ class SessionRunner:
         session_key: str,
         agent_session_id: str,
         outbound_client: OutboundClient,
-        media_storage: MediaStorageProtocol | None,
+        media_storage: InputMediaStorageProtocol | None,
         debounce_seconds: float,
         on_idle: IdleCallback,
     ) -> None:

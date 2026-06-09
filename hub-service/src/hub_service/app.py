@@ -31,6 +31,7 @@ def create_app() -> FastAPI:
     outbound_client = OutboundClient(
         agent_service_url=settings.hub.agent_url,
         napcat_ws=napcat_ws_gateway,
+        media_storage=media_storage,
     )
     session_registry = SessionRegistry(
         outbound_client=outbound_client,
