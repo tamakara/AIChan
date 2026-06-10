@@ -60,9 +60,17 @@ class ReplyMediaStorageProtocol(Protocol):
 
 
 @dataclass(frozen=True)
+class ReplyOnebotMessage:
+    message: list[dict[str, Any]]
+
+
+@dataclass(frozen=True)
 class ReplyFileUpload:
     file: str
     name: str
+
+
+ReplyOutboundItem = ReplyOnebotMessage | ReplyFileUpload
 
 
 async def onebot_private_events_to_input_xml(
@@ -115,6 +123,28 @@ async def reply_xml_to_file_uploads(
         if upload is not None:
             uploads.append(upload)
     return uploads
+
+
+async def reply_xml_to_outbound_items(
+    xml: str,
+    media_storage: ReplyMediaStorageProtocol | None = None,
+) -> list[ReplyOutboundItem]:
+    root = _reply_root(xml)
+
+    items: list[ReplyOutboundItem] = []
+    for child in list(root):
+        if child.tag == "file":
+            upload = await _reply_file_to_upload(child, media_storage)
+            if upload is not None:
+                items.append(upload)
+            continue
+
+        segment = await _reply_child_to_onebot_segment(child, media_storage)
+        if segment is not None:
+            # QQ/NapCat 对图文混排消息的展示并不稳定；这里按 `<reply>` 直系子节点拆分，
+            # 让文本、视频、图片等都成为独立动作，保证用户能看到每一段回复。
+            items.append(ReplyOnebotMessage(message=[segment]))
+    return items
 
 
 def _message_attrs(event: dict[str, Any]) -> dict[str, str]:

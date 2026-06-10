@@ -156,10 +156,15 @@ def test_send_reply_sends_storage_image_as_base64_segment() -> None:
             "send_private_msg",
             {
                 "user_id": 1,
-                "message": [
-                    {"type": "text", "data": {"text": "ok"}},
-                    {"type": "image", "data": {"file": "base64://aW1hZ2UtYnl0ZXM="}},
-                ],
+                "message": [{"type": "text", "data": {"text": "ok"}}],
+                "auto_escape": False,
+            },
+        ),
+        (
+            "send_private_msg",
+            {
+                "user_id": 1,
+                "message": [{"type": "image", "data": {"file": "base64://aW1hZ2UtYnl0ZXM="}}],
                 "auto_escape": False,
             },
         )
@@ -205,6 +210,35 @@ def test_send_reply_uploads_storage_file() -> None:
         (
             "upload_private_file",
             {"user_id": 1, "file": "base64://aGVsbG8=", "name": "note.txt"},
+        ),
+    ]
+
+
+def test_send_reply_splits_repeated_text_nodes() -> None:
+    napcat_ws = StubNapcatWs()
+    client = OutboundClient(
+        agent_service_url="http://agent-service:8000",
+        napcat_ws=napcat_ws,  # type: ignore[arg-type]
+    )
+
+    asyncio.run(client.send_reply("private:1", "<reply><text>one</text><text>two</text></reply>"))
+
+    assert napcat_ws.actions == [
+        (
+            "send_private_msg",
+            {
+                "user_id": 1,
+                "message": [{"type": "text", "data": {"text": "one"}}],
+                "auto_escape": False,
+            },
+        ),
+        (
+            "send_private_msg",
+            {
+                "user_id": 1,
+                "message": [{"type": "text", "data": {"text": "two"}}],
+                "auto_escape": False,
+            },
         ),
     ]
 

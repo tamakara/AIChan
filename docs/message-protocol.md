@@ -2,7 +2,7 @@
 
 ## 1. 协议定位
 
-AICHAN 在 `hub-service` 与 `agent-service` 之间使用自有 XML 协议。OneBot v11 只存在于 NapCat 接入和 QQ 动作发送边界，`hub-service` 负责把 QQ 私聊事件转换为 `<messages>`，并把 agent 的 `<reply>` 转回 OneBot v11 私聊消息段。
+AICHAN 在 `hub-service` 与 `agent-service` 之间使用自有 XML 协议。OneBot v11 只存在于 NapCat 接入和 QQ 动作发送边界，`hub-service` 负责把 QQ 私聊事件转换为 `<messages>`，并把 agent 的 `<reply>` 直接子节点按顺序转回 OneBot v11 私聊动作。
 
 ## 2. 输入格式
 
@@ -66,6 +66,12 @@ hub-service 支持的回复节点：
 | `video` | `file` | 直接透传为 `video.file`，用于外部可访问 URL |
 
 `object_key` 只能引用 `<messages>` 或工具结果里真实出现过的对象，不能编造。空 `<reply />` 不发送 QQ 消息。私聊回复对象由 hub-service 的会话路由固定决定，agent 不指定 `user_id`。
+
+发送规则：
+- `<reply>` 的直接子节点是出站消息边界；两个 `<text>` 会发送成两条私聊消息
+- `text/image/face/record/video` 每个节点各自调用一次 `send_private_msg`
+- `file` 节点在原始顺序位置调用 `upload_private_file`
+- 不支持的回复节点会被忽略
 
 ## 4. HTTP 契约
 

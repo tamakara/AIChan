@@ -3,6 +3,9 @@ import pytest
 from hub_service.services.media_storage import StoredMedia
 from hub_service.services.message_xml import (
     onebot_private_events_to_input_xml,
+    ReplyFileUpload,
+    ReplyOnebotMessage,
+    reply_xml_to_outbound_items,
     reply_xml_to_onebot_segments,
 )
 
@@ -26,6 +29,15 @@ class StubMediaStorage:
 
     async def content(self, object_key: str) -> bytes:
         return self.contents[object_key]
+
+    async def metadata(self, object_key: str) -> StoredMedia:
+        return StoredMedia(
+            object_key=object_key,
+            name=object_key.rsplit("/", 1)[-1],
+            mime="application/octet-stream",
+            size=len(self.contents[object_key]),
+            sha256="abc",
+        )
 
 
 class StubFileResolver:
@@ -166,4 +178,26 @@ async def test_reply_xml_to_onebot_segments_loads_image_from_storage() -> None:
 
     assert segments == [
         {"type": "image", "data": {"file": "base64://aW1hZ2UtYnl0ZXM="}},
+    ]
+
+
+@pytest.mark.asyncio
+async def test_reply_xml_to_outbound_items_splits_direct_children_in_order() -> None:
+    storage = StubMediaStorage()
+    storage.contents["qq/private/1/9/1-abc.jpg"] = b"image-bytes"
+    storage.contents["qq/private/1/9/2-note.txt"] = b"note"
+
+    items = await reply_xml_to_outbound_items(
+        (
+            '<reply><text>first</text><image object_key="qq/private/1/9/1-abc.jpg" />'
+            '<text>second</text><file object_key="qq/private/1/9/2-note.txt" /></reply>'
+        ),
+        media_storage=storage,
+    )
+
+    assert items == [
+        ReplyOnebotMessage(message=[{"type": "text", "data": {"text": "first"}}]),
+        ReplyOnebotMessage(message=[{"type": "image", "data": {"file": "base64://aW1hZ2UtYnl0ZXM="}}]),
+        ReplyOnebotMessage(message=[{"type": "text", "data": {"text": "second"}}]),
+        ReplyFileUpload(file="base64://bm90ZQ==", name="2-note.txt"),
     ]
