@@ -19,7 +19,7 @@ OneBot v11 复杂性只停留在本服务边界。agent-service 不接收原始 
 - `GET /api/v1/files/{object_key:path}/metadata`
   - 返回已入库文件的 `object_key/name/mime/size/sha256`
 - `GET /api/v1/files/{object_key:path}/content`
-  - 返回原始 bytes，供图片理解工具读取
+  - 返回原始 bytes，供图片/视频理解工具读取
 - `GET /api/v1/files/{object_key:path}/text?max_chars=12000`
   - 仅支持 `text/*` 或常见文本扩展名；非文本返回 422
 
@@ -70,6 +70,7 @@ OneBot v11 复杂性只停留在本服务边界。agent-service 不接收原始 
 
 - `MediaStorage.ensure_bucket()`：启动时确保 MinIO bucket 存在
 - `MediaStorage.store_segment()`：下载带 `url` 的 `image/file/record/video` segment，计算 `sha256/size/mime/name` 并写入 MinIO
+- 下载响应若只给出 `application/octet-stream` 等通用 MIME，会按文件名、URL 后缀和 OneBot 段类型回推真实 MIME，避免视频被入库为普通二进制
 - `NapcatFileResolver`：当 `file` segment 没有 `url` 但带有 `file_id/file/id` 时，通过 NapCat `get_private_file_url` / `get_file` 尝试换取下载 URL，再交给 `MediaStorage` 入库
 - object key 固定格式：`qq/private/{user_id}/{message_id}/{segment_index}-{sha256}.{ext}`
 - `<messages>` 中只暴露 `object_key/name/mime/size/sha256`，不暴露 NapCat 原始 URL

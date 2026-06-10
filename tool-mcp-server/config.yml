@@ -11,3 +11,4 @@ vision:
   openai_api_key: ""
   model: ""
   timeout_seconds: 30
+  video_frame_count: 6

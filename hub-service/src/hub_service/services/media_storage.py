@@ -25,6 +25,7 @@ TEXT_EXTENSIONS = {
     ".yml",
     ".log",
 }
+GENERIC_MIME_TYPES = {"application/octet-stream", "binary/octet-stream", "application/x-octet-stream"}
 
 
 @dataclass(frozen=True)
@@ -73,7 +74,7 @@ class MediaStorage:
         content, response_mime = await self._download(url)
         digest = sha256(content).hexdigest()
         name = _media_name(data=data, url=url, segment_type=segment_type, segment_index=segment_index)
-        mime = _media_mime(name=name, url=url, response_mime=response_mime)
+        mime = _media_mime(name=name, url=url, response_mime=response_mime, segment_type=segment_type)
         extension = _media_extension(name=name, mime=mime)
         object_key = (
             f"qq/private/{event.get('user_id')}/{event.get('message_id')}/"
@@ -173,13 +174,23 @@ def _media_name(
     return f"{segment_type}-{segment_index}"
 
 
-def _media_mime(*, name: str, url: str, response_mime: str | None) -> str:
+def _media_mime(*, name: str, url: str, response_mime: str | None, segment_type: str) -> str:
+    normalized_response_mime = ""
     if response_mime:
-        return response_mime.split(";", 1)[0].strip() or "application/octet-stream"
+        normalized_response_mime = response_mime.split(";", 1)[0].strip().lower()
+        if normalized_response_mime and normalized_response_mime not in GENERIC_MIME_TYPES:
+            return normalized_response_mime
+
+    # NapCat 的临时下载地址有时只返回 application/octet-stream。此时优先相信文件名/URL
+    # 后缀和 OneBot 段类型，否则视频会被存成普通二进制，后续 MCP 工具无法识别。
     guessed, _ = mimetypes.guess_type(name)
     if guessed is None:
         guessed, _ = mimetypes.guess_type(urlparse(url).path)
-    return guessed or "application/octet-stream"
+    if guessed is not None:
+        return guessed
+    if segment_type == "video":
+        return "video/mp4"
+    return normalized_response_mime or "application/octet-stream"
 
 
 def _media_extension(*, name: str, mime: str) -> str:

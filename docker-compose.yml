@@ -47,6 +47,7 @@ services:
       VISION__OPENAI_BASE_URL: "${VISION__OPENAI_BASE_URL:-}"
       VISION__OPENAI_API_KEY: "${VISION__OPENAI_API_KEY:-}"
       VISION__MODEL: "${VISION__MODEL:-}"
+      VISION__VIDEO_FRAME_COUNT: "${VISION__VIDEO_FRAME_COUNT:-6}"
     healthcheck:
       test:
         - CMD

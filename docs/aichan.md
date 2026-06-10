@@ -20,7 +20,7 @@ AICHAN 是一个基于 NapCat + OneBot v11 接入的 QQ 私聊助理系统：Nap
 | 服务 | 职责 | 端口 |
 |------|------|------|
 | `napcat` | OneBot v11 QQ 客户端，收发消息 | 6099 (WebUI) |
-| `tool-mcp-server` | 将 QQ 查询、文本文件读取、图片理解包装为 MCP 工具，实际文件读取转发给 hub-service | 内部 |
+| `tool-mcp-server` | 将 QQ 查询、文本文件读取、图片/视频理解包装为 MCP 工具，实际文件读取转发给 hub-service | 内部 |
 | `hub-service` | 会话编排中枢：私聊白名单、防抖合并、媒体入库、XML 转换、调用 agent、统一持有 NapCat WS | 8020 |
 | `agent-service` | LLM 推理执行：多轮对话、MCP 工具调用、AICHAN XML 回复生成 | 8000 |
 | `mcp-gateway` | MCP 工具网关，聚合 playwright/fetch/time/tool 工具 | 9000 |
@@ -56,7 +56,7 @@ AICHAN 是一个基于 NapCat + OneBot v11 接入的 QQ 私聊助理系统：Nap
 | `hub-service` | `GET /api/v1/user/{id}/info` | QQ 用户信息查询，供 MCP 工具调用 |
 | `hub-service` | `GET /api/v1/message/history` | QQ 历史消息查询，供 MCP 工具调用 |
 | `hub-service` | `GET /api/v1/files/{object_key}/metadata` | 文件元数据，供 MCP 工具调用 |
-| `hub-service` | `GET /api/v1/files/{object_key}/content` | 原始文件 bytes，供图片理解工具调用 |
+| `hub-service` | `GET /api/v1/files/{object_key}/content` | 原始文件 bytes，供图片/视频理解工具调用 |
 | `hub-service` | `GET /api/v1/files/{object_key}/text` | 文本类文件读取，非文本返回 422 |
 
 ### `/chat` 请求/响应格式

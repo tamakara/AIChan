@@ -43,6 +43,7 @@ class VisionSettings(BaseModel):
     openai_api_key: StrictStr
     model: StrictStr
     timeout_seconds: float
+    video_frame_count: StrictInt
 
     @field_validator("timeout_seconds", mode="before")
     @classmethod
@@ -54,6 +55,20 @@ class VisionSettings(BaseModel):
         if value <= 0:
             raise ValueError("必须大于 0")
         return float(value)
+
+    @field_validator("video_frame_count", mode="before")
+    @classmethod
+    def _validate_video_frame_count(cls, value: Any) -> int:
+        if isinstance(value, str):
+            try:
+                value = int(value)
+            except ValueError as exc:
+                raise TypeError("必须是整数") from exc
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise TypeError("必须是整数")
+        if value < 1 or value > 12:
+            raise ValueError("必须在 1 到 12 之间")
+        return value
 
 
 class Settings(BaseSettings):

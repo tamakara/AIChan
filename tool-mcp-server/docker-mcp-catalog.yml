@@ -5,7 +5,7 @@ registry:
   tool-mcp-server:
     title: Tool MCP Server
     type: remote
-    description: AICHAN custom MCP tools for QQ context, files, and image understanding.
+    description: AICHAN custom MCP tools for QQ context, files, image understanding, and video understanding.
     remote:
       transport_type: streamable-http
       url: http://tool-mcp-server:8030/mcp
@@ -15,5 +15,6 @@ registry:
       - name: file_get_metadata
       - name: file_read_text
       - name: image_describe
+      - name: video_describe
     prompts: 0
     resources: {}

@@ -1,6 +1,6 @@
 FROM python:3.12-slim
 
-LABEL io.docker.server.metadata='{"name":"tool-mcp-server","description":"Expose AICHAN QQ, file, and image understanding tools as MCP tools.","command":["tool-mcp-mcp"]}'
+LABEL io.docker.server.metadata='{"name":"tool-mcp-server","description":"Expose AICHAN QQ, file, image understanding, and video understanding tools as MCP tools.","command":["tool-mcp-mcp"]}'
 
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1

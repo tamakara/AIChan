@@ -18,7 +18,7 @@ def create_server() -> FastMCP:
 
     mcp = FastMCP(
         name="tool-mcp-server",
-        instructions="Expose AICHAN custom tools for QQ context, text files, and image understanding.",
+        instructions="Expose AICHAN custom tools for QQ context, text files, image understanding, and video understanding.",
         host=settings.server.host,
         port=settings.server.port,
     )
@@ -106,6 +106,22 @@ def create_server() -> FastMCP:
         )
         return json.dumps(result, ensure_ascii=False)
 
+    @mcp.tool()
+    async def video_describe(object_key: str, question: str | None = None) -> str:
+        """理解 hub-service 已入库视频，并按问题返回描述。
+
+        Args:
+            object_key: `<video>` 消息节点上的 object_key。
+            question: 针对视频的具体问题；为空时返回通用描述。
+        """
+        result = await describe_video_object(
+            client=client,
+            vision_client=vision_client,
+            object_key=object_key,
+            question=question,
+        )
+        return json.dumps(result, ensure_ascii=False)
+
     return mcp
 
 
@@ -125,6 +141,30 @@ async def describe_image_object(
     description = await vision_client.describe(content=content, mime=mime, question=question)
     return {
         "type": "image_description",
+        "object_key": object_key,
+        "mime": mime,
+        "description": description,
+        "question": question,
+        "answer": description,
+    }
+
+
+async def describe_video_object(
+    *,
+    client: ToolMcpClient,
+    vision_client: VisionClient,
+    object_key: str,
+    question: str | None,
+) -> dict[str, str | None]:
+    metadata = await client.get_file_metadata(object_key=object_key)
+    mime = str(metadata.get("mime") or "")
+    if not mime.startswith("video/"):
+        raise ValueError("object_key must point to a video")
+
+    content = await client.get_file_content(object_key=object_key)
+    description = await vision_client.describe_video(content=content, mime=mime, question=question)
+    return {
+        "type": "video_description",
         "object_key": object_key,
         "mime": mime,
         "description": description,

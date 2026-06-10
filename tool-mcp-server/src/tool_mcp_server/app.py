@@ -13,7 +13,7 @@ def create_app() -> FastAPI:
     app = FastAPI(
         title="tool-mcp-server",
         version="0.1.0",
-        description="AICHAN custom MCP tools for QQ context, files, and image understanding.",
+        description="AICHAN custom MCP tools for QQ context, files, image understanding, and video understanding.",
     )
 
     @app.get("/healthz")

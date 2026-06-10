@@ -1,7 +1,7 @@
 [project]
 name = "tool-mcp-server"
 version = "0.1.0"
-description = "AICHAN custom MCP tools for QQ context, files, and image understanding."
+description = "AICHAN custom MCP tools for QQ context, files, image understanding, and video understanding."
 authors = [
     { name = "魂辛カラ", email = "tamakara@qq.com" }
 ]
@@ -10,6 +10,7 @@ dependencies = [
     "fastapi>=0.115.6",
     "httpx>=0.28.1",
     "mcp>=1.13.0",
+    "opencv-python-headless>=4.10.0.84",
     "openai>=1.99.9",
     "pydantic>=2.11.7",
     "pydantic-settings>=2.14.0",
