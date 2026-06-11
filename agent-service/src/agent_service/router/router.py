@@ -25,7 +25,7 @@ def create_router(
 
     @router.post("/sessions", response_model=CreateSessionResponse)
     def create_session(req: CreateSessionRequest) -> CreateSessionResponse:
-        session = session_registry.create(metadata=req.metadata)
+        session = session_registry.create(session_id=req.session_id, metadata=req.metadata)
         log_info(
             logger,
             "agent.session_created",

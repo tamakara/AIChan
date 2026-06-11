@@ -14,9 +14,9 @@ class StubOutboundClient:
         self.queued_calls: list[tuple[str, str]] = []
         self.call_results: list[AgentReply] = []
 
-    async def create_session(self, hub_session_key: str, metadata: dict[str, str]) -> str:
-        self.create_calls.append((hub_session_key, metadata))
-        return f"agent-{hub_session_key}"
+    async def create_session(self, session_id: str, metadata: dict[str, str]) -> str:
+        self.create_calls.append((session_id, metadata))
+        return session_id
 
     async def queue_session_message(self, agent_session_id: str, input_xml: str) -> None:
         self.queued_calls.append((agent_session_id, input_xml))
@@ -73,14 +73,23 @@ def test_debounce_merges_messages_for_same_session() -> None:
     asyncio.run(run())
 
     assert outbound.create_calls == [
-        ("private:1", {"platform": "qq", "user_id": 1, "self_id": 10001})
+        (
+            "private_1",
+            {
+                "platform": "qq",
+                "session_id": "private_1",
+                "session_type": "private",
+                "user_id": 1,
+                "self_id": 10001,
+            },
+        )
     ]
     assert len(outbound.session_calls) == 1
-    assert outbound.session_calls[0][0] == "private:1"
-    assert outbound.session_calls[0][1] == "agent-private:1"
+    assert outbound.session_calls[0][0] == "private_1"
+    assert outbound.session_calls[0][1] == "private_1"
     assert '<messages><message id="a"' in outbound.session_calls[0][2]
     assert '<message id="b"' in outbound.session_calls[0][2]
-    assert outbound.replies[0][0] == "private:1"
+    assert outbound.replies[0][0] == "private_1"
     assert state["runner_count"] == 0
 
 
@@ -130,5 +139,5 @@ def test_different_sessions_are_dispatched_independently() -> None:
 
     assert len(outbound.create_calls) == 2
     assert len(outbound.session_calls) == 2
-    assert {session_key for session_key, *_ in outbound.session_calls} == {"private:1", "private:2"}
+    assert {session_key for session_key, *_ in outbound.session_calls} == {"private_1", "private_2"}
     assert outbound.session_calls[0][1] != outbound.session_calls[1][1]

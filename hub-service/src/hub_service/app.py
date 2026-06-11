@@ -6,6 +6,7 @@ from .router import create_router
 from .services import NapcatConnectionState, NapcatWsGateway, OutboundClient, SessionRegistry
 from .services.media_storage import MediaStorage
 from .services.napcat_file_resolver import NapcatFileResolver
+from .services.napcat_ws import SessionAccessRule
 
 
 def create_app() -> FastAPI:
@@ -16,7 +17,7 @@ def create_app() -> FastAPI:
         logger,
         "hub_app.boot",
         agent_url=settings.hub.agent_url,
-        allowed_user_ids=list(settings.hub.allowed_user_ids),
+        session_whitelist=[entry.session_id for entry in settings.hub.session_whitelist],
     )
 
     # WS 连接状态与网关
@@ -24,7 +25,15 @@ def create_app() -> FastAPI:
     napcat_ws_gateway = NapcatWsGateway(
         connection_state=napcat_connection_state,
         action_timeout_seconds=settings.napcat.ws_action_timeout_seconds,
-        allowed_user_ids=set(settings.hub.allowed_user_ids),
+        session_whitelist=tuple(
+            SessionAccessRule(
+                session_id=entry.session_id,
+                enabled=entry.enabled,
+                require_mention=entry.require_mention,
+                blocked_user_ids=frozenset(entry.blocked_user_ids),
+            )
+            for entry in settings.hub.session_whitelist
+        ),
     )
 
     # 下游通信与会话管理

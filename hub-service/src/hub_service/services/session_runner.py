@@ -5,7 +5,7 @@ from collections.abc import Awaitable, Callable
 
 from ..logger import elapsed_ms, get_logger, log_exception, log_info, start_timer
 from ..router.schemas import AgentInboundEvent
-from .message_xml import FileUrlResolverProtocol, InputMediaStorageProtocol, onebot_private_events_to_input_xml
+from .message_xml import FileUrlResolverProtocol, InputMediaStorageProtocol, onebot_events_to_input_xml
 from .outbound_client import OutboundClient
 
 IdleCallback = Callable[[str, "SessionRunner"], Awaitable[None]]
@@ -58,7 +58,7 @@ class SessionRunner:
                 self._schedule_debounce_locked()
 
         if should_queue_to_agent:
-            input_xml = await onebot_private_events_to_input_xml(
+            input_xml = await onebot_events_to_input_xml(
                 [message.event],
                 media_storage=self._media_storage,
                 file_resolver=self._file_resolver,
@@ -130,7 +130,7 @@ class SessionRunner:
     async def _run_once(self, events: list[AgentInboundEvent]) -> None:
         run_started_at = start_timer()
         raw_events = [e.event for e in events]
-        input_xml = await onebot_private_events_to_input_xml(
+        input_xml = await onebot_events_to_input_xml(
             raw_events,
             media_storage=self._media_storage,
             file_resolver=self._file_resolver,

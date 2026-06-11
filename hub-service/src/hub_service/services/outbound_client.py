@@ -45,16 +45,16 @@ class OutboundClient:
         self._media_storage = media_storage
         self._client = httpx.AsyncClient(timeout=None)
 
-    async def create_session(self, hub_session_key: str, metadata: dict[str, Any]) -> str:
-        """在 agent-service 中创建会话，返回 agent 侧的 session_id。"""
+    async def create_session(self, session_id: str, metadata: dict[str, Any]) -> str:
+        """在 agent-service 中创建规范化会话，返回同一个 session_id。"""
         started_at = start_timer()
-        payload = SessionCreateRequest(metadata=metadata)
+        payload = SessionCreateRequest(session_id=session_id, metadata=metadata)
         data = await self._post_json(f"{self._agent_service_url}/sessions", payload.model_dump())
         response = SessionCreateResponse.model_validate(data)
         log_info(
             self._logger,
             "hub.downstream_called",
-            session_key=hub_session_key,
+            session_key=session_id,
             status="ok",
             elapsed_ms=elapsed_ms(started_at),
         )
@@ -98,16 +98,28 @@ class OutboundClient:
         session_key: str,
         output_xml: str,
     ) -> None:
-        """将 agent-service 返回的 AICHAN XML 回复转为 OneBot v11 私聊动作。"""
+        """将 agent-service 返回的 AICHAN XML 回复转为 OneBot v11 动作。"""
         started_at = start_timer()
         items = await reply_xml_to_outbound_items(output_xml, media_storage=self._media_storage)
         if not items:
             return
 
-        if not session_key.startswith("private:"):
+        if session_key.startswith("private_"):
+            await self._send_private_reply(session_key=session_key, items=items)
+        elif session_key.startswith("group_"):
+            await self._send_group_reply(session_key=session_key, items=items)
+        else:
             raise ValueError(f"invalid session_key: {session_key}")
+        log_info(
+            self._logger,
+            "hub.reply_sent",
+            session_key=session_key,
+            reply_len=len(output_xml),
+            elapsed_ms=elapsed_ms(started_at),
+        )
 
-        user_id = int(session_key.split(":", 1)[1])
+    async def _send_private_reply(self, session_key: str, items: list[ReplyOnebotMessage | ReplyFileUpload]) -> None:
+        user_id = int(session_key.split("_", 1)[1])
         for item in items:
             if isinstance(item, ReplyOnebotMessage):
                 await self._napcat_ws.send_action(
@@ -121,13 +133,26 @@ class OutboundClient:
                     action="upload_private_file",
                     params={"user_id": user_id, "file": item.file, "name": item.name},
                 )
-        log_info(
-            self._logger,
-            "hub.reply_sent",
-            session_key=session_key,
-            reply_len=len(output_xml),
-            elapsed_ms=elapsed_ms(started_at),
-        )
+
+    async def _send_group_reply(self, session_key: str, items: list[ReplyOnebotMessage | ReplyFileUpload]) -> None:
+        group_id = int(session_key.split("_", 1)[1])
+        for item in items:
+            if isinstance(item, ReplyOnebotMessage):
+                await self._napcat_ws.send_action(
+                    action="send_group_msg",
+                    params={
+                        "group_id": group_id,
+                        "message": _with_group_at(item),
+                        "auto_escape": False,
+                    },
+                )
+                continue
+
+            if isinstance(item, ReplyFileUpload):
+                await self._napcat_ws.send_action(
+                    action="upload_group_file",
+                    params={"group_id": group_id, "file": item.file, "name": item.name},
+                )
 
     async def _post_json(self, url: str, payload: dict[str, Any]) -> dict[str, Any]:
         response = await self._client.post(url, json=payload)
@@ -144,3 +169,13 @@ class OutboundClient:
 
     async def aclose(self) -> None:
         await self._client.aclose()
+
+
+def _with_group_at(item: ReplyOnebotMessage) -> list[dict[str, Any]]:
+    if not item.at or item.target_user_id is None:
+        return item.message
+    return [
+        {"type": "at", "data": {"qq": str(item.target_user_id)}},
+        {"type": "text", "data": {"text": " "}},
+        *item.message,
+    ]

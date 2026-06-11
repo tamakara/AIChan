@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from threading import Lock
 from typing import Any
-from uuid import uuid4
 from xml.etree import ElementTree
 
 from .prompts import SYSTEM_PROMPT
@@ -22,7 +21,7 @@ class Session:
         self._context.add_message(role="system", content=SYSTEM_PROMPT)
         self._context.add_message(
             role="system",
-            content=_session_info_xml(
+            content=_session_xml(
                 session_id=session_id,
                 metadata=self._metadata,
                 max_turns=max_turns,
@@ -55,10 +54,9 @@ class SessionRegistry:
         self._sessions: dict[str, Session] = {}
         self._lock = Lock()
 
-    def create(self, metadata: dict[str, Any]) -> Session:
+    def create(self, session_id: str, metadata: dict[str, Any]) -> Session:
         with self._lock:
-            session_id = str(uuid4())
-            metadata_with_id = {"session_id": session_id, **metadata}
+            metadata_with_id = {**metadata, "session_id": session_id}
             session = Session(
                 session_id=session_id,
                 metadata=metadata_with_id,
@@ -87,14 +85,14 @@ class SessionRegistry:
             return False
 
 
-def _session_info_xml(session_id: str, metadata: dict[str, Any], max_turns: int) -> str:
+def _session_xml(session_id: str, metadata: dict[str, Any], max_turns: int) -> str:
     attributes = {
         "session_id": session_id,
         "max_turn": str(max_turns),
     }
-    for key in ("platform", "user_id", "self_id"):
+    for key in ("platform", "session_type", "user_id", "group_id", "self_id"):
         value = metadata.get(key)
         if value is not None:
             attributes[key] = str(value)
-    root = ElementTree.Element("session_info", attributes)
+    root = ElementTree.Element("session", attributes)
     return ElementTree.tostring(root, encoding="unicode", short_empty_elements=True)

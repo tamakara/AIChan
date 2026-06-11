@@ -77,13 +77,25 @@ def test_create_session_calls_agent_endpoint() -> None:
     )
 
     agent_session_id = asyncio.run(
-        client.create_session("private:1", {"platform": "qq", "user_id": 1, "self_id": 10001})
+        client.create_session(
+            "private_1",
+            {"platform": "qq", "session_id": "private_1", "session_type": "private", "user_id": 1, "self_id": 10001},
+        )
     )
 
     assert agent_session_id == "agent-1"
     called_url, called_payload = client._client.calls[0]  # type: ignore[attr-defined]
     assert called_url == "http://agent-service:8000/sessions"
-    assert called_payload == {"metadata": {"platform": "qq", "user_id": 1, "self_id": 10001}}
+    assert called_payload == {
+        "session_id": "private_1",
+        "metadata": {
+            "platform": "qq",
+            "session_id": "private_1",
+            "session_type": "private",
+            "user_id": 1,
+            "self_id": 10001,
+        },
+    }
 
 
 def test_call_session_returns_structured_reply() -> None:
@@ -95,7 +107,7 @@ def test_call_session_returns_structured_reply() -> None:
         [DummyResponse({"output_xml": "<reply><text>ok!</text></reply>"})]
     )
 
-    reply = asyncio.run(client.call_session("private:1", "agent-1", "<messages />"))
+    reply = asyncio.run(client.call_session("private_1", "agent-1", "<messages />"))
 
     assert reply is not None
     assert reply.output_xml == "<reply><text>ok!</text></reply>"
@@ -112,7 +124,7 @@ def test_call_session_invalid_response_raises() -> None:
     client._client = DummyHttpClient([DummyResponse({"bad": "shape"})])  # type: ignore[attr-defined]
 
     with pytest.raises(Exception):
-        asyncio.run(client.call_session("private:1", "agent-1", "hello"))
+        asyncio.run(client.call_session("private_1", "agent-1", "hello"))
 
 
 def test_send_reply_sends_private_message_action() -> None:
@@ -122,7 +134,7 @@ def test_send_reply_sends_private_message_action() -> None:
         napcat_ws=napcat_ws,  # type: ignore[arg-type]
     )
 
-    asyncio.run(client.send_reply("private:1", "<reply><text>hello!</text></reply>"))
+    asyncio.run(client.send_reply("private_1", "<reply><text>hello!</text></reply>"))
 
     assert napcat_ws.actions == [
         (
@@ -146,7 +158,7 @@ def test_send_reply_sends_storage_image_as_base64_segment() -> None:
 
     asyncio.run(
         client.send_reply(
-            "private:1",
+            "private_1",
             '<reply><text>ok</text><image object_key="qq/private/1/9/1-abc.jpg" /></reply>',
         )
     )
@@ -193,7 +205,7 @@ def test_send_reply_uploads_storage_file() -> None:
 
     asyncio.run(
         client.send_reply(
-            "private:1",
+            "private_1",
             f'<reply><text>see file</text><file object_key="{object_key}" /></reply>',
         )
     )
@@ -221,7 +233,7 @@ def test_send_reply_splits_repeated_text_nodes() -> None:
         napcat_ws=napcat_ws,  # type: ignore[arg-type]
     )
 
-    asyncio.run(client.send_reply("private:1", "<reply><text>one</text><text>two</text></reply>"))
+    asyncio.run(client.send_reply("private_1", "<reply><text>one</text><text>two</text></reply>"))
 
     assert napcat_ws.actions == [
         (
@@ -250,6 +262,37 @@ def test_send_reply_ignores_empty_reply() -> None:
         napcat_ws=napcat_ws,  # type: ignore[arg-type]
     )
 
-    asyncio.run(client.send_reply("private:1", "<reply />"))
+    asyncio.run(client.send_reply("private_1", "<reply />"))
 
     assert napcat_ws.actions == []
+
+
+def test_send_reply_sends_group_message_with_at_target() -> None:
+    napcat_ws = StubNapcatWs()
+    client = OutboundClient(
+        agent_service_url="http://agent-service:8000",
+        napcat_ws=napcat_ws,  # type: ignore[arg-type]
+    )
+
+    asyncio.run(
+        client.send_reply(
+            "group_20001",
+            '<reply><message target_user_id="2" target_nickname="小红" at="true">'
+            "<text>收到喵</text></message></reply>",
+        )
+    )
+
+    assert napcat_ws.actions == [
+        (
+            "send_group_msg",
+            {
+                "group_id": 20001,
+                "message": [
+                    {"type": "at", "data": {"qq": "2"}},
+                    {"type": "text", "data": {"text": " "}},
+                    {"type": "text", "data": {"text": "收到喵"}},
+                ],
+                "auto_escape": False,
+            },
+        )
+    ]

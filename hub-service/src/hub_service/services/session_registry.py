@@ -5,7 +5,7 @@ from typing import Any
 
 from ..router.schemas import AgentInboundEvent
 from .message_xml import FileUrlResolverProtocol, InputMediaStorageProtocol
-from .napcat_ws import get_session_key
+from .napcat_ws import get_session_key, get_session_metadata
 from .outbound_client import OutboundClient
 from .session_runner import SessionRunner
 
@@ -39,8 +39,8 @@ class SessionRegistry:
                 agent_session_id = self._agent_session_ids.get(session_key)
                 if agent_session_id is None:
                     agent_session_id = await self._outbound_client.create_session(
-                        hub_session_key=session_key,
-                        metadata=_agent_metadata(raw_event),
+                        session_id=session_key,
+                        metadata=get_session_metadata(raw_event),
                     )
                     self._agent_session_ids[session_key] = agent_session_id
 
@@ -79,11 +79,3 @@ class SessionRegistry:
             if self._runners.get(session_key) is runner:
                 if await runner.is_idle():
                     self._runners.pop(session_key, None)
-
-
-def _agent_metadata(raw_event: dict[str, Any]) -> dict[str, Any]:
-    return {
-        "platform": "qq",
-        "user_id": raw_event["user_id"],
-        "self_id": raw_event["self_id"],
-    }

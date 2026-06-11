@@ -1,7 +1,7 @@
 from functools import lru_cache
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, StrictBool, StrictInt, StrictStr, ValidationError, field_validator
 from pydantic_settings import (
@@ -27,7 +27,7 @@ class HubSettings(BaseModel):
 
     agent_url: StrictStr
     debounce_seconds: float
-    allowed_user_ids: tuple[StrictInt, ...]
+    session_whitelist: tuple["SessionWhitelistEntry", ...]
 
     @field_validator("debounce_seconds", mode="before")
     @classmethod
@@ -38,11 +38,41 @@ class HubSettings(BaseModel):
             raise TypeError("必须是数字")
         return float(value)
 
-    @field_validator("allowed_user_ids", mode="before")
+    @field_validator("session_whitelist", mode="before")
     @classmethod
-    def _validate_allowed_user_ids(cls, value: Any) -> tuple[int, ...]:
+    def _validate_session_whitelist(cls, value: Any) -> Any:
         if isinstance(value, str):
             # pydantic-settings 对复杂环境变量使用 JSON，直接初始化时也沿用同一格式。
+            return json.loads(value)
+        return value
+
+
+class SessionWhitelistEntry(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    type: Literal["private", "group"]
+    id: StrictInt
+    enabled: StrictBool = True
+    require_mention: StrictBool = False
+    blocked_user_ids: tuple[StrictInt, ...] = ()
+
+    @property
+    def session_id(self) -> str:
+        return f"{self.type}_{self.id}"
+
+    @field_validator("id")
+    @classmethod
+    def _validate_id(cls, value: int) -> int:
+        if value < 1:
+            raise ValueError("id 必须为正整数")
+        return value
+
+    @field_validator("blocked_user_ids", mode="before")
+    @classmethod
+    def _validate_blocked_user_ids(cls, value: Any) -> tuple[int, ...]:
+        if value is None:
+            return ()
+        if isinstance(value, str):
             value = json.loads(value)
         if not isinstance(value, (list, tuple)):
             raise TypeError("必须是数组")

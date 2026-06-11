@@ -2,7 +2,7 @@ import pytest
 
 from hub_service.services.media_storage import StoredMedia
 from hub_service.services.message_xml import (
-    onebot_private_events_to_input_xml,
+    onebot_events_to_input_xml,
     ReplyFileUpload,
     ReplyOnebotMessage,
     reply_xml_to_outbound_items,
@@ -51,9 +51,9 @@ class StubFileResolver:
 
 
 @pytest.mark.asyncio
-async def test_onebot_private_events_to_input_xml_keeps_only_dialog_fields() -> None:
+async def test_onebot_events_to_input_xml_keeps_dialog_fields() -> None:
     storage = StubMediaStorage()
-    xml = await onebot_private_events_to_input_xml(
+    xml = await onebot_events_to_input_xml(
         [
             {
                 "post_type": "message",
@@ -80,6 +80,7 @@ async def test_onebot_private_events_to_input_xml_keeps_only_dialog_fields() -> 
 
     assert xml.startswith("<messages>")
     assert 'id="9"' in xml
+    assert 'user_id="1"' in xml
     assert 'nickname="小明"' in xml
     assert "<text>1 &lt; 2 &amp; ok</text>" in xml
     assert '<image object_key="qq/private/1/9/1-abc.txt" name="a.jpg" mime="image/jpeg" size="123" sha256="abc"' in xml
@@ -87,7 +88,6 @@ async def test_onebot_private_events_to_input_xml_keeps_only_dialog_fields() -> 
     assert '<face id="123"' in xml
     assert '<reply id="8"' in xml
     assert '<unsupported type="shake"' in xml
-    assert "user_id" not in xml
     assert "self_id" not in xml
     assert "raw_message" not in xml
     assert "font" not in xml
@@ -95,8 +95,36 @@ async def test_onebot_private_events_to_input_xml_keeps_only_dialog_fields() -> 
 
 
 @pytest.mark.asyncio
+async def test_onebot_group_event_marks_sender_and_at_bot() -> None:
+    xml = await onebot_events_to_input_xml(
+        [
+            {
+                "post_type": "message",
+                "message_type": "group",
+                "sub_type": "normal",
+                "message_id": 9,
+                "group_id": 20001,
+                "user_id": 1,
+                "self_id": 10001,
+                "time": 1710000000,
+                "sender": {"nickname": "昵称", "card": "群名片"},
+                "message": [
+                    {"type": "at", "data": {"qq": "10001"}},
+                    {"type": "text", "data": {"text": "hello"}},
+                ],
+            }
+        ],
+    )
+
+    assert 'user_id="1"' in xml
+    assert 'nickname="群名片"' in xml
+    assert 'at_bot="true"' in xml
+    assert '<at qq="10001"' in xml
+
+
+@pytest.mark.asyncio
 async def test_file_segment_with_url_is_stored() -> None:
-    xml = await onebot_private_events_to_input_xml(
+    xml = await onebot_events_to_input_xml(
         [
             {
                 "message_id": 10,
@@ -115,7 +143,7 @@ async def test_file_segment_with_url_is_stored() -> None:
 
 @pytest.mark.asyncio
 async def test_file_segment_without_url_is_unsupported() -> None:
-    xml = await onebot_private_events_to_input_xml(
+    xml = await onebot_events_to_input_xml(
         [
             {
                 "message_id": 10,
@@ -135,7 +163,7 @@ async def test_file_segment_without_url_uses_resolver() -> None:
     storage = StubMediaStorage()
     resolver = StubFileResolver(url="https://resolved-file")
 
-    xml = await onebot_private_events_to_input_xml(
+    xml = await onebot_events_to_input_xml(
         [
             {
                 "message_id": 10,
@@ -200,4 +228,20 @@ async def test_reply_xml_to_outbound_items_splits_direct_children_in_order() -> 
         ReplyOnebotMessage(message=[{"type": "image", "data": {"file": "base64://aW1hZ2UtYnl0ZXM="}}]),
         ReplyOnebotMessage(message=[{"type": "text", "data": {"text": "second"}}]),
         ReplyFileUpload(file="base64://bm90ZQ==", name="2-note.txt"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_reply_xml_to_outbound_items_keeps_group_reply_target() -> None:
+    items = await reply_xml_to_outbound_items(
+        '<reply><message target_user_id="2" target_nickname="小红" at="true">'
+        '<text>收到喵</text></message></reply>'
+    )
+
+    assert items == [
+        ReplyOnebotMessage(
+            message=[{"type": "text", "data": {"text": "收到喵"}}],
+            target_user_id=2,
+            at=True,
+        )
     ]

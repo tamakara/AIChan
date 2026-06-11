@@ -15,12 +15,13 @@
 
 - `POST /sessions`
   - 请求（`CreateSessionRequest`）：
+    - `session_id: str`（必填，hub-service 生成的 `private_<user_id>` 或 `group_<group_id>`）
     - `metadata: dict[str, Any]`（可选，默认 `{}`）
   - 响应（`CreateSessionResponse`）：
-    - `session_id: str`（服务端生成 UUIDv4）
+    - `session_id: str`
     - `metadata: dict[str, Any]`
-  - 语义：每次调用创建新会话，不做幂等去重。
-  - QQ 私聊入口由 hub-service 传入 `platform/user_id/self_id`，agent-service 会写入 `<session_info session_id="..." max_turn="..." ... />` 系统消息。
+  - 语义：每次调用创建指定 `session_id` 的新会话，不做幂等去重。
+  - QQ 入口由 hub-service 传入 `platform/session_type/user_id|group_id/self_id`，agent-service 会写入 `<session session_id="..." max_turn="..." ... />` 系统消息。
 
 - `DELETE /sessions/{session_id}`
   - 成功：`{"deleted": true}`
@@ -49,7 +50,7 @@
 
 ```xml
 <messages>
-  <message id="999" time="1710000000" sub_type="friend" nickname="小明">
+  <message id="999" time="1710000000" sub_type="friend" user_id="1" nickname="小明">
     <text>你好</text>
     <image object_key="qq/private/1/999/1-abc.jpg" name="abc.jpg" mime="image/jpeg" size="123" sha256="abc" />
     <file object_key="qq/private/1/999/2-def.txt" name="note.txt" mime="text/plain" size="456" sha256="def" />
@@ -57,7 +58,8 @@
 </messages>
 ```
 
-当前会话的 `session_id/platform/user_id/self_id` 和最大推理轮次会通过 `<session_info session_id="..." max_turn="..." ... />` system 消息提供。每轮推理还会写入一条 `<turn index="..."/>` system 消息，作为普通会话消息进入上下文。
+当前会话的 `session_id/platform/session_type/user_id|group_id/self_id` 和最大推理轮次会通过 `<session session_id="..." max_turn="..." ... />` system 消息提供。每轮推理还会写入一条 `<turn index="..."/>` system 消息，作为普通会话消息进入上下文。
+群聊消息的 `<message>` 会携带 `user_id/nickname/at_bot`；`user_id` 是唯一身份，`nickname` 只用于称呼。
 图片、视频和文件节点只携带 hub-service 入库后的 `object_key`，agent 需要通过 MCP 工具 `image_describe` / `video_describe` / `file_read_text` 获取内容，不能根据文件名或消息文字猜测媒体内容。
 
 LLM 最终回复必须是 `<reply>`：
@@ -69,6 +71,16 @@ LLM 最终回复必须是 `<reply>`：
 ```
 
 允许的回复子节点为 `<text>...</text>`、`<image object_key="..." />`、`<image file="..." />`、`<file object_key="..." />`、`<file file="..." name="..." />`、`<face id="..." />`、`<record object_key="..." />`、`<record file="..." />`、`<video object_key="..." />`、`<video file="..." />`。多媒体节点必须作为 `<reply>` 的直接子节点输出，不能写进 `<text>` 文本中；文本中的 `<`、`>`、`&` 必须按 XML 规则转义。`object_key` 只能复用上下文或工具结果中真实出现过的 MinIO 对象，不能编造。
+
+群聊多对象回复使用 `<message target_user_id="..." target_nickname="..." at="true">` 分组：
+
+```xml
+<reply>
+  <message target_user_id="2" target_nickname="小红" at="true">
+    <text>收到，笨蛋小红，我来总结喵。</text>
+  </message>
+</reply>
+```
 
 `agent.py` 中的 `_parse_agent_reply()` 负责把 LLM 输出收敛为 `<reply>`。若模型返回非法 XML 或非 `<reply>` 根节点，会包装为 `<reply><text>原始内容</text></reply>`。该逻辑只作为服务边界兜底，正常情况下应由系统提示词约束模型直接生成完整、闭合、可解析的 `<reply>`。
 
@@ -99,7 +111,7 @@ LLM 最终回复必须是 `<reply>`：
 
 初始化时写入两条 system 消息：
 - `SYSTEM_PROMPT`
-- `<session_info session_id="..." max_turn="..." ... />`，包含 `session_id`、最大推理轮次，以及 metadata 中的 `platform/user_id/self_id`
+- `<session session_id="..." max_turn="..." ... />`，包含 `session_id`、最大推理轮次，以及 metadata 中的 `platform/session_type/user_id|group_id/self_id`
 
 ### 3.2 上下文（`Context`）
 

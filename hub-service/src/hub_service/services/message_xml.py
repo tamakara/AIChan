@@ -62,26 +62,29 @@ class ReplyMediaStorageProtocol(Protocol):
 @dataclass(frozen=True)
 class ReplyOnebotMessage:
     message: list[dict[str, Any]]
+    target_user_id: int | None = None
+    at: bool = False
 
 
 @dataclass(frozen=True)
 class ReplyFileUpload:
     file: str
     name: str
+    target_user_id: int | None = None
 
 
 ReplyOutboundItem = ReplyOnebotMessage | ReplyFileUpload
 
 
-async def onebot_private_events_to_input_xml(
+async def onebot_events_to_input_xml(
     events: list[dict[str, Any]],
     media_storage: InputMediaStorageProtocol | None = None,
     file_resolver: FileUrlResolverProtocol | None = None,
 ) -> str:
-    """把 OneBot11 私聊事件压缩成 agent 可读 XML。
+    """把 OneBot11 事件压缩成 agent 可读 XML。
 
-    hub 是唯一理解 OneBot11 的 adapter，因此这里只保留“理解对话”需要的字段。
-    用户身份等稳定信息放在 session metadata，避免同一会话每条消息重复消耗 token。
+    会话类型等窗口级信息放在 session metadata；每条消息只携带发言人身份。
+    群聊里 nickname 可能重复或变化，因此 user_id 必须始终保留给 agent 判断身份边界。
     """
     messages = ElementTree.Element("messages")
     for event in events:
@@ -102,10 +105,11 @@ async def reply_xml_to_onebot_segments(
     root = _reply_root(xml)
 
     segments: list[dict[str, Any]] = []
-    for child in list(root):
-        segment = await _reply_child_to_onebot_segment(child, media_storage)
-        if segment is not None:
-            segments.append(segment)
+    for message in _reply_message_nodes(root):
+        for child in list(message.node):
+            segment = await _reply_child_to_onebot_segment(child, media_storage)
+            if segment is not None:
+                segments.append(segment)
     return segments
 
 
@@ -116,12 +120,13 @@ async def reply_xml_to_file_uploads(
     root = _reply_root(xml)
 
     uploads: list[ReplyFileUpload] = []
-    for child in list(root):
-        if child.tag != "file":
-            continue
-        upload = await _reply_file_to_upload(child, media_storage)
-        if upload is not None:
-            uploads.append(upload)
+    for message in _reply_message_nodes(root):
+        for child in list(message.node):
+            if child.tag != "file":
+                continue
+            upload = await _reply_file_to_upload(child, media_storage, target_user_id=message.target_user_id)
+            if upload is not None:
+                uploads.append(upload)
     return uploads
 
 
@@ -132,18 +137,25 @@ async def reply_xml_to_outbound_items(
     root = _reply_root(xml)
 
     items: list[ReplyOutboundItem] = []
-    for child in list(root):
-        if child.tag == "file":
-            upload = await _reply_file_to_upload(child, media_storage)
-            if upload is not None:
-                items.append(upload)
-            continue
+    for message in _reply_message_nodes(root):
+        for child in list(message.node):
+            if child.tag == "file":
+                upload = await _reply_file_to_upload(child, media_storage, target_user_id=message.target_user_id)
+                if upload is not None:
+                    items.append(upload)
+                continue
 
-        segment = await _reply_child_to_onebot_segment(child, media_storage)
-        if segment is not None:
-            # QQ/NapCat 对图文混排消息的展示并不稳定；这里按 `<reply>` 直系子节点拆分，
-            # 让文本、视频、图片等都成为独立动作，保证用户能看到每一段回复。
-            items.append(ReplyOnebotMessage(message=[segment]))
+            segment = await _reply_child_to_onebot_segment(child, media_storage)
+            if segment is not None:
+                # QQ/NapCat 对图文混排消息的展示并不稳定；这里按回复子节点拆分，
+                # 让文本、视频、图片等都成为独立动作，保证用户能看到每一段回复。
+                items.append(
+                    ReplyOnebotMessage(
+                        message=[segment],
+                        target_user_id=message.target_user_id,
+                        at=message.at,
+                    )
+                )
     return items
 
 
@@ -152,10 +164,13 @@ def _message_attrs(event: dict[str, Any]) -> dict[str, str]:
     _set_attr(attrs, "id", event.get("message_id"))
     _set_attr(attrs, "time", event.get("time"))
     _set_attr(attrs, "sub_type", event.get("sub_type"))
+    _set_attr(attrs, "user_id", event.get("user_id"))
 
     sender = event.get("sender")
     if isinstance(sender, dict):
-        _set_attr(attrs, "nickname", sender.get("nickname"))
+        _set_attr(attrs, "nickname", sender.get("card") or sender.get("nickname"))
+    if event.get("message_type") == "group":
+        attrs["at_bot"] = "true" if _is_at_bot(event) else "false"
     return attrs
 
 
@@ -239,11 +254,13 @@ async def _reply_child_to_onebot_segment(
 async def _reply_file_to_upload(
     child: ElementTree.Element,
     media_storage: ReplyMediaStorageProtocol | None,
+    *,
+    target_user_id: int | None = None,
 ) -> ReplyFileUpload | None:
     file = child.attrib.get("file")
     if file:
         name = child.attrib.get("name") or _name_from_file_ref(file)
-        return ReplyFileUpload(file=file, name=name)
+        return ReplyFileUpload(file=file, name=name, target_user_id=target_user_id)
 
     object_key = child.attrib.get("object_key")
     if not object_key:
@@ -254,7 +271,11 @@ async def _reply_file_to_upload(
     metadata = await media_storage.metadata(object_key)
     content = await media_storage.content(object_key)
     name = child.attrib.get("name") or metadata.name
-    return ReplyFileUpload(file="base64://" + b64encode(content).decode("ascii"), name=name)
+    return ReplyFileUpload(
+        file="base64://" + b64encode(content).decode("ascii"),
+        name=name,
+        target_user_id=target_user_id,
+    )
 
 
 def _onebot_segment(segment_type: str, data: dict[str, str]) -> dict[str, Any]:
@@ -376,6 +397,30 @@ def _reply_root(xml: str) -> ElementTree.Element:
     return root
 
 
+@dataclass(frozen=True)
+class _ReplyMessageNode:
+    node: ElementTree.Element
+    target_user_id: int | None
+    at: bool
+
+
+def _reply_message_nodes(root: ElementTree.Element) -> list[_ReplyMessageNode]:
+    grouped = [child for child in list(root) if child.tag == "message"]
+    if not grouped:
+        return [_ReplyMessageNode(node=root, target_user_id=None, at=False)]
+
+    messages: list[_ReplyMessageNode] = []
+    for child in grouped:
+        messages.append(
+            _ReplyMessageNode(
+                node=child,
+                target_user_id=_to_int(child.attrib.get("target_user_id")),
+                at=_is_true(child.attrib.get("at")),
+            )
+        )
+    return messages
+
+
 def _name_from_file_ref(file: str) -> str:
     parsed = urlparse(file)
     name = PurePosixPath(unquote(parsed.path)).name
@@ -388,3 +433,38 @@ def _set_attr(attrs: dict[str, str], name: str, value: object) -> None:
     if value is None:
         return
     attrs[name] = str(value)
+
+
+def _is_at_bot(event: dict[str, Any]) -> bool:
+    self_id = _to_int(event.get("self_id"))
+    if self_id is None:
+        return False
+    for segment in _message_segments(event.get("message")):
+        if segment.get("type") != "at":
+            continue
+        data = segment.get("data")
+        if not isinstance(data, dict):
+            continue
+        if _to_int(data.get("qq")) == self_id:
+            return True
+    return False
+
+
+def _is_true(value: object) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in {"true", "1", "yes", "on"}
+    return False
+
+
+def _to_int(value: object) -> int | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float) and value.is_integer():
+        return int(value)
+    if isinstance(value, str) and value.strip().isdigit():
+        return int(value)
+    return None

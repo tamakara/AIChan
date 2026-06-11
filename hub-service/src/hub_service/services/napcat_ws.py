@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import uuid
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from typing import Any
 
 from fastapi import WebSocket, WebSocketDisconnect
@@ -13,6 +14,14 @@ from .connection_state import NapcatConnectionState
 OnEventCallback = Callable[[dict[str, Any]], Awaitable[None]]
 
 
+@dataclass(frozen=True)
+class SessionAccessRule:
+    session_id: str
+    enabled: bool
+    require_mention: bool
+    blocked_user_ids: frozenset[int]
+
+
 class NapcatWsGateway:
     """NapCat 反向 WebSocket 处理器 — 事件分发 + 动作发送。"""
 
@@ -20,13 +29,13 @@ class NapcatWsGateway:
         self,
         connection_state: NapcatConnectionState,
         action_timeout_seconds: float,
-        allowed_user_ids: set[int],
+        session_whitelist: tuple[SessionAccessRule, ...],
         on_event: OnEventCallback | None = None,
     ) -> None:
         self._logger = get_logger("napcat_ws")
         self._connection_state = connection_state
         self._action_timeout_seconds = action_timeout_seconds
-        self._allowed_user_ids = allowed_user_ids
+        self._session_rules = {rule.session_id: rule for rule in session_whitelist if rule.enabled}
         self._on_event = on_event
         self._pending_actions: dict[str, asyncio.Future[dict[str, Any]]] = {}
         self._pending_lock = asyncio.Lock()
@@ -113,14 +122,28 @@ class NapcatWsGateway:
         if raw_event.get("post_type") != "message":
             return
 
-        if raw_event.get("message_type") != "private":
+        message_type = raw_event.get("message_type")
+        if message_type not in {"private", "group"}:
             return
 
         user_id = _to_int(raw_event.get("user_id"))
-        if user_id is None or user_id not in self._allowed_user_ids:
+        self_id = _to_int(raw_event.get("self_id"))
+        if user_id is None or self_id is None or user_id == self_id:
             return
 
         if not _is_valid_event_time(raw_event.get("time")):
+            return
+
+        try:
+            session_id = get_session_key(raw_event)
+        except ValueError:
+            return
+
+        rule = self._session_rules.get(session_id)
+        if rule is None or user_id in rule.blocked_user_ids:
+            return
+
+        if message_type == "group" and rule.require_mention and not is_at_bot(raw_event):
             return
 
         if self._on_event is not None:
@@ -178,8 +201,54 @@ def _to_int(value: object) -> int | None:
     return None
 
 
+def is_at_bot(event: dict[str, Any]) -> bool:
+    self_id = _to_int(event.get("self_id"))
+    if self_id is None:
+        return False
+    for segment in _message_segments(event.get("message")):
+        if segment.get("type") != "at":
+            continue
+        data = segment.get("data")
+        if not isinstance(data, dict):
+            continue
+        if _to_int(data.get("qq")) == self_id:
+            return True
+    return False
+
+
 def get_session_key(event: dict[str, Any]) -> str:
-    """从 OneBot v11 私聊事件中提取 hub 内部会话路由键。"""
-    if event.get("message_type") != "private":
-        raise ValueError(f"unsupported message_type: {event.get('message_type', '')}")
-    return f"private:{event['user_id']}"
+    """把 OneBot 会话窗口归一成全链路唯一 session_id。"""
+    message_type = event.get("message_type")
+    if message_type == "private":
+        user_id = _to_int(event.get("user_id"))
+        if user_id is None:
+            raise ValueError("private event missing user_id")
+        return f"private_{user_id}"
+    if message_type == "group":
+        group_id = _to_int(event.get("group_id"))
+        if group_id is None:
+            raise ValueError("group event missing group_id")
+        return f"group_{group_id}"
+    raise ValueError(f"unsupported message_type: {event.get('message_type', '')}")
+
+
+def get_session_metadata(event: dict[str, Any]) -> dict[str, Any]:
+    session_id = get_session_key(event)
+    message_type = event.get("message_type")
+    metadata: dict[str, Any] = {
+        "platform": "qq",
+        "session_id": session_id,
+        "session_type": message_type,
+        "self_id": event["self_id"],
+    }
+    if message_type == "private":
+        metadata["user_id"] = event["user_id"]
+    if message_type == "group":
+        metadata["group_id"] = event["group_id"]
+    return metadata
+
+
+def _message_segments(value: object) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    return [item for item in value if isinstance(item, dict)]

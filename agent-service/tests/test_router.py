@@ -49,8 +49,11 @@ def build_client(
     return TestClient(app)
 
 
-def _create_session(client: TestClient, metadata: dict | None = None) -> str:
-    response = client.post("/sessions", json={} if metadata is None else {"metadata": metadata})
+def _create_session(client: TestClient, session_id: str = "private_1", metadata: dict | None = None) -> str:
+    payload = {"session_id": session_id}
+    if metadata is not None:
+        payload["metadata"] = metadata
+    response = client.post("/sessions", json=payload)
     assert response.status_code == 200
     data = response.json()
     assert isinstance(data.get("session_id"), str)
@@ -68,23 +71,23 @@ def test_healthz() -> None:
 def test_create_session_returns_metadata_and_session_id() -> None:
     client = build_client(StubLlmClient())
 
-    response = client.post("/sessions", json={"metadata": {"session_id": "private_1"}})
+    response = client.post(
+        "/sessions",
+        json={"session_id": "private_1", "metadata": {"session_type": "private"}},
+    )
 
     assert response.status_code == 200
     payload = response.json()
-    assert isinstance(payload["session_id"], str)
-    assert payload["metadata"] == {"session_id": "private_1"}
+    assert payload["session_id"] == "private_1"
+    assert payload["metadata"] == {"session_type": "private", "session_id": "private_1"}
 
 
-def test_create_session_without_metadata_defaults_to_empty_dict() -> None:
+def test_create_session_requires_session_id() -> None:
     client = build_client(StubLlmClient())
 
     response = client.post("/sessions", json={})
 
-    assert response.status_code == 200
-    payload = response.json()
-    assert isinstance(payload["session_id"], str)
-    assert payload["metadata"] == {"session_id": payload["session_id"]}
+    assert response.status_code == 422
 
 
 def test_delete_session() -> None:
@@ -158,7 +161,7 @@ def test_chat_uses_existing_session_and_injects_context() -> None:
         observability=NoopObservability(),
     )
     client = build_client(llm_client=llm_client, agent=agent, registry=registry)
-    session_id = _create_session(client, {"session_id": "private_1"})
+    session_id = _create_session(client, metadata={"session_type": "private"})
 
     response = client.post(
         "/chat",
@@ -190,7 +193,7 @@ def test_chat_uses_existing_session_and_injects_context() -> None:
 def test_chat_reuses_existing_session() -> None:
     llm_client = StubLlmClient()
     client = build_client(llm_client=llm_client)
-    session_id = _create_session(client, {"session_id": "private_1"})
+    session_id = _create_session(client, metadata={"session_type": "private"})
 
     first = client.post(
         "/chat",
@@ -219,7 +222,7 @@ def test_chat_returns_fallback_when_agent_fails() -> None:
     llm_client = StubLlmClient()
     llm_client.fail = True
     client = build_client(llm_client=llm_client)
-    session_id = _create_session(client, {"session_id": "private_1"})
+    session_id = _create_session(client, metadata={"session_type": "private"})
 
     response = client.post(
         "/chat",

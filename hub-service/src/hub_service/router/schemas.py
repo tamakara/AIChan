@@ -71,6 +71,7 @@ class AgentInboundEvent(BaseModel):
 class SessionCreateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
+    session_id: str = Field(min_length=1)
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 

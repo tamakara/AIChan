@@ -77,7 +77,7 @@ class MediaStorage:
         mime = _media_mime(name=name, url=url, response_mime=response_mime, segment_type=segment_type)
         extension = _media_extension(name=name, mime=mime)
         object_key = (
-            f"qq/private/{event.get('user_id')}/{event.get('message_id')}/"
+            f"qq/{_media_session_type(event)}/{_media_peer_id(event)}/{event.get('message_id')}/"
             f"{segment_index}-{digest}{extension}"
         )
         stored = StoredMedia(
@@ -205,3 +205,13 @@ def _is_text_like(media: StoredMedia) -> bool:
     if media.mime.startswith("text/"):
         return True
     return PurePosixPath(media.name).suffix.lower() in TEXT_EXTENSIONS
+
+
+def _media_session_type(event: dict[str, Any]) -> str:
+    return "group" if event.get("message_type") == "group" else "private"
+
+
+def _media_peer_id(event: dict[str, Any]) -> object:
+    if event.get("message_type") == "group":
+        return event.get("group_id")
+    return event.get("user_id")

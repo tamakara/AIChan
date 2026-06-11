@@ -70,17 +70,18 @@ def _tool_call(tool_name: str) -> ChatCompletionMessageFunctionToolCall:
     )
 
 
-def test_create_session_generates_unique_id() -> None:
+def test_create_session_uses_provided_session_id() -> None:
     registry = _build_registry()
-    first = registry.create(metadata={"session_id": "s1"})
-    second = registry.create(metadata={"session_id": "s2"})
+    first = registry.create(session_id="private_1", metadata={"session_type": "private"})
+    second = registry.create(session_id="group_2", metadata={"session_type": "group"})
 
-    assert first.session_id != second.session_id
+    assert first.session_id == "private_1"
+    assert second.session_id == "group_2"
 
 
 def test_get_session_hit_and_miss() -> None:
     registry = _build_registry()
-    session = registry.create(metadata={})
+    session = registry.create(session_id="private_1", metadata={})
 
     assert registry.get(session.session_id) is session
     assert registry.get("missing") is None
@@ -88,16 +89,16 @@ def test_get_session_hit_and_miss() -> None:
 
 def test_session_keeps_metadata_snapshot() -> None:
     registry = _build_registry()
-    metadata = {"session_id": "private_1"}
-    session = registry.create(metadata=metadata)
+    metadata = {"session_type": "private"}
+    session = registry.create(session_id="private_1", metadata=metadata)
     metadata["session_id"] = "mutated"
 
-    assert session.metadata == {"session_id": "private_1"}
+    assert session.metadata == {"session_type": "private", "session_id": "private_1"}
 
 
 def test_delete_session() -> None:
     registry = _build_registry()
-    session = registry.create(metadata={})
+    session = registry.create(session_id="private_1", metadata={})
 
     assert registry.delete(session.session_id) is True
     assert registry.get(session.session_id) is None
@@ -107,7 +108,7 @@ def test_delete_session() -> None:
 def test_agent_run_session() -> None:
     agent = _build_agent()
     registry = _build_registry()
-    session = registry.create(metadata={"session_id": "s1"})
+    session = registry.create(session_id="private_1", metadata={"session_type": "private"})
 
     reply = agent.run(
         session=session,
@@ -136,7 +137,7 @@ def test_agent_run_commits_normalized_reply_when_llm_returns_broken_xml() -> Non
         observability=NoopObservability(),
     )
     registry = _build_registry()
-    session = registry.create(metadata={"session_id": "s1"})
+    session = registry.create(session_id="private_1", metadata={"session_type": "private"})
 
     reply = agent.run(
         session=session,
@@ -147,13 +148,16 @@ def test_agent_run_commits_normalized_reply_when_llm_returns_broken_xml() -> Non
     assert session._context.messages[-1]["content"] == reply.output_xml  # noqa: SLF001
 
 
-def test_session_info_contains_metadata() -> None:
+def test_session_system_message_contains_metadata() -> None:
     registry = _build_registry()
-    session = registry.create(metadata={"platform": "qq", "user_id": 1, "self_id": 10001})
+    session = registry.create(
+        session_id="group_20001",
+        metadata={"platform": "qq", "session_type": "group", "group_id": 20001, "self_id": 10001},
+    )
 
     assert session._context.messages[1]["content"] == (  # noqa: SLF001
-        f'<session_info session_id="{session.session_id}" max_turn="3" '
-        'platform="qq" user_id="1" self_id="10001" />'
+        '<session session_id="group_20001" max_turn="3" '
+        'platform="qq" session_type="group" group_id="20001" self_id="10001" />'
     )
 
 
@@ -172,7 +176,7 @@ def test_stop_with_queued_message_drops_final_reply_and_continues() -> None:
         observability=NoopObservability(),
     )
     registry = _build_registry()
-    session = registry.create(metadata={"session_id": "s1"})
+    session = registry.create(session_id="private_1", metadata={"session_type": "private"})
     session.queue_user_message("<messages><message><text>queued</text></message></messages>")
 
     reply = agent.run(
@@ -205,7 +209,7 @@ def test_tool_call_turn_inserts_queued_message_after_tool_result() -> None:
         observability=NoopObservability(),
     )
     registry = _build_registry()
-    session = registry.create(metadata={"session_id": "s1"})
+    session = registry.create(session_id="private_1", metadata={"session_type": "private"})
     session.queue_user_message("<messages><message><text>queued</text></message></messages>")
 
     reply = agent.run(
@@ -241,7 +245,7 @@ def test_agent_run_failure_commits_user_and_fallback_reply() -> None:
         observability=NoopObservability(),
     )
     registry = _build_registry()
-    session = registry.create(metadata={"session_id": "s1"})
+    session = registry.create(session_id="private_1", metadata={"session_type": "private"})
 
     reply = agent.run(
         session=session,

@@ -2,7 +2,7 @@
 
 ## 1. 系统定位
 
-AICHAN 是一个基于 NapCat + OneBot v11 接入的 QQ 私聊助理系统：NapCat 接入 QQ 消息 → `hub-service` 做白名单、XML 转换、会话编排与 QQ 动作出口 → `agent-service` LLM 推理 → 回复回 QQ。
+AICHAN 是一个基于 NapCat + OneBot v11 接入的 QQ 私聊/群聊助理系统：NapCat 接入 QQ 消息 → `hub-service` 做会话白名单、XML 转换、会话编排与 QQ 动作出口 → `agent-service` LLM 推理 → 回复回 QQ。
 
 会话状态不依赖 Redis 等队列中间件，服务间直接通过 HTTP + WebSocket 通信；图片和文件内容使用私有 MinIO 做对象存储。
 
@@ -21,7 +21,7 @@ AICHAN 是一个基于 NapCat + OneBot v11 接入的 QQ 私聊助理系统：Nap
 |------|------|------|
 | `napcat` | OneBot v11 QQ 客户端，收发消息 | 6099 (WebUI) |
 | `tool-mcp-server` | 将 QQ 查询、文本文件读取、图片/视频理解包装为 MCP 工具，实际文件读取转发给 hub-service | 内部 |
-| `hub-service` | 会话编排中枢：私聊白名单、防抖合并、媒体入库、XML 转换、调用 agent、统一持有 NapCat WS | 8020 |
+| `hub-service` | 会话编排中枢：私聊/群聊白名单、防抖合并、媒体入库、XML 转换、调用 agent、统一持有 NapCat WS | 8020 |
 | `agent-service` | LLM 推理执行：多轮对话、MCP 工具调用、AICHAN XML 回复生成 | 8000 |
 | `mcp-gateway` | MCP 工具网关，聚合 playwright/fetch/time/tool 工具 | 9000 |
 | `minio` | 私有对象存储，保存 NapCat 下载来的图片和文件 | 9000/9001 |
@@ -31,16 +31,16 @@ AICHAN 是一个基于 NapCat + OneBot v11 接入的 QQ 私聊助理系统：Nap
 ```
 [QQ 用户发消息]
   → NapCat OneBot v11 WS 事件 → hub-service 接收
-  → 私聊 + user_id 白名单过滤
-  → 按 session_key 防抖合并多轮输入
+  → private/group session 白名单过滤
+  → 按规范化 session_id 防抖合并多轮输入
   → 图片/文件/语音/视频下载到 MinIO；无 url 的 QQ 文件会先通过 NapCat file_id 尝试换取下载 URL
-  → OneBot v11 私聊事件转换为 <messages>，媒体节点只保留 object_key
+  → OneBot v11 私聊/群聊事件转换为 <messages>，媒体节点只保留 object_key
   → POST /chat → agent-service
   → Agent 多轮 LLM 推理 + MCP 工具调用
   → LLM 输出 <reply>
   → agent-service 返回 {output_xml}
-  → hub-service 转换为 OneBot v11 消息段 / 私聊文件上传动作
-  → NapCat WS send_action(send_private_msg / upload_private_file)
+  → hub-service 转换为 OneBot v11 消息段 / 文件上传动作
+  → NapCat WS send_action(send_private_msg/send_group_msg/upload_*_file)
   → QQ 用户收到回复
 ```
 
@@ -63,7 +63,7 @@ AICHAN 是一个基于 NapCat + OneBot v11 接入的 QQ 私聊助理系统：Nap
 
 请求：
 ```json
-{"session_id": "uuid", "input_xml": "<messages>...</messages>"}
+{"session_id": "private_123", "input_xml": "<messages>...</messages>"}
 ```
 
 响应：
@@ -71,7 +71,7 @@ AICHAN 是一个基于 NapCat + OneBot v11 接入的 QQ 私聊助理系统：Nap
 {"output_xml": "<reply><text>笨蛋，找我有什么事喵？</text></reply>"}
 ```
 
-hub-service 将 `output_xml` 转为 OneBot v11 私聊消息段并发送给当前会话对应的 QQ 用户。
+hub-service 将 `output_xml` 转为 OneBot v11 消息段并发送给当前会话对应的私聊用户或群聊窗口；群聊 `<message target_user_id="..." at="true">` 会在发送时 @ 对应成员。
 
 ## 5. 配置
 
