@@ -30,38 +30,6 @@ class MessageHistoryResponse(BaseModel):
     data: MessageHistoryData
 
 
-class FileMetadataData(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    object_key: str
-    name: str
-    mime: str
-    size: int
-    sha256: str
-
-
-class FileMetadataResponse(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    ok: bool
-    data: FileMetadataData
-
-
-class FileTextData(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    object_key: str
-    text: str
-    truncated: bool
-
-
-class FileTextResponse(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    ok: bool
-    data: FileTextData
-
-
 class AgentInboundEvent(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

@@ -11,7 +11,8 @@ from .mcp.vision import VisionClient
 def create_server() -> FastMCP:
     settings = get_settings()
     client = ToolMcpClient(
-        base_url=settings.mcp.base_url,
+        qq_base_url=settings.mcp.qq_base_url,
+        file_base_url=settings.mcp.file_base_url,
         timeout_seconds=settings.mcp.timeout_seconds,
     )
     vision_client = VisionClient(settings.vision)
@@ -68,7 +69,7 @@ def create_server() -> FastMCP:
 
     @mcp.tool()
     async def file_get_metadata(object_key: str) -> str:
-        """获取 hub-service 已入库文件的元数据。
+        """获取 file-service 已入库文件的元数据。
 
         Args:
             object_key: `<image>` / `<file>` 等消息节点上的 object_key。
@@ -78,7 +79,7 @@ def create_server() -> FastMCP:
 
     @mcp.tool()
     async def file_read_text(object_key: str, max_chars: int = 12000) -> str:
-        """按 UTF-8 文本读取 hub-service 已入库文件。
+        """按 UTF-8 文本读取 file-service 已入库文件。
 
         Args:
             object_key: `<file>` 消息节点上的 object_key。
@@ -92,7 +93,7 @@ def create_server() -> FastMCP:
 
     @mcp.tool()
     async def image_describe(object_key: str, question: str | None = None) -> str:
-        """理解 hub-service 已入库图片，并按问题返回描述。
+        """理解 file-service 已入库图片，并按问题返回描述。
 
         Args:
             object_key: `<image>` 消息节点上的 object_key。
@@ -108,7 +109,7 @@ def create_server() -> FastMCP:
 
     @mcp.tool()
     async def video_describe(object_key: str, question: str | None = None) -> str:
-        """理解 hub-service 已入库视频，并按问题返回描述。
+        """理解 file-service 已入库视频，并按问题返回描述。
 
         Args:
             object_key: `<video>` 消息节点上的 object_key。

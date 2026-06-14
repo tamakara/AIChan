@@ -1,0 +1,14 @@
+server:
+  host: 0.0.0.0
+  port: 8040
+  log_level: debug
+
+storage:
+  endpoint: minio:9000
+  bucket: aichan-files
+  access_key: ""
+  secret_key: ""
+  secure: false
+  database_path: /data/file-service.sqlite3
+  download_timeout_seconds: 20
+  max_object_bytes: 10485760

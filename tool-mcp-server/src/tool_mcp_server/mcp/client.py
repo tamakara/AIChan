@@ -7,10 +7,11 @@ import httpx
 
 
 class ToolMcpClient:
-    """MCP 工具只调用 hub-service，避免把 QQ/MinIO 内部连接细节暴露给 agent。"""
+    """MCP 工具按领域调用下游服务，QQ 与文件能力不再共享 hub 边界。"""
 
-    def __init__(self, base_url: str, timeout_seconds: float) -> None:
-        self._base_url = base_url.rstrip("/")
+    def __init__(self, qq_base_url: str, file_base_url: str, timeout_seconds: float) -> None:
+        self._qq_base_url = qq_base_url.rstrip("/")
+        self._file_base_url = file_base_url.rstrip("/")
         self._timeout = timeout_seconds
 
     async def get_message_history(
@@ -28,21 +29,30 @@ class ToolMcpClient:
         if before_message_id is not None:
             params["before_message_id"] = before_message_id
 
-        payload = await self._get_json("/api/v1/message/history", params=params, action="history")
+        payload = await self._get_json(
+            self._qq_base_url,
+            "/api/v1/message/history",
+            params=params,
+            action="history",
+        )
         data = payload.get("data")
         if not isinstance(data, dict):
             raise RuntimeError("tool-mcp returned invalid history payload")
         return data
 
     async def get_user_info(self, user_id: int) -> dict[str, Any]:
-        payload = await self._get_json(f"/api/v1/user/{user_id}/info", action="user info")
+        payload = await self._get_json(self._qq_base_url, f"/api/v1/user/{user_id}/info", action="user info")
         data = payload.get("data")
         if not isinstance(data, dict):
             raise RuntimeError("tool-mcp returned invalid user info payload")
         return data
 
     async def get_file_metadata(self, object_key: str) -> dict[str, Any]:
-        payload = await self._get_json(f"/api/v1/files/{object_key}/metadata", action="file metadata")
+        payload = await self._get_json(
+            self._file_base_url,
+            f"/api/v1/files/{object_key}/metadata",
+            action="file metadata",
+        )
         data = payload.get("data")
         if not isinstance(data, dict):
             raise RuntimeError("tool-mcp returned invalid file metadata payload")
@@ -50,6 +60,7 @@ class ToolMcpClient:
 
     async def read_file_text(self, object_key: str, max_chars: int) -> dict[str, Any]:
         payload = await self._get_json(
+            self._file_base_url,
             f"/api/v1/files/{object_key}/text",
             params={"max_chars": max_chars},
             action="file text",
@@ -60,7 +71,7 @@ class ToolMcpClient:
         return data
 
     async def get_file_content(self, object_key: str) -> bytes:
-        async with httpx.AsyncClient(base_url=self._base_url, timeout=self._timeout) as client:
+        async with httpx.AsyncClient(base_url=self._file_base_url, timeout=self._timeout) as client:
             try:
                 response = await client.get(f"/api/v1/files/{object_key}/content")
                 response.raise_for_status()
@@ -75,12 +86,13 @@ class ToolMcpClient:
 
     async def _get_json(
         self,
+        base_url: str,
         path: str,
         *,
         action: str,
         params: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        async with httpx.AsyncClient(base_url=self._base_url, timeout=self._timeout) as client:
+        async with httpx.AsyncClient(base_url=base_url, timeout=self._timeout) as client:
             try:
                 response = await client.get(path, params=params)
                 response.raise_for_status()

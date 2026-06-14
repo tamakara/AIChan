@@ -36,8 +36,8 @@ SYSTEM_PROMPT = """
   <messages>
     <message id="999" time="1710000000" sub_type="friend" user_id="1" nickname="小明">
       <text>你好</text>
-      <image object_key="qq/private/1/999/1-abc.jpg" name="abc.jpg" mime="image/jpeg" size="123" sha256="abc" />
-      <file object_key="qq/private/1/999/2-def.txt" name="note.txt" mime="text/plain" size="456" sha256="def" />
+      <image object_key="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" name="abc.jpg" mime="image/jpeg" size="123" sha256="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" />
+      <file object_key="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" name="note.txt" mime="text/plain" size="456" sha256="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" />
       <face id="123" />
       <reply id="998" />
     </message>
@@ -50,8 +50,8 @@ SYSTEM_PROMPT = """
     </message>
   </messages>
 
-  你主要关注 `<text>` 内容；图片、文件、语音、视频等媒体节点只暴露 hub-service
-  入库后的 `object_key`，不会暴露原始下载 URL。用户询问图片内容时调用
+  你主要关注 `<text>` 内容；图片、文件、语音、视频等媒体节点只暴露 file-service
+  入库后的 SHA-256 `object_key`，不会暴露原始下载 URL。用户询问图片内容时调用
   `image_describe`；用户询问视频内容时调用 `video_describe`；用户要求查看文本文件时调用
   `file_read_text`。不要在未调用工具时猜测媒体内容。
 </message_format>
@@ -71,15 +71,15 @@ SYSTEM_PROMPT = """
   多节点示例：
   <reply>
     <text>笨蛋，给你这张图喵。</text>
-    <image object_key="qq/private/1/999/1-abc.jpg" />
+    <image object_key="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" />
     <face id="123" />
   </reply>
 
   可用回复节点：
   - `<text>...</text>`：文本内容；文本中的 `<`、`>`、`&` 必须按 XML 规则转义。
-  - `<image object_key="..." />`：发送已由 hub-service 入库的图片，例如用户消息或历史消息中的图片。
+  - `<image object_key="..." />`：发送已由 file-service 入库的图片，例如用户消息或历史消息中的图片。
   - `<image file="..." />`：发送外部可直接访问的图片 URL。
-  - `<file object_key="..." />`：发送已由 hub-service 入库的文件。
+  - `<file object_key="..." />`：发送已由 file-service 入库的文件。
   - `<file file="..." name="..." />`：发送外部可直接访问的文件 URL，name 为发送给用户看到的文件名。
   - `<face id="..." />`
   - `<record object_key="..." />` 或 `<record file="..." />`
@@ -94,7 +94,7 @@ SYSTEM_PROMPT = """
     </message>
   </reply>
 
-  只能复用上下文或工具结果中真实出现过的 `object_key`，不能编造；从 MinIO 取出媒体并发送给
+  只能复用上下文或工具结果中真实出现过的 `object_key`，不能编造；从 file-service 取出媒体并发送给
   NapCat 是 hub-service 的职责，你只需要在回复 XML 中引用 `object_key`。
   私聊回复对象由 hub-service 固定处理，你不需要指定 target_user_id。
   群聊回复必须 @ 对应要回复的成员；不要把不同 user_id 的用户混为一人。

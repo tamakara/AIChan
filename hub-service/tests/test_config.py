@@ -19,14 +19,9 @@ hub:
       enabled: true
 napcat:
   ws_action_timeout_seconds: 5
-storage:
-  endpoint: minio:9000
-  bucket: aichan-media
-  access_key: minio_user
-  secret_key: minio_password
-  secure: false
-  download_timeout_seconds: 20
-  max_object_bytes: 10485760
+file_service:
+  base_url: http://file-service:8040
+  timeout_seconds: 25
 """,
         encoding="utf-8",
     )
@@ -38,8 +33,8 @@ storage:
         '[{"type":"group","id":20001,"enabled":true,"require_mention":true,"blocked_user_ids":[2041214552]}]',
     )
     monkeypatch.setenv("NAPCAT__WS_ACTION_TIMEOUT_SECONDS", "7")
-    monkeypatch.setenv("STORAGE__BUCKET", "media-env")
-    monkeypatch.setenv("STORAGE__DOWNLOAD_TIMEOUT_SECONDS", "9")
+    monkeypatch.setenv("FILE_SERVICE__BASE_URL", "http://file-env:8040")
+    monkeypatch.setenv("FILE_SERVICE__TIMEOUT_SECONDS", "9")
 
     settings = Settings(_env_file=None)
 
@@ -52,5 +47,5 @@ storage:
     assert settings.hub.session_whitelist[0].require_mention is True
     assert settings.hub.session_whitelist[0].blocked_user_ids == (2041214552,)
     assert settings.napcat.ws_action_timeout_seconds == 7.0
-    assert settings.storage.bucket == "media-env"
-    assert settings.storage.download_timeout_seconds == 9.0
+    assert settings.file_service.base_url == "http://file-env:8040"
+    assert settings.file_service.timeout_seconds == 9.0

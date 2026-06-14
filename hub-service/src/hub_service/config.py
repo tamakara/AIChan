@@ -101,36 +101,20 @@ class NapcatSettings(BaseModel):
         return float(value)
 
 
-class StorageSettings(BaseModel):
+class FileServiceSettings(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    endpoint: StrictStr
-    bucket: StrictStr
-    access_key: StrictStr
-    secret_key: StrictStr
-    secure: StrictBool
-    download_timeout_seconds: float
-    max_object_bytes: StrictInt
+    base_url: StrictStr
+    timeout_seconds: float
 
-    @field_validator("endpoint", "bucket", "access_key", "secret_key")
+    @field_validator("base_url")
     @classmethod
     def _validate_required_string(cls, value: str) -> str:
         if not value.strip():
             raise ValueError("不能为空")
         return value
 
-    @field_validator("secure", mode="before")
-    @classmethod
-    def _validate_secure(cls, value: Any) -> bool:
-        if isinstance(value, str):
-            normalized = value.strip().lower()
-            if normalized in {"true", "1", "yes", "on"}:
-                return True
-            if normalized in {"false", "0", "no", "off"}:
-                return False
-        return value
-
-    @field_validator("download_timeout_seconds", mode="before")
+    @field_validator("timeout_seconds", mode="before")
     @classmethod
     def _validate_timeout_seconds(cls, value: Any) -> float:
         if isinstance(value, str):
@@ -140,20 +124,6 @@ class StorageSettings(BaseModel):
         if value <= 0:
             raise ValueError("必须大于 0")
         return float(value)
-
-    @field_validator("max_object_bytes", mode="before")
-    @classmethod
-    def _validate_max_object_bytes(cls, value: Any) -> int:
-        if isinstance(value, str):
-            try:
-                value = int(value)
-            except ValueError as exc:
-                raise TypeError("必须是整数") from exc
-        if isinstance(value, bool) or not isinstance(value, int):
-            raise TypeError("必须是整数")
-        if value < 1:
-            raise ValueError("必须大于 0")
-        return value
 
 
 class Settings(BaseSettings):
@@ -168,7 +138,7 @@ class Settings(BaseSettings):
     server: ServerSettings
     hub: HubSettings
     napcat: NapcatSettings
-    storage: StorageSettings
+    file_service: FileServiceSettings
 
     @classmethod
     def settings_customise_sources(

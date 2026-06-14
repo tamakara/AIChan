@@ -8,7 +8,7 @@ def create_app() -> FastAPI:
     boot_started_at = start_timer()
     logger = get_logger("app")
     settings = get_settings()
-    log_info(logger, "tool_mcp.boot", mcp_base_url=settings.mcp.base_url)
+    log_info(logger, "tool_mcp.boot", mcp_base_url=settings.mcp.qq_base_url)
 
     app = FastAPI(
         title="tool-mcp-server",

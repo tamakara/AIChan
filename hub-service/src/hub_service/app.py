@@ -37,7 +37,7 @@ def create_app() -> FastAPI:
     )
 
     # 下游通信与会话管理
-    media_storage = MediaStorage(settings.storage)
+    media_storage = MediaStorage(settings.file_service)
     file_resolver = NapcatFileResolver(napcat_ws_gateway)
     outbound_client = OutboundClient(
         agent_service_url=settings.hub.agent_url,
@@ -64,13 +64,11 @@ def create_app() -> FastAPI:
         create_router(
             napcat_ws_gateway=napcat_ws_gateway,
             napcat_connection_state=napcat_connection_state,
-            media_storage=media_storage,
         )
     )
 
     @app.on_event("startup")
     async def startup() -> None:
-        await media_storage.ensure_bucket()
         log_info(logger, "hub_app.ready", elapsed_ms=elapsed_ms(boot_started_at))
 
     @app.on_event("shutdown")

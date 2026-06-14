@@ -296,8 +296,8 @@ async def _output_media_attrs(
     if media_storage is None:
         raise ValueError(f"<{child.tag}> with object_key requires media storage")
 
-    # 出站媒体仍由 hub 从私有 MinIO 读取，agent 只引用 object_key。
-    # NapCat/OneBot v11 发送端支持 base64://，因此不需要把 MinIO 暴露成公网 URL。
+    # 出站媒体由 hub 通过 file-service 取回，agent 只引用 SHA-256 object_key。
+    # NapCat/OneBot v11 发送端支持 base64://，因此不需要把文件服务暴露成公网 URL。
     content = await media_storage.content(object_key)
     return {"file": "base64://" + b64encode(content).decode("ascii")}
 

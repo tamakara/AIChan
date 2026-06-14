@@ -7,8 +7,10 @@
 ```
 QQ 用户 ↔ NapCat ↔ hub-service ↔ agent-service ↔ MCP Gateway ↔ tool-mcp-server
               (WS)       (HTTP)         (SSE)             (MCP HTTP)
-                         ↕
-                       MinIO
+                │                                  │
+                └────────── file-service ──────────┘
+                               │
+                          MinIO + SQLite
 ```
 
 ## 快速开始
@@ -21,10 +23,10 @@ docker compose up -d --build
 # 打开 http://localhost:6099/webui，口令见 napcat/config/webui.json
 
 # 查看日志
-docker compose logs -f hub-service agent-service
+docker compose logs -f hub-service agent-service file-service
 ```
 
-宿主机访问端口：agent-service 为 `http://localhost:18000`，hub-service 为 `http://localhost:18020`。容器内服务地址仍保持 `agent-service:8000` / `hub-service:8020`。
+宿主机访问端口：agent-service 为 `http://localhost:18000`，hub-service 为 `http://localhost:18020`，file-service 为 `http://localhost:18040`。容器内服务地址仍保持 `agent-service:8000` / `hub-service:8020` / `file-service:8040`。
 
 ## 配置
 
@@ -33,7 +35,8 @@ docker compose logs -f hub-service agent-service
 | 服务 | 配置 |
 |------|------|
 | agent-service | `agent-service/config.yml` |
-| hub-service | `hub-service/config.yml` / MinIO 凭证环境变量 |
+| file-service | `file-service/config.yml` / MinIO 凭证环境变量 |
+| hub-service | `hub-service/config.yml` |
 | tool-mcp-server | `tool-mcp-server/config.yml` / `VISION__...` |
 | MinIO | `.env` 中的 `MINIO_ROOT_USER` / `MINIO_ROOT_PASSWORD` |
 | NapCat | `napcat/config/*.json` |
@@ -43,5 +46,6 @@ docker compose logs -f hub-service agent-service
 1. [docs/aichan.md](docs/aichan.md) — 系统总览
 2. [docs/message-protocol.md](docs/message-protocol.md) — OneBot v11 消息协议
 3. [docs/hub-service.md](docs/hub-service.md) — 会话编排
-4. [docs/agent-service.md](docs/agent-service.md) — LLM 推理
-5. [docs/tool-mcp-server.md](docs/tool-mcp-server.md) — QQ、文件与图片 MCP 工具
+4. [docs/file-service.md](docs/file-service.md) — SHA-256 文件存储
+5. [docs/agent-service.md](docs/agent-service.md) — LLM 推理
+6. [docs/tool-mcp-server.md](docs/tool-mcp-server.md) — QQ、文件与图片 MCP 工具

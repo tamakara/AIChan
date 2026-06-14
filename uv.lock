@@ -10,6 +10,7 @@ resolution-markers = [
 members = [
     "agent-service",
     "aichan",
+    "file-service",
     "hub-service",
     "tool-mcp-server",
 ]
@@ -403,6 +404,38 @@ wheels = [
 ]
 
 [[package]]
+name = "file-service"
+version = "0.1.0"
+source = { editable = "file-service" }
+dependencies = [
+    { name = "fastapi" },
+    { name = "httpx" },
+    { name = "minio" },
+    { name = "pydantic" },
+    { name = "pydantic-settings" },
+    { name = "pyyaml" },
+    { name = "uvicorn", extra = ["standard"] },
+]
+
+[package.optional-dependencies]
+test = [
+    { name = "pytest" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "fastapi", specifier = ">=0.115.6" },
+    { name = "httpx", specifier = ">=0.28.1" },
+    { name = "minio", specifier = ">=7.2.16" },
+    { name = "pydantic", specifier = ">=2.11.7" },
+    { name = "pydantic-settings", specifier = ">=2.14.0" },
+    { name = "pytest", marker = "extra == 'test'", specifier = ">=8.3.4" },
+    { name = "pyyaml", specifier = ">=6.0.3" },
+    { name = "uvicorn", extras = ["standard"], specifier = ">=0.34.0" },
+]
+provides-extras = ["test"]
+
+[[package]]
 name = "googleapis-common-protos"
 version = "1.75.0"
 source = { registry = "https://pypi.org/simple" }
@@ -496,7 +529,6 @@ source = { editable = "hub-service" }
 dependencies = [
     { name = "fastapi" },
     { name = "httpx" },
-    { name = "minio" },
     { name = "nonebot-adapter-onebot" },
     { name = "pydantic" },
     { name = "pydantic-settings" },
@@ -514,7 +546,6 @@ test = [
 requires-dist = [
     { name = "fastapi", specifier = ">=0.115.6" },
     { name = "httpx", specifier = ">=0.28.1" },
-    { name = "minio", specifier = ">=7.2.16" },
     { name = "nonebot-adapter-onebot", specifier = ">=2.4.0" },
     { name = "pydantic", specifier = ">=2.11.7" },
     { name = "pydantic-settings", specifier = ">=2.14.0" },

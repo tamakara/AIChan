@@ -3,7 +3,8 @@ server:
   port: 8030
 
 mcp:
-  base_url: http://hub-service:8020
+  qq_base_url: http://hub-service:8020
+  file_base_url: http://file-service:8040
   timeout_seconds: 5
 
 vision:

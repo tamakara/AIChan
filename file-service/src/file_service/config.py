@@ -2,7 +2,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, StrictInt, StrictStr, ValidationError, field_validator
+from pydantic import BaseModel, ConfigDict, StrictBool, StrictInt, StrictStr, ValidationError, field_validator
 from pydantic_settings import (
     BaseSettings,
     PydanticBaseSettingsSource,
@@ -10,7 +10,7 @@ from pydantic_settings import (
     YamlConfigSettingsSource,
 )
 
-CONFIG_PATH = Path.cwd() / "tool-mcp-server" / "config.yml"
+CONFIG_PATH = Path.cwd() / "file-service" / "config.yml"
 
 
 class ServerSettings(BaseModel):
@@ -18,42 +18,40 @@ class ServerSettings(BaseModel):
 
     host: StrictStr
     port: StrictInt
+    log_level: StrictStr
 
 
-class McpSettings(BaseModel):
+class StorageSettings(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    qq_base_url: StrictStr
-    file_base_url: StrictStr
-    timeout_seconds: float
+    endpoint: StrictStr
+    bucket: StrictStr
+    access_key: StrictStr
+    secret_key: StrictStr
+    secure: StrictBool
+    database_path: StrictStr
+    download_timeout_seconds: float
+    max_object_bytes: StrictInt
 
-    @field_validator("qq_base_url", "file_base_url")
+    @field_validator("endpoint", "bucket", "access_key", "secret_key", "database_path")
     @classmethod
     def _validate_required_string(cls, value: str) -> str:
         if not value.strip():
             raise ValueError("不能为空")
         return value
 
-    @field_validator("timeout_seconds", mode="before")
+    @field_validator("secure", mode="before")
     @classmethod
-    def _validate_timeout_seconds(cls, value: Any) -> float:
+    def _validate_secure(cls, value: Any) -> bool:
         if isinstance(value, str):
-            value = _parse_float_env(value)
-        if isinstance(value, bool) or not isinstance(value, (int, float)):
-            raise TypeError("必须是数字")
-        return float(value)
+            normalized = value.strip().lower()
+            if normalized in {"true", "1", "yes", "on"}:
+                return True
+            if normalized in {"false", "0", "no", "off"}:
+                return False
+        return value
 
-
-class VisionSettings(BaseModel):
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
-    openai_base_url: StrictStr
-    openai_api_key: StrictStr
-    model: StrictStr
-    timeout_seconds: float
-    video_frame_count: StrictInt
-
-    @field_validator("timeout_seconds", mode="before")
+    @field_validator("download_timeout_seconds", mode="before")
     @classmethod
     def _validate_timeout_seconds(cls, value: Any) -> float:
         if isinstance(value, str):
@@ -64,9 +62,9 @@ class VisionSettings(BaseModel):
             raise ValueError("必须大于 0")
         return float(value)
 
-    @field_validator("video_frame_count", mode="before")
+    @field_validator("max_object_bytes", mode="before")
     @classmethod
-    def _validate_video_frame_count(cls, value: Any) -> int:
+    def _validate_max_object_bytes(cls, value: Any) -> int:
         if isinstance(value, str):
             try:
                 value = int(value)
@@ -74,8 +72,8 @@ class VisionSettings(BaseModel):
                 raise TypeError("必须是整数") from exc
         if isinstance(value, bool) or not isinstance(value, int):
             raise TypeError("必须是整数")
-        if value < 1 or value > 12:
-            raise ValueError("必须在 1 到 12 之间")
+        if value < 1:
+            raise ValueError("必须大于 0")
         return value
 
 
@@ -89,8 +87,7 @@ class Settings(BaseSettings):
     )
 
     server: ServerSettings
-    mcp: McpSettings
-    vision: VisionSettings
+    storage: StorageSettings
 
     @classmethod
     def settings_customise_sources(
@@ -101,7 +98,7 @@ class Settings(BaseSettings):
         dotenv_settings: PydanticBaseSettingsSource,
         file_secret_settings: PydanticBaseSettingsSource,
     ) -> tuple[PydanticBaseSettingsSource, ...]:
-        # MCP 命令由 gateway 拉起，也复用同一套 YAML + 环境变量覆盖规则。
+        # 文件服务是 MinIO/SQLite 的唯一拥有者，部署差异只能通过当前配置键覆盖。
         return (
             init_settings,
             env_settings,

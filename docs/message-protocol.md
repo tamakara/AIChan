@@ -12,12 +12,12 @@ AICHAN 在 `hub-service` 与 `agent-service` 之间使用自有 XML 协议。One
 <messages>
   <message id="999" time="1710000000" sub_type="friend" user_id="123" nickname="小明">
     <text>你好</text>
-    <image object_key="qq/private/123/999/1-abc.jpg" name="abc.jpg" mime="image/jpeg" size="123" sha256="abc" />
-    <file object_key="qq/private/123/999/2-def.txt" name="note.txt" mime="text/plain" size="456" sha256="def" />
+    <image object_key="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" name="abc.jpg" mime="image/jpeg" size="123" sha256="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" />
+    <file object_key="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" name="note.txt" mime="text/plain" size="456" sha256="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" />
     <face id="123" />
     <reply id="998" />
-    <record object_key="qq/private/123/999/5-ghi.amr" name="a.amr" mime="audio/amr" size="789" sha256="ghi" />
-    <video object_key="qq/private/123/999/6-jkl.mp4" name="a.mp4" mime="video/mp4" size="1024" sha256="jkl" />
+    <record object_key="cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc" name="a.amr" mime="audio/amr" size="789" sha256="cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc" />
+    <video object_key="dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd" name="a.mp4" mime="video/mp4" size="1024" sha256="dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd" />
     <at qq="10001" />
     <share url="https://..." title="标题" content="摘要" image="https://..." />
     <location lat="39.9" lon="116.3" title="位置" content="说明" />
@@ -43,8 +43,8 @@ AICHAN 在 `hub-service` 与 `agent-service` 之间使用自有 XML 协议。One
 媒体段规则：
 - `image/record/video` 处理 OneBot message segment 中带 `url` 的内容
 - `file` 若自带 `url` 则直接下载；若没有 `url`，hub-service 会优先用 NapCat `get_private_file_url` / `get_file` 根据 `file_id` 换取下载 URL
-- hub-service 会先下载媒体并写入私有 MinIO，XML 中只暴露 `object_key/name/mime/size/sha256`
-- object key 固定格式：`qq/{private|group}/{user_id|group_id}/{message_id}/{segment_index}-{sha256}.{ext}`
+- hub-service 会把媒体临时 URL 交给 file-service 入库，XML 中只暴露 `object_key/name/mime/size/sha256`
+- object_key 固定为文件 SHA-256，不包含来源、会话、消息 ID 或扩展名
 - 原始 NapCat URL 不会出现在 XML 中
 - 无法换取下载 URL 的文件段输出 `<unsupported type="file" name="..." />`，尽量保留文件名等安全元信息
 
@@ -55,8 +55,8 @@ LLM 最终回复必须是 `<reply>`：
 ```xml
 <reply>
   <text>笨蛋，找我有什么事喵？</text>
-  <image object_key="qq/private/123/999/1-abc.jpg" />
-  <file object_key="qq/private/123/999/2-def.txt" />
+  <image object_key="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" />
+  <file object_key="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" />
   <face id="123" />
 </reply>
 ```
@@ -66,14 +66,14 @@ hub-service 支持的回复节点：
 | 节点 | 属性 | OneBot v11 映射 |
 |------|------|-----------------|
 | `text` | 文本内容 | `{"type":"text","data":{"text":"..."}}` |
-| `image` | `object_key` | 从 MinIO 读取 bytes，转为 `image.file=base64://...` |
+| `image` | `object_key` | 从 file-service 读取 bytes，转为 `image.file=base64://...` |
 | `image` | `file` | 直接透传为 `image.file`，用于外部可访问 URL |
-| `file` | `object_key` | 从 MinIO 读取 bytes，调用 NapCat `upload_private_file` / `upload_group_file` |
+| `file` | `object_key` | 从 file-service 读取 bytes，调用 NapCat `upload_private_file` / `upload_group_file` |
 | `file` | `file` + `name` | 调用 NapCat `upload_private_file` / `upload_group_file`，用于外部可访问 URL |
 | `face` | `id` | `face` 段 |
-| `record` | `object_key` | 从 MinIO 读取 bytes，转为 `record.file=base64://...` |
+| `record` | `object_key` | 从 file-service 读取 bytes，转为 `record.file=base64://...` |
 | `record` | `file` | 直接透传为 `record.file`，用于外部可访问 URL |
-| `video` | `object_key` | 从 MinIO 读取 bytes，转为 `video.file=base64://...` |
+| `video` | `object_key` | 从 file-service 读取 bytes，转为 `video.file=base64://...` |
 | `video` | `file` | 直接透传为 `video.file`，用于外部可访问 URL |
 
 `object_key` 只能引用 `<messages>` 或工具结果里真实出现过的对象，不能编造。空 `<reply />` 不发送 QQ 消息。私聊回复对象由 hub-service 的会话路由固定决定，agent 不指定 `target_user_id`。

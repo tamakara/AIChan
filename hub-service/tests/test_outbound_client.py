@@ -5,6 +5,9 @@ import pytest
 from hub_service.services.media_storage import StoredMedia
 from hub_service.services.outbound_client import OutboundClient
 
+IMAGE_KEY = "a" * 64
+FILE_KEY = "b" * 64
+
 
 class DummyResponse:
     def __init__(self, payload, status_code=200):
@@ -153,13 +156,13 @@ def test_send_reply_sends_storage_image_as_base64_segment() -> None:
     client = OutboundClient(
         agent_service_url="http://agent-service:8000",
         napcat_ws=napcat_ws,  # type: ignore[arg-type]
-        media_storage=StubMediaStorage({"qq/private/1/9/1-abc.jpg": b"image-bytes"}),
+        media_storage=StubMediaStorage({IMAGE_KEY: b"image-bytes"}),
     )
 
     asyncio.run(
         client.send_reply(
             "private_1",
-            '<reply><text>ok</text><image object_key="qq/private/1/9/1-abc.jpg" /></reply>',
+            f'<reply><text>ok</text><image object_key="{IMAGE_KEY}" /></reply>',
         )
     )
 
@@ -185,7 +188,7 @@ def test_send_reply_sends_storage_image_as_base64_segment() -> None:
 
 def test_send_reply_uploads_storage_file() -> None:
     napcat_ws = StubNapcatWs()
-    object_key = "qq/private/1/9/0-abc.txt"
+    object_key = FILE_KEY
     client = OutboundClient(
         agent_service_url="http://agent-service:8000",
         napcat_ws=napcat_ws,  # type: ignore[arg-type]
@@ -197,7 +200,7 @@ def test_send_reply_uploads_storage_file() -> None:
                     name="note.txt",
                     mime="text/plain",
                     size=5,
-                    sha256="abc",
+                    sha256=object_key,
                 )
             },
         ),

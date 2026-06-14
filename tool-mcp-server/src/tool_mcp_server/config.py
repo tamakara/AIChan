@@ -23,8 +23,16 @@ class ServerSettings(BaseModel):
 class McpSettings(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    base_url: StrictStr
+    qq_base_url: StrictStr
+    file_base_url: StrictStr
     timeout_seconds: float
+
+    @field_validator("qq_base_url", "file_base_url")
+    @classmethod
+    def _validate_required_string(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("不能为空")
+        return value
 
     @field_validator("timeout_seconds", mode="before")
     @classmethod
