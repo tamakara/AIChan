@@ -15,7 +15,7 @@ services:
       - "19000:9000"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-      - ./mcp-secrets.env:/.env:ro
+      - ./.env:/.env:ro
       - ./tool-mcp-server/docker-mcp-catalog.yml:/app/tool-mcp-server/docker-mcp-catalog.yml:ro
 
   agent-service:
