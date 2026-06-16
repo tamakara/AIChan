@@ -71,7 +71,16 @@ async def test_onebot_events_to_input_xml_keeps_dialog_fields() -> None:
                 "message": [
                     {"type": "text", "data": {"text": "1 < 2 & ok"}},
                     {"type": "image", "data": {"file": "a.jpg", "url": "https://x"}},
-                    {"type": "face", "data": {"id": "123"}},
+                    {"type": "face", "data": {"id": "66"}},
+                    {
+                        "type": "mface",
+                        "data": {
+                            "emoji_package_id": 1,
+                            "emoji_id": "abc",
+                            "key": "drop-me",
+                            "summary": "商城笑脸",
+                        },
+                    },
                     {"type": "reply", "data": {"id": "8"}},
                     {"type": "shake", "data": {}},
                 ],
@@ -87,13 +96,47 @@ async def test_onebot_events_to_input_xml_keeps_dialog_fields() -> None:
     assert "<text>1 &lt; 2 &amp; ok</text>" in xml
     assert f'<image object_key="{OBJECT_KEY}" name="a.jpg" mime="image/jpeg" size="123" sha256="{OBJECT_KEY}"' in xml
     assert "https://x" not in xml
-    assert '<face id="123"' in xml
+    assert '<face name="爱心"' in xml
+    assert 'id="66"' not in xml
+    assert '<mface emoji_package_id="1" emoji_id="abc" summary="商城笑脸"' in xml
+    assert "drop-me" not in xml
     assert '<reply id="8"' in xml
     assert '<unsupported type="shake"' in xml
     assert "self_id" not in xml
     assert "raw_message" not in xml
     assert "font" not in xml
     assert 'age="' not in xml
+
+
+@pytest.mark.asyncio
+async def test_onebot_events_to_input_xml_names_known_face() -> None:
+    xml = await onebot_events_to_input_xml(
+        [
+            {
+                "message_id": 9,
+                "user_id": 1,
+                "message": [{"type": "face", "data": {"id": "14"}}],
+            }
+        ],
+    )
+
+    assert '<face name="微笑"' in xml
+
+
+@pytest.mark.asyncio
+async def test_onebot_events_to_input_xml_marks_unknown_face_unsupported() -> None:
+    xml = await onebot_events_to_input_xml(
+        [
+            {
+                "message_id": 9,
+                "user_id": 1,
+                "message": [{"type": "face", "data": {"id": "999999"}}],
+            }
+        ],
+    )
+
+    assert '<unsupported type="face"' in xml
+    assert '999999' not in xml
 
 
 @pytest.mark.asyncio
@@ -186,14 +229,29 @@ async def test_file_segment_without_url_uses_resolver() -> None:
 @pytest.mark.asyncio
 async def test_reply_xml_to_onebot_segments() -> None:
     segments = await reply_xml_to_onebot_segments(
-        '<reply><text>ok</text><image file="https://x" /><face id="123" /></reply>'
+        '<reply><text>ok<face name="微笑" />done</text><image file="https://x" /></reply>'
     )
 
     assert segments == [
         {"type": "text", "data": {"text": "ok"}},
+        {"type": "face", "data": {"id": "14"}},
+        {"type": "text", "data": {"text": "done"}},
         {"type": "image", "data": {"file": "https://x"}},
-        {"type": "face", "data": {"id": "123"}},
     ]
+
+
+@pytest.mark.asyncio
+async def test_reply_xml_to_onebot_segments_ignores_unknown_face_name() -> None:
+    segments = await reply_xml_to_onebot_segments('<reply><text><face name="不存在" /></text></reply>')
+
+    assert segments == []
+
+
+@pytest.mark.asyncio
+async def test_reply_xml_to_onebot_segments_ignores_top_level_face() -> None:
+    segments = await reply_xml_to_onebot_segments('<reply><face name="微笑" /></reply>')
+
+    assert segments == []
 
 
 @pytest.mark.asyncio
@@ -232,6 +290,23 @@ async def test_reply_xml_to_outbound_items_splits_direct_children_in_order() -> 
         ReplyOnebotMessage(message=[{"type": "image", "data": {"file": "base64://aW1hZ2UtYnl0ZXM="}}]),
         ReplyOnebotMessage(message=[{"type": "text", "data": {"text": "second"}}]),
         ReplyFileUpload(file="base64://bm90ZQ==", name=file_key),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_reply_xml_to_outbound_items_keeps_inline_face_in_text_message() -> None:
+    items = await reply_xml_to_outbound_items(
+        '<reply><text>first<face name="微笑" />second</text></reply>',
+    )
+
+    assert items == [
+        ReplyOnebotMessage(
+            message=[
+                {"type": "text", "data": {"text": "first"}},
+                {"type": "face", "data": {"id": "14"}},
+                {"type": "text", "data": {"text": "second"}},
+            ]
+        )
     ]
 
 

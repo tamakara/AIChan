@@ -14,7 +14,8 @@ AICHAN 在 `hub-service` 与 `agent-service` 之间使用自有 XML 协议。One
     <text>你好</text>
     <image object_key="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" name="abc.jpg" mime="image/jpeg" size="123" sha256="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" />
     <file object_key="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" name="note.txt" mime="text/plain" size="456" sha256="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" />
-    <face id="123" />
+    <face name="微笑" />
+    <mface emoji_package_id="1" emoji_id="abc" summary="商城笑脸" />
     <reply id="998" />
     <record object_key="cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc" name="a.amr" mime="audio/amr" size="789" sha256="cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc" />
     <video object_key="dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd" name="a.mp4" mime="video/mp4" size="1024" sha256="dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd" />
@@ -47,6 +48,8 @@ AICHAN 在 `hub-service` 与 `agent-service` 之间使用自有 XML 协议。One
 - object_key 固定为文件 SHA-256，不包含来源、会话、消息 ID 或扩展名
 - 原始 NapCat URL 不会出现在 XML 中
 - 无法换取下载 URL 的文件段输出 `<unsupported type="file" name="..." />`，尽量保留文件名等安全元信息
+- 普通 QQ `face` 段会按 hub-service 内置表转换为 `<face name="..." />`；无法识别的 ID 会输出 `<unsupported type="face" />`
+- NapCat 商城表情 `mface` 会输出为 `<mface ... summary="..." />`，供 agent 理解表情语气
 
 ## 3. 输出格式
 
@@ -54,10 +57,9 @@ LLM 最终回复必须是 `<reply>`：
 
 ```xml
 <reply>
-  <text>笨蛋，找我有什么事喵？</text>
+  <text>笨蛋，找我有什么事喵？<face name="微笑" /></text>
   <image object_key="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" />
   <file object_key="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" />
-  <face id="123" />
 </reply>
 ```
 
@@ -65,12 +67,11 @@ hub-service 支持的回复节点：
 
 | 节点 | 属性 | OneBot v11 映射 |
 |------|------|-----------------|
-| `text` | 文本内容 | `{"type":"text","data":{"text":"..."}}` |
+| `text` | 文本内容，可内联 `<face name="..." />` | 文本和 QQ 表情按顺序合并为同一条 OneBot message segment 列表 |
 | `image` | `object_key` | 从 file-service 读取 bytes，转为 `image.file=base64://...` |
 | `image` | `file` | 直接透传为 `image.file`，用于外部可访问 URL |
 | `file` | `object_key` | 从 file-service 读取 bytes，调用 NapCat `upload_private_file` / `upload_group_file` |
 | `file` | `file` + `name` | 调用 NapCat `upload_private_file` / `upload_group_file`，用于外部可访问 URL |
-| `face` | `id` | `face` 段 |
 | `record` | `object_key` | 从 file-service 读取 bytes，转为 `record.file=base64://...` |
 | `record` | `file` | 直接透传为 `record.file`，用于外部可访问 URL |
 | `video` | `object_key` | 从 file-service 读取 bytes，转为 `video.file=base64://...` |
@@ -93,9 +94,11 @@ hub-service 支持的回复节点：
 发送规则：
 - `<reply>` 的直接子节点是出站消息边界；两个 `<text>` 会发送成两条消息
 - 群聊 `<message>` 分组内的子节点各自作为出站消息边界，并复用同一个 target
-- `text/image/face/record/video` 每个节点各自调用一次 `send_private_msg` 或 `send_group_msg`
+- `text/image/record/video` 每个直接子节点各自调用一次 `send_private_msg` 或 `send_group_msg`
+- QQ 表情只能写成 `<text>` 内的 `<face name="..." />`，hub-service 会把它翻译为 NapCat/OneBot `face.id` 并与相邻文本合并在同一条消息里
 - `file` 节点在原始顺序位置调用 `upload_private_file` 或 `upload_group_file`
 - 不支持的回复节点会被忽略
+- 可用 QQ 表情名称由系统提示词列出
 
 ## 4. HTTP 契约
 

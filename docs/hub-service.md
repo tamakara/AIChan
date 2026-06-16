@@ -41,6 +41,7 @@ hub-service 不再提供 `/api/v1/files/...` 文件读取接口；文件元数�
 - 通过 NapCat WS `send_action` 发送 `send_private_msg` 或 `send_group_msg`
 - `<reply>` 的每个回复子节点会按 XML 顺序独立发送
 - 群聊可用 `<message target_user_id="..." at="true">...</message>` 分组，让 hub 在消息前插入 @ 段
+- `<text>` 内联的 `<face name="..." />` 会按 hub 内置 QQ 表情表翻译为 NapCat/OneBot `face.id`，并与相邻文本作为同一条消息发送
 - `<image object_key="..." />`、`<record object_key="..." />`、`<video object_key="..." />` 会从 file-service 读取 bytes，转换为 NapCat/OneBot v11 支持的 `base64://...` 后发送
 - `<file object_key="..." />` 会从 file-service 读取 bytes，并在原 XML 位置通过 NapCat `upload_private_file` 或 `upload_group_file` 发送文件
 - `auto_escape` 固定为 `false`
@@ -83,10 +84,11 @@ hub-service 不再提供 `/api/v1/files/...` 文件读取接口；文件元数�
 ### 3.4 XML 转换
 
 - `onebot_events_to_input_xml(events, media_storage)`：把防抖批次转换为 `<messages>`，需要 I/O 时会先完成媒体入库
-- `reply_xml_to_onebot_segments(xml, media_storage)`：把 `<reply>` 转换为 OneBot v11 消息段；出站图片/语音/视频 `object_key` 会在这里解析为 `base64://...`
+- `reply_xml_to_onebot_segments(xml, media_storage)`：把 `<reply>` 转换为 OneBot v11 消息段；出站图片/语音/视频 `object_key` 会在这里解析为 `base64://...`，`<text>` 内联表情会与文本合并为同一条 segment 列表
 - `reply_xml_to_file_uploads(xml, media_storage)`：把 `<file object_key="..." />` 转为 NapCat `upload_private_file` 参数
-- `reply_xml_to_outbound_items(xml, media_storage)`：按 `<reply>` 直接子节点顺序生成出站动作项；hub-service 实际发送回复时使用该函数，避免文本和媒体合并后被 QQ 客户端吞掉部分展示
+- `reply_xml_to_outbound_items(xml, media_storage)`：按 `<reply>` 直接子节点顺序生成出站动作项；hub-service 实际发送回复时使用该函数，避免文本和媒体合并后被 QQ 客户端吞掉部分展示，但 `<text>` 内部可混排文字和 QQ 表情
 - 转换层保留每条消息的 `user_id/nickname/at_bot`，丢弃 `raw_message`、`font` 和无关 sender 字段
+- 普通 QQ `face` 段在 NapCat/OneBot 中只有 `id`；hub 会按内置表转换为 `<face name="微笑" />`，无法识别的 ID 会降级为 `<unsupported type="face" />`。商城表情 `mface` 会保留 `summary`，例如 `<mface emoji_package_id="..." emoji_id="..." summary="..." />`
 
 ## 4. 防抖调度流程
 

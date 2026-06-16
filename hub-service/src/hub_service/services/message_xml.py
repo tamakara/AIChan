@@ -11,21 +11,78 @@ from xml.etree import ElementTree
 from .media_storage import StoredMedia
 
 INPUT_SEGMENT_ATTRS: dict[str, tuple[str, ...]] = {
-    "face": ("id",),
     "reply": ("id",),
     "at": ("qq",),
+    "mface": ("emoji_package_id", "emoji_id", "summary"),
     "share": ("url", "title", "content", "image"),
     "location": ("lat", "lon", "title", "content"),
     "contact": ("type", "id"),
 }
 
+# NapCat 上报的普通 QQ face 只有 id，没有 name。这里维护接入层最小语义表，
+# 让 agent 只看到“表情真意”，避免把 QQ 内部数字 ID 泄漏进对话语义层。
+QQ_FACE_NAMES: dict[str, str] = {
+    "14": "微笑",
+    "1": "撇嘴",
+    "2": "色",
+    "3": "发呆",
+    "4": "得意",
+    "5": "流泪",
+    "6": "害羞",
+    "7": "闭嘴",
+    "8": "睡",
+    "9": "大哭",
+    "10": "尴尬",
+    "11": "发怒",
+    "12": "调皮",
+    "13": "呲牙",
+    "15": "难过",
+    "49": "拥抱",
+    "53": "蛋糕",
+    "55": "炸弹",
+    "59": "便便",
+    "60": "咖啡",
+    "63": "玫瑰",
+    "64": "凋谢",
+    "66": "爱心",
+    "67": "心碎",
+    "74": "太阳",
+    "75": "月亮",
+    "76": "赞",
+    "77": "踩",
+    "78": "握手",
+    "79": "胜利",
+    "112": "菜刀",
+    "114": "篮球",
+    "116": "示爱",
+    "118": "抱拳",
+    "119": "勾引",
+    "120": "拳头",
+    "121": "差劲",
+    "123": "NO",
+    "124": "OK",
+    "201": "点赞",
+    "273": "我酸了",
+    "307": "喵喵",
+    "311": "打call",
+    "314": "仔细分析",
+    "318": "崇拜",
+    "319": "比心",
+    "320": "庆祝",
+    "326": "生气",
+    "352": "咦",
+    "355": "耶",
+    "356": "666",
+    "357": "裂开",
+    "358": "骰子",
+    "359": "包剪锤",
+}
+QQ_FACE_IDS_BY_NAME: dict[str, str] = {name: face_id for face_id, name in QQ_FACE_NAMES.items()}
+
 MEDIA_SEGMENT_TYPES = {"image", "file", "record", "video"}
 MEDIA_SEGMENT_ATTRS = ("object_key", "name", "mime", "size", "sha256")
 UNSUPPORTED_FILE_ATTRS = ("name", "size", "mime")
 
-OUTPUT_SEGMENT_ATTRS: dict[str, tuple[str, ...]] = {
-    "face": ("id",),
-}
 OUTPUT_MEDIA_SEGMENT_TYPES = {"image", "record", "video"}
 
 
@@ -107,9 +164,7 @@ async def reply_xml_to_onebot_segments(
     segments: list[dict[str, Any]] = []
     for message in _reply_message_nodes(root):
         for child in list(message.node):
-            segment = await _reply_child_to_onebot_segment(child, media_storage)
-            if segment is not None:
-                segments.append(segment)
+            segments.extend(await _reply_child_to_onebot_segments(child, media_storage))
     return segments
 
 
@@ -145,13 +200,13 @@ async def reply_xml_to_outbound_items(
                     items.append(upload)
                 continue
 
-            segment = await _reply_child_to_onebot_segment(child, media_storage)
-            if segment is not None:
+            segments = await _reply_child_to_onebot_segments(child, media_storage)
+            if segments:
                 # QQ/NapCat 对图文混排消息的展示并不稳定；这里按回复子节点拆分，
-                # 让文本、视频、图片等都成为独立动作，保证用户能看到每一段回复。
+                # 但允许 <text> 内部混排文字和 QQ 表情，让表情跟随同一条文本消息发送。
                 items.append(
                     ReplyOnebotMessage(
-                        message=[segment],
+                        message=segments,
                         target_user_id=message.target_user_id,
                         at=message.at,
                     )
@@ -191,6 +246,10 @@ async def _append_input_segment(
         _append_text(parent, data.get("text"))
         return
 
+    if segment_type == "face":
+        _append_face(parent, data)
+        return
+
     if segment_type in MEDIA_SEGMENT_TYPES:
         await _append_stored_media(
             parent,
@@ -225,30 +284,20 @@ def _attrs(data: dict[str, Any], names: tuple[str, ...]) -> dict[str, str]:
     return attrs
 
 
-async def _reply_child_to_onebot_segment(
+async def _reply_child_to_onebot_segments(
     child: ElementTree.Element,
     media_storage: ReplyMediaStorageProtocol | None,
-) -> dict[str, Any] | None:
+) -> list[dict[str, Any]]:
     if child.tag == "text":
-        text = child.text or ""
-        if not text:
-            return None
-        return _onebot_segment("text", {"text": text})
+        return _output_text_segments(child)
 
     if child.tag in OUTPUT_MEDIA_SEGMENT_TYPES:
         data = await _output_media_attrs(child, media_storage)
         if not data:
-            return None
-        return _onebot_segment(child.tag, data)
+            return []
+        return [_onebot_segment(child.tag, data)]
 
-    attr_names = OUTPUT_SEGMENT_ATTRS.get(child.tag)
-    if attr_names is None:
-        return None
-
-    data = _attrs(child.attrib, attr_names)
-    if not data:
-        return None
-    return _onebot_segment(child.tag, data)
+    return []
 
 
 async def _reply_file_to_upload(
@@ -300,6 +349,36 @@ async def _output_media_attrs(
     # NapCat/OneBot v11 发送端支持 base64://，因此不需要把文件服务暴露成公网 URL。
     content = await media_storage.content(object_key)
     return {"file": "base64://" + b64encode(content).decode("ascii")}
+
+
+def _output_face_attrs(child: ElementTree.Element) -> dict[str, str]:
+    # 让 agent 按语义选择表情，hub 在 OneBot 边界翻译为 QQ face id。
+    # 出站表情只允许作为 <text> 内联子节点，避免 QQ 侧把表情拆成独立消息。
+    name = child.attrib.get("name", "").strip().removeprefix("/")
+    face_id = QQ_FACE_IDS_BY_NAME.get(name)
+    if not face_id:
+        return {}
+    return {"id": face_id}
+
+
+def _output_text_segments(child: ElementTree.Element) -> list[dict[str, Any]]:
+    segments: list[dict[str, Any]] = []
+    _append_output_text_segment(segments, child.text)
+
+    for item in list(child):
+        if item.tag == "face":
+            data = _output_face_attrs(item)
+            if data:
+                segments.append(_onebot_segment("face", data))
+        _append_output_text_segment(segments, item.tail)
+
+    return segments
+
+
+def _append_output_text_segment(segments: list[dict[str, Any]], text: str | None) -> None:
+    if not text:
+        return
+    segments.append(_onebot_segment("text", {"text": text}))
 
 
 async def _append_stored_media(
@@ -364,6 +443,15 @@ def _append_attrs(
     attr_names: tuple[str, ...],
 ) -> None:
     ElementTree.SubElement(parent, tag, _attrs(data, attr_names))
+
+
+def _append_face(parent: ElementTree.Element, data: dict[str, Any]) -> None:
+    face_id = str(data.get("id", ""))
+    face_name = QQ_FACE_NAMES.get(face_id)
+    if not face_name:
+        _append_unsupported(parent, "face")
+        return
+    ElementTree.SubElement(parent, "face", {"name": face_name})
 
 
 def _append_unsupported(
