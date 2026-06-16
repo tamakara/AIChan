@@ -1,0 +1,132 @@
+# message-protocol
+
+## 1. 协议定位
+
+AICHAN 在 `hub-service` 与 `agent-service` 之间使用自有 XML 协议。OneBot v11 只存在于 NapCat 接入和 QQ 动作发送边界，`hub-service` 负责把 QQ 私聊/群聊事件转换为 `<messages>`，并把 agent 的 `<reply>` 按顺序转回 OneBot v11 动作。
+
+## 2. 输入格式
+
+`hub-service` 在防抖窗口结束后，将同一 QQ 会话窗口内的消息合并为一个 `<messages>`。窗口级信息不重复写在每条消息里，而是在创建 agent session 时通过 `session_id=private_<user_id>|group_<group_id>` 和 `<session ... />` 系统消息提供。
+
+```xml
+<messages>
+  <message id="999" time="1710000000" sub_type="friend" user_id="123" nickname="小明">
+    <text>你好</text>
+    <image object_key="xxx" name="abc.jpg" />
+    <file object_key="xxx" name="note.txt" />
+    <face name="微笑" />
+    <mface emoji_package_id="1" emoji_id="abc" summary="商城笑脸" />
+    <reply id="998" />
+    <record object_key="xxx" name="a.amr" />
+    <video object_key="xxx" name="a.mp4" />
+    <at qq="10001" />
+    <share url="https://..." title="标题" content="摘要" image="https://..." />
+    <location lat="39.9" lon="116.3" title="位置" content="说明" />
+    <contact type="qq" id="123456" />
+    <unsupported type="unknown" />
+  </message>
+</messages>
+```
+
+`user_id` 是发言人的唯一身份标识，`nickname` 只用于称呼和展示。群聊消息会额外携带 `at_bot="true|false"`，表示该消息是否 @ 机器人。
+
+群聊输入示例：
+
+```xml
+<messages>
+  <message id="1000" time="1710000001" sub_type="normal" user_id="456" nickname="小红" at_bot="true">
+    <at qq="10001" />
+    <text>帮我总结一下刚才的问题</text>
+  </message>
+</messages>
+```
+
+媒体段规则：
+- `image/record/video` 处理 OneBot message segment 中带 `url` 的内容
+- `file` 若自带 `url` 则直接下载；若没有 `url`，hub-service 会优先用 NapCat `get_private_file_url` / `get_file` 根据 `file_id` 换取下载 URL
+- hub-service 会把媒体临时 URL 交给 file-service 入库，XML 中只暴露 `object_key` 和 `name`
+- object_key 固定为文件 SHA-256，不包含来源、会话、消息 ID 或扩展名
+- 原始 NapCat URL 不会出现在 XML 中
+- 无法换取下载 URL 的文件段输出 `<unsupported type="file" name="..." />`，尽量保留文件名等安全元信息
+- 普通 QQ `face` 段会按 hub-service 内置表转换为 `<face name="..." />`；无法识别的 ID 会输出 `<unsupported type="face" />`
+- NapCat 商城表情 `mface` 会输出为 `<mface ... summary="..." />`，供 agent 理解表情语气
+
+## 3. 输出格式
+
+LLM 最终回复必须是 `<reply>`，`<reply>` 下只能包含一个或多个 `<message>`，每个 `<message>` 会被组装成一条 QQ 消息：
+
+```xml
+<reply>
+  <message>
+    <text>笨蛋，找我有什么事喵？</text>
+    <face name="微笑" />
+  </message>
+  <message>
+    <image object_key="xxx" />
+    <file object_key="xxx" />
+  </message>
+</reply>
+```
+
+`<message>` 内可用节点：
+
+| 节点 | 属性 | OneBot v11 映射 |
+|------|------|-----------------|
+| `text` | 文本内容 | 文本段，与同 `<message>` 内的 `<face>` 按顺序合并为同一条消息 |
+| `face` | `name` | QQ 表情，与 `<text>` 并列，翻译为 NapCat/OneBot `face.id` |
+| `image` | `object_key` | 从 file-service 读取 bytes，转为 `image.file=base64://...` |
+| `image` | `file` | 直接透传为 `image.file`，用于外部可访问 URL |
+| `file` | `object_key` | 从 file-service 读取 bytes，调用 NapCat `upload_private_file` / `upload_group_file` |
+| `file` | `file` + `name` | 调用 NapCat `upload_private_file` / `upload_group_file`，用于外部可访问 URL |
+| `record` | `object_key` | 从 file-service 读取 bytes，转为 `record.file=base64://...` |
+| `record` | `file` | 直接透传为 `record.file`，用于外部可访问 URL |
+| `video` | `object_key` | 从 file-service 读取 bytes，转为 `video.file=base64://...` |
+| `video` | `file` | 直接透传为 `video.file`，用于外部可访问 URL |
+
+`object_key` 只能引用 `<messages>` 或工具结果里真实出现过的对象，不能编造。空 `<reply />` 不发送 QQ 消息。私聊回复对象由 hub-service 的会话路由固定决定，agent 不指定 `target_user_id`。
+
+群聊中如果需要回复特定成员，在 `<message>` 上加 `target_user_id`：
+
+```xml
+<reply>
+  <message target_user_id="456" target_nickname="小红" at="true">
+    <text>收到，笨蛋小红，我来总结喵。</text>
+  </message>
+</reply>
+```
+
+`target_user_id` 必须来自上下文中真实出现过的 `user_id`。`at="true"` 时，hub-service 会在该条 OneBot 消息前插入 `at` 段。
+
+发送规则：
+- 每个 `<message>` 组装成一条 QQ 消息（对应一个 OneBot message segment 列表）
+- 同一 `<message>` 内的 `<text>`、`<face>` 和媒体节点按顺序合并
+- `file` 节点在原始顺序位置调用 `upload_private_file` 或 `upload_group_file`
+- 不支持的节点会被忽略
+- 可用 QQ 表情名称由系统提示词列出
+
+## 4. HTTP 契约
+
+`POST /chat` 请求：
+
+```json
+{
+  "session_id": "group_20001",
+  "input_xml": "<messages>...</messages>"
+}
+```
+
+响应：
+
+```json
+{
+  "output_xml": "<reply><text>...</text></reply>"
+}
+```
+
+## 5. 容错处理
+
+agent-service 只接受最终 `<reply>` 作为标准输出。LLM 若返回非法 XML 或非 `<reply>` 根节点，agent-service 会将原始内容包装为：
+
+```xml
+<reply><text>原始内容</text></reply>
+```

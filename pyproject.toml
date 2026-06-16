@@ -5,4 +5,8 @@ requires-python = ">=3.12"
 dependencies = []
 
 [tool.uv.workspace]
-members = ["agent-service"]
+members = ["agent-service", "file-service", "hub-service", "tool-mcp-server"]
+
+[dependency-groups]
+dev = []
+

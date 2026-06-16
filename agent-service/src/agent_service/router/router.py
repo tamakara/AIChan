@@ -1,27 +1,94 @@
-from ..agent_core import AgentCore
-
-from .schemas import ChatRequest, ChatResponse, HealthResponse
-from threading import Lock
-
 from fastapi import APIRouter, HTTPException
 
+from ..logger import elapsed_ms, get_logger, log_exception, log_info, start_timer
+from ..services import Agent, SessionRegistry
+from .schemas import (
+    ChatRequest,
+    ChatResponse,
+    CreateSessionRequest,
+    CreateSessionResponse,
+    HealthResponse,
+    QueueMessageRequest,
+)
 
-def create_router(agent: AgentCore, agent_lock: Lock) -> APIRouter:
-    # 每次装配时创建独立路由对象，避免测试或重复初始化时重复注册同一路由。
+
+def create_router(
+    agent: Agent,
+    session_registry: SessionRegistry,
+) -> APIRouter:
     router = APIRouter()
+    logger = get_logger("router")
 
     @router.get("/healthz", response_model=HealthResponse)
     def healthz() -> HealthResponse:
         return HealthResponse(status="ok")
 
+    @router.post("/sessions", response_model=CreateSessionResponse)
+    def create_session(req: CreateSessionRequest) -> CreateSessionResponse:
+        session = session_registry.create(session_id=req.session_id, metadata=req.metadata)
+        log_info(
+            logger,
+            "agent.session_created",
+            session_id=session.session_id,
+        )
+        return CreateSessionResponse(
+            session_id=session.session_id,
+            metadata=session.metadata,
+        )
+
+    @router.delete("/sessions/{session_id}")
+    def delete_session(session_id: str) -> dict:
+        deleted = session_registry.delete(session_id)
+        if not deleted:
+            raise HTTPException(status_code=404, detail="session not found")
+        log_info(
+            logger,
+            "agent.session_deleted",
+            session_id=session_id,
+        )
+        return {"deleted": True}
+
+    @router.post("/sessions/{session_id}/queue-message")
+    def queue_message(session_id: str, req: QueueMessageRequest) -> dict:
+        ok = session_registry.queue_message(session_id, req.input_xml)
+        if not ok:
+            raise HTTPException(status_code=404, detail="session not found")
+        return {"queued": True}
+
     @router.post("/chat", response_model=ChatResponse)
     def chat(req: ChatRequest) -> ChatResponse:
+        request_started_at = start_timer()
+        session = session_registry.get(req.session_id)
+        if session is None:
+            raise HTTPException(status_code=404, detail="session not found")
+
+        log_info(
+            logger,
+            "agent.chat_received",
+            session_id=req.session_id,
+            message_len=len(req.input_xml),
+        )
+
         try:
-            # AgentCore 维护单进程内存态上下文；这里串行化请求，避免并发写入导致会话状态错乱。
-            with agent_lock:
-                reply = agent.chat(user_input=req.user_input, max_turns=req.max_turns)
+            reply = agent.run(
+                session=session,
+                user_message=req.input_xml,
+            )
+            log_info(
+                logger,
+                "agent.chat_completed",
+                session_id=req.session_id,
+                reply_len=len(reply.output_xml),
+                elapsed_ms=elapsed_ms(request_started_at),
+            )
         except Exception as exc:
+            log_exception(
+                logger,
+                "agent.chat_failed",
+                session_id=req.session_id,
+                elapsed_ms=elapsed_ms(request_started_at),
+            )
             raise HTTPException(status_code=500, detail=str(exc)) from exc
-        return ChatResponse(reply=reply)
+        return ChatResponse(output_xml=reply.output_xml)
 
     return router

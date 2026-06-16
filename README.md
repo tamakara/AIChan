@@ -1,96 +1,51 @@
-# AIChan
+# AICHAN
 
-基于 `uv workspace` 的多包项目，当前核心服务是 `agent-service`（FastAPI + AgentCore）。
+基于 OneBot v11 + LLM 的 QQ 机器人。NapCat 接入 → hub 编排与 QQ 动作出口 → agent 推理 → 回复透传。
 
-## 目录结构
+## 架构
 
-```text
-.
-├─ pyproject.toml
-├─ uv.lock
-├─ .env.example
-├─ docker-compose.yml
-├─ docs/
-│  └─ agent-service.md
-└─ agent-service/
-   ├─ pyproject.toml
-   ├─ Dockerfile
-   └─ src/agent_service
+```
+QQ 用户 ↔ NapCat ↔ hub-service ↔ agent-service ↔ MCP Gateway ↔ tool-mcp-server
+              (WS)       (HTTP)         (SSE)             (MCP HTTP)
+                │                                  │
+                └────────── file-service ──────────┘
+                               │
+                          MinIO + SQLite
 ```
 
-## 环境变量
-
-默认值统一定义在根目录 `.env.example`，代码和 `docker-compose.yml` 不再内置回退默认值。
-
-关键变量：
-
-- `LLM_API_KEY`
-- `LLM_BASE_URL`
-- `MCP_GATEWAY_SSE_URL`
-- `MCP_GATEWAY_AUTH_TOKEN`
-- `LLM_MODEL_NAME`
-- `HOST`
-- `PORT`
-- `LOG_LEVEL`
-- `MCP_GATEWAY_PORT`
-- `MCP_GATEWAY_SERVERS`
-
-## 本地运行（uv）
-
-1. 安装依赖（根目录）：
+## 快速开始
 
 ```bash
-uv sync --all-packages
-```
-
-2. 复制环境变量文件并填写：
-
-```bash
-cp .env.example .env
-```
-
-3. 启动 MCP Gateway（示例为 PowerShell）：
-
-```powershell
-$env:MCP_GATEWAY_AUTH_TOKEN = "your_fixed_gateway_token"
-docker mcp gateway run --transport sse --port 9000
-```
-
-4. 本地直连运行前，将 `.env` 中 `MCP_GATEWAY_SSE_URL` 调整为 `http://localhost:9000/sse`。
-
-5. 启动 agent-service（另一个终端）：
-
-```bash
-uv run --package agent-service agent-service
-```
-
-## Docker Compose 部署（推荐）
-
-1. 从 `.env.example` 复制 `.env`，并按实际环境修改（至少替换 `LLM_API_KEY` 和 `MCP_GATEWAY_AUTH_TOKEN`）。
-2. 启动：
-
-```bash
+# 启动
 docker compose up -d --build
+
+# 扫码登录 QQ
+# 打开 http://localhost:6099/webui，口令见 napcat/config/webui.json
+
+# 查看日志
+docker compose logs -f hub-service agent-service file-service
 ```
 
-3. 验证：
+宿主机访问端口：agent-service 为 `http://localhost:18000`，hub-service 为 `http://localhost:18020`，file-service 为 `http://localhost:18040`。容器内服务地址仍保持 `agent-service:8000` / `hub-service:8020` / `file-service:8040`。
 
-```bash
-curl http://localhost:8000/healthz
-```
+## 配置
 
-## API
+每个服务读取自己的 `config.yml`，Docker Compose 再用根目录 `.env` 注入模型、密钥、MinIO 和 vision 覆盖项。仓库中的密钥字段是占位值，首次启动前需要在本地填写真实值。
 
-- `GET /healthz`
-- `POST /chat`
+| 服务 | 配置 |
+|------|------|
+| agent-service | `agent-service/config.yml` |
+| file-service | `file-service/config.yml` / MinIO 凭证环境变量 |
+| hub-service | `hub-service/config.yml` |
+| tool-mcp-server | `tool-mcp-server/config.yml` / `VISION__...` |
+| MinIO | `.env` 中的 `MINIO_ROOT_USER` / `MINIO_ROOT_PASSWORD` |
+| NapCat | `napcat/config/*.json` |
 
-`POST /chat` 请求示例：
+## 文档
 
-```json
-{
-  "user_input": "你好",
-  "max_turns": 10
-}
-```
-
-子模块文档请查看 `docs/agent-service.md`。
+1. [docs/aichan.md](docs/aichan.md) — 系统总览
+2. [docs/message-protocol.md](docs/message-protocol.md) — OneBot v11 消息协议
+3. [docs/hub-service.md](docs/hub-service.md) — 会话编排
+4. [docs/file-service.md](docs/file-service.md) — SHA-256 文件存储
+5. [docs/agent-service.md](docs/agent-service.md) — LLM 推理
+6. [docs/tool-mcp-server.md](docs/tool-mcp-server.md) — QQ、文件与图片 MCP 工具
