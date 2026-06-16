@@ -32,11 +32,11 @@
     {
       "ok": true,
       "data": {
-        "object_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "object_key": "xxx",
         "name": "note.txt",
         "mime": "text/plain",
         "size": 5,
-        "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        "sha256": "xxx"
       }
     }
     ```

@@ -78,7 +78,7 @@ hub-service 不再提供 `/api/v1/files/...` 文件读取接口；文件元数�
 - 带 `url` 的 `image/file/record/video` segment 会提交到 `POST /api/v1/files/from-url`
 - `NapcatFileResolver`：当 `file` segment 没有 `url` 但带有 `file_id/file/id` 时，通过 NapCat `get_private_file_url` / `get_file` 尝试换取下载 URL，再交给 file-service 入库
 - `object_key` 固定为文件 SHA-256，hub 不再把来源、会话、消息 ID 或扩展名写入物理键
-- `<messages>` 中只暴露 `object_key/name/mime/size/sha256`，不暴露 NapCat 原始 URL
+- `<messages>` 中只暴露 `object_key` 和 `name`，不暴露 NapCat 原始 URL
 - 无法换取下载 URL 的 `file` 输出 `<unsupported type="file" name="..." />`，保留文件名等安全元信息，避免 agent 完全丢失“用户发过文件”的语义
 
 ### 3.4 XML 转换

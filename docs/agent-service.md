@@ -52,8 +52,8 @@
 <messages>
   <message id="999" time="1710000000" sub_type="friend" user_id="1" nickname="小明">
     <text>你好</text>
-    <image object_key="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" name="abc.jpg" mime="image/jpeg" size="123" sha256="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" />
-    <file object_key="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" name="note.txt" mime="text/plain" size="456" sha256="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" />
+    <image object_key="xxx" name="abc.jpg" />
+    <file object_key="xxx" name="note.txt" />
     <face name="微笑" />
     <mface emoji_package_id="1" emoji_id="abc" summary="商城笑脸" />
   </message>
@@ -62,7 +62,7 @@
 
 当前会话的 `session_id/platform/session_type/user_id|group_id/self_id` 和最大推理轮次会通过 `<session session_id="..." max_turn="..." ... />` system 消息提供。每轮推理还会写入一条 `<turn index="..."/>` system 消息，作为普通会话消息进入上下文。
 群聊消息的 `<message>` 会携带 `user_id/nickname/at_bot`；`user_id` 是唯一身份，`nickname` 只用于称呼。
-图片、视频和文件节点只携带 file-service 入库后的 SHA-256 `object_key`，agent 需要通过 MCP 工具 `image_describe` / `video_describe` / `file_read_text` 获取内容，不能根据文件名或消息文字猜测媒体内容。`<face name="...">` 和 `<mface summary="...">` 是用户表情语气信号，可用于理解情绪，但不等同于用户明确说出的文本。
+图片、视频和文件节点只携带 file-service 入库后的 `object_key`，agent 需要通过 MCP 工具 `image_describe` / `video_describe` / `file_read_text` 获取内容，不能根据文件名或消息文字猜测媒体内容。`<face name="...">` 和 `<mface summary="...">` 是用户表情语气信号，可用于理解情绪，但不等同于用户明确说出的文本。
 
 LLM 最终回复必须是 `<reply>`：
 

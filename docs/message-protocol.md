@@ -12,13 +12,13 @@ AICHAN 在 `hub-service` 与 `agent-service` 之间使用自有 XML 协议。One
 <messages>
   <message id="999" time="1710000000" sub_type="friend" user_id="123" nickname="小明">
     <text>你好</text>
-    <image object_key="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" name="abc.jpg" mime="image/jpeg" size="123" sha256="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" />
-    <file object_key="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" name="note.txt" mime="text/plain" size="456" sha256="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" />
+    <image object_key="xxx" name="abc.jpg" />
+    <file object_key="xxx" name="note.txt" />
     <face name="微笑" />
     <mface emoji_package_id="1" emoji_id="abc" summary="商城笑脸" />
     <reply id="998" />
-    <record object_key="cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc" name="a.amr" mime="audio/amr" size="789" sha256="cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc" />
-    <video object_key="dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd" name="a.mp4" mime="video/mp4" size="1024" sha256="dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd" />
+    <record object_key="xxx" name="a.amr" />
+    <video object_key="xxx" name="a.mp4" />
     <at qq="10001" />
     <share url="https://..." title="标题" content="摘要" image="https://..." />
     <location lat="39.9" lon="116.3" title="位置" content="说明" />
@@ -44,7 +44,7 @@ AICHAN 在 `hub-service` 与 `agent-service` 之间使用自有 XML 协议。One
 媒体段规则：
 - `image/record/video` 处理 OneBot message segment 中带 `url` 的内容
 - `file` 若自带 `url` 则直接下载；若没有 `url`，hub-service 会优先用 NapCat `get_private_file_url` / `get_file` 根据 `file_id` 换取下载 URL
-- hub-service 会把媒体临时 URL 交给 file-service 入库，XML 中只暴露 `object_key/name/mime/size/sha256`
+- hub-service 会把媒体临时 URL 交给 file-service 入库，XML 中只暴露 `object_key` 和 `name`
 - object_key 固定为文件 SHA-256，不包含来源、会话、消息 ID 或扩展名
 - 原始 NapCat URL 不会出现在 XML 中
 - 无法换取下载 URL 的文件段输出 `<unsupported type="file" name="..." />`，尽量保留文件名等安全元信息
@@ -58,8 +58,8 @@ LLM 最终回复必须是 `<reply>`：
 ```xml
 <reply>
   <text>笨蛋，找我有什么事喵？<face name="微笑" /></text>
-  <image object_key="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" />
-  <file object_key="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" />
+  <image object_key="xxx" />
+  <file object_key="xxx" />
 </reply>
 ```
 

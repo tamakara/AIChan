@@ -30,7 +30,7 @@ MCP Gateway 通过 `tool-mcp-server/docker-mcp-catalog.yml` 中的 remote server
 ```json
 {
   "type": "image_description",
-  "object_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "object_key": "xxx",
   "mime": "image/jpeg",
   "description": "...",
   "question": "...",
@@ -43,7 +43,7 @@ MCP Gateway 通过 `tool-mcp-server/docker-mcp-catalog.yml` 中的 remote server
 ```json
 {
   "type": "video_description",
-  "object_key": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "object_key": "xxx",
   "mime": "video/mp4",
   "description": "...",
   "question": "...",
