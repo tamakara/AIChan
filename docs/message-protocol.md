@@ -53,21 +53,27 @@ AICHAN 在 `hub-service` 与 `agent-service` 之间使用自有 XML 协议。One
 
 ## 3. 输出格式
 
-LLM 最终回复必须是 `<reply>`：
+LLM 最终回复必须是 `<reply>`，`<reply>` 下只能包含一个或多个 `<message>`，每个 `<message>` 会被组装成一条 QQ 消息：
 
 ```xml
 <reply>
-  <text>笨蛋，找我有什么事喵？<face name="微笑" /></text>
-  <image object_key="xxx" />
-  <file object_key="xxx" />
+  <message>
+    <text>笨蛋，找我有什么事喵？</text>
+    <face name="微笑" />
+  </message>
+  <message>
+    <image object_key="xxx" />
+    <file object_key="xxx" />
+  </message>
 </reply>
 ```
 
-hub-service 支持的回复节点：
+`<message>` 内可用节点：
 
 | 节点 | 属性 | OneBot v11 映射 |
 |------|------|-----------------|
-| `text` | 文本内容，可内联 `<face name="..." />` | 文本和 QQ 表情按顺序合并为同一条 OneBot message segment 列表 |
+| `text` | 文本内容 | 文本段，与同 `<message>` 内的 `<face>` 按顺序合并为同一条消息 |
+| `face` | `name` | QQ 表情，与 `<text>` 并列，翻译为 NapCat/OneBot `face.id` |
 | `image` | `object_key` | 从 file-service 读取 bytes，转为 `image.file=base64://...` |
 | `image` | `file` | 直接透传为 `image.file`，用于外部可访问 URL |
 | `file` | `object_key` | 从 file-service 读取 bytes，调用 NapCat `upload_private_file` / `upload_group_file` |
@@ -79,7 +85,7 @@ hub-service 支持的回复节点：
 
 `object_key` 只能引用 `<messages>` 或工具结果里真实出现过的对象，不能编造。空 `<reply />` 不发送 QQ 消息。私聊回复对象由 hub-service 的会话路由固定决定，agent 不指定 `target_user_id`。
 
-群聊中如果需要回复特定成员，用 `<message>` 分组承载目标用户：
+群聊中如果需要回复特定成员，在 `<message>` 上加 `target_user_id`：
 
 ```xml
 <reply>
@@ -92,12 +98,10 @@ hub-service 支持的回复节点：
 `target_user_id` 必须来自上下文中真实出现过的 `user_id`。`at="true"` 时，hub-service 会在该条 OneBot 消息前插入 `at` 段。
 
 发送规则：
-- `<reply>` 的直接子节点是出站消息边界；两个 `<text>` 会发送成两条消息
-- 群聊 `<message>` 分组内的子节点各自作为出站消息边界，并复用同一个 target
-- `text/image/record/video` 每个直接子节点各自调用一次 `send_private_msg` 或 `send_group_msg`
-- QQ 表情只能写成 `<text>` 内的 `<face name="..." />`，hub-service 会把它翻译为 NapCat/OneBot `face.id` 并与相邻文本合并在同一条消息里
+- 每个 `<message>` 组装成一条 QQ 消息（对应一个 OneBot message segment 列表）
+- 同一 `<message>` 内的 `<text>`、`<face>` 和媒体节点按顺序合并
 - `file` 节点在原始顺序位置调用 `upload_private_file` 或 `upload_group_file`
-- 不支持的回复节点会被忽略
+- 不支持的节点会被忽略
 - 可用 QQ 表情名称由系统提示词列出
 
 ## 4. HTTP 契约

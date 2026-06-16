@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from io import BytesIO
 import mimetypes
@@ -98,6 +98,7 @@ class FileStorage:
 
     async def content(self, object_key: str) -> bytes:
         _validate_object_key(object_key)
+        await self.metadata(object_key)
 
         def read_object() -> bytes:
             response = self._client.get_object(self._settings.bucket, object_key)
@@ -123,6 +124,11 @@ class FileStorage:
         if len(text) <= max_chars:
             return text, False
         return text[:max_chars], True
+
+    async def cleanup_expired_files(self, *, limit: int) -> int:
+        if limit < 1:
+            return 0
+        return await asyncio.to_thread(self._cleanup_expired_files, limit)
 
     async def _download(self, url: str) -> tuple[bytes, str | None]:
         async with httpx.AsyncClient(timeout=self._settings.download_timeout_seconds, follow_redirects=True) as client:
@@ -206,6 +212,7 @@ class FileStorage:
             )
 
     def _get_metadata_row(self, object_key: str) -> tuple[str, str, int] | None:
+        cutoff = _expiry_cutoff(self._settings.expire_after_seconds)
         with self._connect() as conn:
             row = conn.execute(
                 """
@@ -222,12 +229,55 @@ class FileStorage:
                         LIMIT 1
                     )
                 WHERE f.sha256 = ?
+                    AND f.updated_at >= ?
                 """,
-                (object_key,),
+                (object_key, cutoff),
             ).fetchone()
         if row is None:
             return None
         return str(row[0]), str(row[1]), int(row[2])
+
+    def _cleanup_expired_files(self, limit: int) -> int:
+        cutoff = _expiry_cutoff(self._settings.expire_after_seconds)
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT sha256
+                FROM physical_files
+                WHERE updated_at < ?
+                ORDER BY updated_at ASC
+                LIMIT ?
+                """,
+                (cutoff, limit),
+            ).fetchall()
+
+        deleted_count = 0
+        for row in rows:
+            sha256_value = str(row[0])
+            if not self._delete_expired_metadata(sha256_value, cutoff):
+                continue
+            self._remove_object_if_present(sha256_value)
+            deleted_count += 1
+        return deleted_count
+
+    def _delete_expired_metadata(self, sha256_value: str, cutoff: str) -> bool:
+        with self._connect() as conn:
+            cursor = conn.execute(
+                "DELETE FROM physical_files WHERE sha256 = ? AND updated_at < ?",
+                (sha256_value, cutoff),
+            )
+            if cursor.rowcount < 1:
+                return False
+            conn.execute("DELETE FROM file_shadows WHERE sha256 = ?", (sha256_value,))
+        return True
+
+    def _remove_object_if_present(self, object_key: str) -> None:
+        try:
+            self._client.remove_object(self._settings.bucket, object_key)
+        except S3Error as exc:
+            if exc.code in NOT_FOUND_CODES:
+                return
+            raise
 
     def _connect(self) -> sqlite3.Connection:
         return sqlite3.connect(self._database_path)
@@ -288,3 +338,7 @@ def _validate_object_key(object_key: str) -> None:
 
 def _now() -> str:
     return datetime.now(UTC).isoformat()
+
+
+def _expiry_cutoff(expire_after_seconds: int) -> str:
+    return (datetime.now(UTC) - timedelta(seconds=expire_after_seconds)).isoformat()

@@ -64,17 +64,19 @@
 群聊消息的 `<message>` 会携带 `user_id/nickname/at_bot`；`user_id` 是唯一身份，`nickname` 只用于称呼。
 图片、视频和文件节点只携带 file-service 入库后的 `object_key`，agent 需要通过 MCP 工具 `image_describe` / `video_describe` / `file_read_text` 获取内容，不能根据文件名或消息文字猜测媒体内容。`<face name="...">` 和 `<mface summary="...">` 是用户表情语气信号，可用于理解情绪，但不等同于用户明确说出的文本。
 
-LLM 最终回复必须是 `<reply>`：
+LLM 最终回复必须是 `<reply>`，`<reply>` 下只能包含一个或多个 `<message>`，每个 `<message>` 会被组装成一条 QQ 消息：
 
 ```xml
 <reply>
-  <text>笨蛋，找我有什么事喵？</text>
+  <message>
+    <text>笨蛋，找我有什么事喵？</text>
+  </message>
 </reply>
 ```
 
-允许的回复直接子节点为 `<text>...</text>`、`<image object_key="..." />`、`<image file="..." />`、`<file object_key="..." />`、`<file file="..." name="..." />`、`<record object_key="..." />`、`<record file="..." />`、`<video object_key="..." />`、`<video file="..." />`。多媒体节点必须作为 `<reply>` 的直接子节点输出，不能写进 `<text>` 文本中；QQ 表情只能作为 `<text>` 内部的 `<face name="..." />` 子节点输出，这样 hub-service 会把文字和表情合并为同一条 NapCat/OneBot 消息。文本中的 `<`、`>`、`&` 必须按 XML 规则转义。`object_key` 只能复用上下文或工具结果中真实出现过的 SHA-256 对象，不能编造。
+`<message>` 内可用节点为 `<text>`、`<face>`、`<image>`、`<file>`、`<record>`、`<video>`。文本和表情会组装成同一条 NapCat/OneBot 消息。`<face>` 与 `<text>` 并列即可，不需要嵌套在 `<text>` 内。文本中的 `<`、`>`、`&` 必须按 XML 规则转义。`object_key` 只能复用上下文或工具结果中真实出现过的对象，不能编造。
 
-群聊多对象回复使用 `<message target_user_id="..." target_nickname="..." at="true">` 分组：
+群聊多对象回复在 `<message>` 上加 `target_user_id`：
 
 ```xml
 <reply>
@@ -218,7 +220,7 @@ agent.chat.run (chain)
 | `agent.langfuse.flush_interval` | float | 上报间隔（秒） |
 | `agent.langfuse.request_timeout` | float | Langfuse 请求超时（秒） |
 
-配置加载由 `pydantic-settings` 统一处理，优先级为：显式初始化参数 > 环境变量 > 根目录 `.env` > `agent-service/config.yml`。`config.yml` 只保留普通配置和空占位，模型名与真实密钥通过 `AGENT__...` 嵌套环境变量覆盖。
+配置加载由 `pydantic-settings` 统一处理，优先级为：显式初始化参数 > 环境变量 > 根目录 `.env` > `agent-service/config.yml`。`config.yml` 只保留普通配置和空占位，模型名、Langfuse 地址与真实密钥通过 `AGENT__...` 嵌套环境变量覆盖。
 
 `docker-compose.yml` 会读取根目录 `.env` 做变量插值，并通过 `agent-service.environment` 显式传递本服务需要的变量；`.env` 已被 Git 忽略，仓库只保留 `.env.example`。如果真实值曾经进入仓库，需要先在对应平台轮换。YAML 中 `key:` 会解析为 `null`，`key: ""` 会解析为空字符串；`agent.model` 和 `agent.openai_api_key` 都禁止为空，因此必须由环境变量提供有效值。
 
@@ -230,6 +232,7 @@ agent.chat.run (chain)
 | `AGENT__OPENAI_API_KEY` | `agent.openai_api_key` | 是 |
 | `AGENT__OPENAI_BASE_URL` | `agent.openai_base_url` | 否，Docker Compose 默认 `https://api.xiaomimimo.com/v1` |
 | `AGENT__MCP_AUTH_TOKEN` | `agent.mcp_auth_token` | 否，默认空字符串 |
+| `AGENT__LANGFUSE__HOST` | `agent.langfuse.host` | 是 |
 | `AGENT__LANGFUSE__PUBLIC_KEY` | `agent.langfuse.public_key` | 启用 Langfuse 时必填 |
 | `AGENT__LANGFUSE__SECRET_KEY` | `agent.langfuse.secret_key` | 启用 Langfuse 时必填 |
 

@@ -193,8 +193,24 @@ async def reply_xml_to_outbound_items(
 
     items: list[ReplyOutboundItem] = []
     for message in _reply_message_nodes(root):
+        pending_segments: list[dict[str, Any]] = []
+        group_segments = message.node.tag == "message"
+
+        def flush_pending_segments() -> None:
+            if not pending_segments:
+                return
+            items.append(
+                ReplyOnebotMessage(
+                    message=list(pending_segments),
+                    target_user_id=message.target_user_id,
+                    at=message.at,
+                )
+            )
+            pending_segments.clear()
+
         for child in list(message.node):
             if child.tag == "file":
+                flush_pending_segments()
                 upload = await _reply_file_to_upload(child, media_storage, target_user_id=message.target_user_id)
                 if upload is not None:
                     items.append(upload)
@@ -202,8 +218,12 @@ async def reply_xml_to_outbound_items(
 
             segments = await _reply_child_to_onebot_segments(child, media_storage)
             if segments:
-                # QQ/NapCat 对图文混排消息的展示并不稳定；这里按回复子节点拆分，
-                # 但允许 <text> 内部混排文字和 QQ 表情，让表情跟随同一条文本消息发送。
+                if group_segments:
+                    # <message> 是协议里的发送原子：同一条回复里的文字、表情和媒体必须保持顺序合并。
+                    # file 走 NapCat 上传动作，不是 OneBot message segment，所以在文件前先发送已累计片段。
+                    pending_segments.extend(segments)
+                    continue
+
                 items.append(
                     ReplyOnebotMessage(
                         message=segments,
@@ -211,6 +231,8 @@ async def reply_xml_to_outbound_items(
                         at=message.at,
                     )
                 )
+
+        flush_pending_segments()
     return items
 
 
@@ -291,6 +313,12 @@ async def _reply_child_to_onebot_segments(
     if child.tag == "text":
         return _output_text_segments(child)
 
+    if child.tag == "face":
+        data = _output_face_attrs(child)
+        if not data:
+            return []
+        return [_onebot_segment("face", data)]
+
     if child.tag in OUTPUT_MEDIA_SEGMENT_TYPES:
         data = await _output_media_attrs(child, media_storage)
         if not data:
@@ -353,7 +381,7 @@ async def _output_media_attrs(
 
 def _output_face_attrs(child: ElementTree.Element) -> dict[str, str]:
     # 让 agent 按语义选择表情，hub 在 OneBot 边界翻译为 QQ face id。
-    # 出站表情只允许作为 <text> 内联子节点，避免 QQ 侧把表情拆成独立消息。
+    # 兼容 <text> 内联和 <message> 直系两种写法，避免模型按协议并列输出时丢失表情。
     name = child.attrib.get("name", "").strip().removeprefix("/")
     face_id = QQ_FACE_IDS_BY_NAME.get(name)
     if not face_id:

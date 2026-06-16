@@ -4,6 +4,8 @@
 
 `file-service` 是 AICHAN 的唯一文件存储边界。它负责从临时 URL 下载文件、计算 SHA-256、把文件真身写入 MinIO，并把文件名、MIME、大小等业务影子元数据写入 SQLite。
 
+文件默认保留 7 天。过期判断基于物理文件的 `updated_at` 与 `storage.expire_after_seconds`，过期后 metadata/content/text 读取统一按文件不存在返回 404。服务启动后会按 `storage.cleanup_interval_seconds` 定时批量删除过期 MinIO 真身和 SQLite 元数据。
+
 物理对象键固定为文件内容的 SHA-256：
 
 ```text
@@ -41,7 +43,7 @@
     }
     ```
 - `GET /api/v1/files/{object_key}/metadata`
-  - 返回最新影子元数据；`object_key` 必须是 64 位小写 SHA-256
+  - 返回未过期文件的最新影子元数据；`object_key` 必须是 64 位小写 SHA-256
 - `GET /api/v1/files/{object_key}/content`
   - 返回原始 bytes，`Content-Type` 使用 SQLite 中记录的 MIME
 - `GET /api/v1/files/{object_key}/text?max_chars=12000`
@@ -79,6 +81,9 @@ SQLite：
 | `storage.database_path` | str | SQLite 文件路径，compose 默认挂载到 `/data/file-service.sqlite3` |
 | `storage.download_timeout_seconds` | float | 下载临时 URL 的超时秒数 |
 | `storage.max_object_bytes` | int | 单个文件最大字节数 |
+| `storage.expire_after_seconds` | int | 文件读取有效期，默认 604800 秒（7 天） |
+| `storage.cleanup_interval_seconds` | float | 过期文件自动清理间隔，默认 3600 秒 |
+| `storage.cleanup_batch_size` | int | 每轮最多清理的过期文件数，默认 100 |
 
 配置加载由 `pydantic-settings` 统一处理，优先级为：显式初始化参数 > 环境变量 > 根目录 `.env` > `file-service/config.yml`。MinIO 根账号仍由根目录 `.env` 的 `MINIO_ROOT_USER` / `MINIO_ROOT_PASSWORD` 管理，compose 再注入为 file-service 的 `STORAGE__ACCESS_KEY` / `STORAGE__SECRET_KEY`。
 

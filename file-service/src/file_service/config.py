@@ -32,6 +32,9 @@ class StorageSettings(BaseModel):
     database_path: StrictStr
     download_timeout_seconds: float
     max_object_bytes: StrictInt
+    expire_after_seconds: StrictInt
+    cleanup_interval_seconds: float
+    cleanup_batch_size: StrictInt
 
     @field_validator("endpoint", "bucket", "access_key", "secret_key", "database_path")
     @classmethod
@@ -51,7 +54,7 @@ class StorageSettings(BaseModel):
                 return False
         return value
 
-    @field_validator("download_timeout_seconds", mode="before")
+    @field_validator("download_timeout_seconds", "cleanup_interval_seconds", mode="before")
     @classmethod
     def _validate_timeout_seconds(cls, value: Any) -> float:
         if isinstance(value, str):
@@ -62,9 +65,9 @@ class StorageSettings(BaseModel):
             raise ValueError("必须大于 0")
         return float(value)
 
-    @field_validator("max_object_bytes", mode="before")
+    @field_validator("max_object_bytes", "expire_after_seconds", "cleanup_batch_size", mode="before")
     @classmethod
-    def _validate_max_object_bytes(cls, value: Any) -> int:
+    def _validate_positive_int(cls, value: Any) -> int:
         if isinstance(value, str):
             try:
                 value = int(value)

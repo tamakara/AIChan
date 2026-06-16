@@ -89,6 +89,7 @@ agent:
     monkeypatch.setenv("AGENT__MODEL", "env-model")
     monkeypatch.setenv("AGENT__OPENAI_API_KEY", "env-key")
     monkeypatch.setenv("AGENT__OPENAI_BASE_URL", "https://env.example/v1")
+    monkeypatch.setenv("AGENT__LANGFUSE__HOST", "https://env-langfuse.example")
     monkeypatch.setenv("AGENT__LANGFUSE__PUBLIC_KEY", "env-public")
     monkeypatch.setenv("AGENT__LANGFUSE__SECRET_KEY", "env-secret")
 
@@ -97,6 +98,7 @@ agent:
     assert settings.agent.model == "env-model"
     assert settings.agent.openai_api_key == "env-key"
     assert settings.agent.openai_base_url == "https://env.example/v1"
+    assert settings.agent.langfuse.host == "https://env-langfuse.example"
     assert settings.agent.langfuse.public_key == "env-public"
     assert settings.agent.langfuse.secret_key == "env-secret"
 

@@ -12,3 +12,6 @@ storage:
   database_path: /data/file-service.sqlite3
   download_timeout_seconds: 20
   max_object_bytes: 10485760
+  expire_after_seconds: 604800
+  cleanup_interval_seconds: 3600
+  cleanup_batch_size: 100

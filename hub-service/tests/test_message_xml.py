@@ -248,10 +248,10 @@ async def test_reply_xml_to_onebot_segments_ignores_unknown_face_name() -> None:
 
 
 @pytest.mark.asyncio
-async def test_reply_xml_to_onebot_segments_ignores_top_level_face() -> None:
+async def test_reply_xml_to_onebot_segments_keeps_direct_face() -> None:
     segments = await reply_xml_to_onebot_segments('<reply><face name="微笑" /></reply>')
 
-    assert segments == []
+    assert segments == [{"type": "face", "data": {"id": "14"}}]
 
 
 @pytest.mark.asyncio
@@ -270,7 +270,7 @@ async def test_reply_xml_to_onebot_segments_loads_image_from_storage() -> None:
 
 
 @pytest.mark.asyncio
-async def test_reply_xml_to_outbound_items_splits_direct_children_in_order() -> None:
+async def test_reply_xml_to_outbound_items_splits_root_direct_children_in_order() -> None:
     storage = StubMediaStorage()
     image_key = "a" * 64
     file_key = "b" * 64
@@ -305,6 +305,25 @@ async def test_reply_xml_to_outbound_items_keeps_inline_face_in_text_message() -
                 {"type": "text", "data": {"text": "first"}},
                 {"type": "face", "data": {"id": "14"}},
                 {"type": "text", "data": {"text": "second"}},
+            ]
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_reply_xml_to_outbound_items_keeps_sibling_faces_in_message() -> None:
+    items = await reply_xml_to_outbound_items(
+        "<reply><message><text>真是个大笨蛋！我当然会发表情喵，你看，这不就发给你看了喵！</text>"
+        '<face name="调皮" /><face name="胜利" /><face name="喵喵" /></message></reply>',
+    )
+
+    assert items == [
+        ReplyOnebotMessage(
+            message=[
+                {"type": "text", "data": {"text": "真是个大笨蛋！我当然会发表情喵，你看，这不就发给你看了喵！"}},
+                {"type": "face", "data": {"id": "12"}},
+                {"type": "face", "data": {"id": "79"}},
+                {"type": "face", "data": {"id": "307"}},
             ]
         )
     ]

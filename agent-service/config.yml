@@ -14,7 +14,7 @@ agent:
   mcp_auth_token: ""
   langfuse:
     enabled: true
-    host: https://us.cloud.langfuse.com
+    host: ""
     public_key: ""
     secret_key: ""
     flush_at: 16
