@@ -9,11 +9,13 @@ services:
       - --transport=sse
       - --port=9000
       - --additional-catalog=/app/tool-mcp-server/docker-mcp-catalog.yml
-      - --servers=playwright,fetch,time,tool-mcp-server
+      - --servers=tavily,time,tool-mcp-server
+      - --secrets=/.env
     ports:
       - "19000:9000"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
+      - ./mcp-secrets.env:/.env:ro
       - ./tool-mcp-server/docker-mcp-catalog.yml:/app/tool-mcp-server/docker-mcp-catalog.yml:ro
 
   agent-service:
