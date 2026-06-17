@@ -2,16 +2,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
-from pydantic import (
-    BaseModel,
-    ConfigDict,
-    StrictBool,
-    StrictInt,
-    StrictStr,
-    ValidationError,
-    field_validator,
-    model_validator,
-)
+from pydantic import BaseModel, ConfigDict, StrictInt, StrictStr, ValidationError, field_validator
 from pydantic_settings import (
     BaseSettings,
     PydanticBaseSettingsSource,
@@ -19,7 +10,7 @@ from pydantic_settings import (
     YamlConfigSettingsSource,
 )
 
-CONFIG_PATH = Path.cwd() / "agent-service" / "config.yml"
+CONFIG_PATH = Path.cwd() / "memory-service" / "config.yml"
 
 
 class ServerSettings(BaseModel):
@@ -27,62 +18,29 @@ class ServerSettings(BaseModel):
 
     host: StrictStr
     port: StrictInt
+    log_level: StrictStr
 
 
-class LangfuseSettings(BaseModel):
+class MemorySettings(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    enabled: StrictBool
-    host: StrictStr
-    public_key: StrictStr
-    secret_key: StrictStr
-    flush_at: StrictInt
-    flush_interval: float
-    request_timeout: float
-
-    @model_validator(mode="after")
-    def _validate_enabled_credentials(self) -> "LangfuseSettings":
-        if self.enabled and (not self.public_key or not self.secret_key):
-            raise ValueError("启用 Langfuse 时必须配置 AGENT__LANGFUSE__PUBLIC_KEY 和 AGENT__LANGFUSE__SECRET_KEY")
-        return self
-
-
-class AgentSettings(BaseModel):
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
+    root_dir: StrictStr
     model: StrictStr
-    max_turns: StrictInt
-    temperature: float
-
     openai_api_key: StrictStr
     openai_base_url: StrictStr
-    mcp_sse_url: StrictStr
-    mcp_auth_token: StrictStr
-    memory_enabled: StrictBool
-    memory_base_url: StrictStr
-    memory_compress_every_n_chats: StrictInt
-    memory_timeout: float
     llm_timeout: float
     llm_max_retries: StrictInt
-    langfuse: LangfuseSettings
 
-    @field_validator("model")
+    @field_validator("root_dir", "model", "openai_api_key", "openai_base_url")
     @classmethod
-    def _validate_model(cls, value: str) -> str:
-        if not value:
-            raise ValueError("必须配置 AGENT__MODEL")
+    def _validate_required_string(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("不能为空")
         return value
 
-    @field_validator("openai_api_key")
+    @field_validator("llm_timeout", mode="before")
     @classmethod
-    def _validate_openai_api_key(cls, value: str) -> str:
-        if not value:
-            raise ValueError("必须配置 AGENT__OPENAI_API_KEY")
-        return value
-
-    @field_validator("memory_timeout", mode="before")
-    @classmethod
-    def _validate_memory_timeout(cls, value: Any) -> float:
+    def _validate_timeout(cls, value: Any) -> float:
         if isinstance(value, str):
             try:
                 value = float(value)
@@ -94,9 +52,9 @@ class AgentSettings(BaseModel):
             raise ValueError("必须大于 0")
         return float(value)
 
-    @field_validator("memory_compress_every_n_chats", mode="before")
+    @field_validator("llm_max_retries", mode="before")
     @classmethod
-    def _validate_memory_compress_every_n_chats(cls, value: Any) -> int:
+    def _validate_retries(cls, value: Any) -> int:
         if isinstance(value, str):
             try:
                 value = int(value)
@@ -104,8 +62,8 @@ class AgentSettings(BaseModel):
                 raise TypeError("必须是整数") from exc
         if isinstance(value, bool) or not isinstance(value, int):
             raise TypeError("必须是整数")
-        if value < 1:
-            raise ValueError("必须大于 0")
+        if value < 0:
+            raise ValueError("不能小于 0")
         return value
 
 
@@ -119,7 +77,7 @@ class Settings(BaseSettings):
     )
 
     server: ServerSettings
-    agent: AgentSettings
+    memory: MemorySettings
 
     @classmethod
     def settings_customise_sources(
@@ -130,7 +88,7 @@ class Settings(BaseSettings):
         dotenv_settings: PydanticBaseSettingsSource,
         file_secret_settings: PydanticBaseSettingsSource,
     ) -> tuple[PydanticBaseSettingsSource, ...]:
-        # 让环境变量覆盖 YAML，密钥就不需要写进仓库里的 config.yml。
+        # memory-service 是会话记忆文件的唯一拥有者，配置键以当前服务语义为准，不保留旧别名。
         return (
             init_settings,
             env_settings,
@@ -143,7 +101,6 @@ class Settings(BaseSettings):
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
     try:
-        # 统一交给 Pydantic 做严格结构校验，避免手写字段检查逻辑散落且难维护。
         return Settings()
     except ValidationError as exc:
         raise ValueError(f"配置校验失败: {CONFIG_PATH}\n{exc}") from exc

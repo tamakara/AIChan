@@ -12,6 +12,10 @@ agent:
   openai_base_url: ""
   mcp_sse_url: http://mcp-gateway:9000/sse
   mcp_auth_token: ""
+  memory_enabled: true
+  memory_base_url: http://memory-service:8050
+  memory_compress_every_n_chats: 10
+  memory_timeout: 10.0
   langfuse:
     enabled: true
     host: ""

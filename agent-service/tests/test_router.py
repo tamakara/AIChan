@@ -41,6 +41,7 @@ def build_client(
         llm_client=llm_client,
         mcp_gateway=StubMcpGateway(),
         max_turns=3,
+        max_retries=1,
         temperature=0.0,
         observability=NoopObservability(),
     )
@@ -157,6 +158,7 @@ def test_chat_uses_existing_session_and_injects_context() -> None:
         llm_client=llm_client,
         mcp_gateway=StubMcpGateway(),
         max_turns=3,
+        max_retries=1,
         temperature=0.0,
         observability=NoopObservability(),
     )
@@ -244,7 +246,7 @@ def test_chat_returns_422_when_input_xml_empty() -> None:
     assert response.status_code == 422
 
 
-def test_chat_wraps_non_xml_llm_output() -> None:
+def test_chat_returns_fallback_when_non_xml_output_retries_exhausted() -> None:
     llm_client = StubLlmClient()
     llm_client.output = "plain < text"
     client = build_client(llm_client=llm_client)
@@ -256,7 +258,10 @@ def test_chat_wraps_non_xml_llm_output() -> None:
     )
 
     assert response.status_code == 200
-    assert response.json() == {"output_xml": "<reply><text>plain &lt; text</text></reply>"}
+    assert response.json() == {
+        "output_xml": "<reply><text>笨蛋，刚才脑袋短路了一下，稍后再试试喵。</text></reply>"
+    }
+    assert len(llm_client.calls) == 2
 
 
 def test_chat_returns_422_when_legacy_extra_fields_passed() -> None:

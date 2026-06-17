@@ -2,16 +2,16 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from typing import Any
 from xml.etree import ElementTree
 
 from ..logger import elapsed_ms, start_timer
 from .llm_client import LlmClient
+from .memory_client import MemoryClient
 from .mcp_gateway import McpGateway
-from .observability import Observability
+from .observability import Observability, RunTrace
 from .session import Session
 from .types.context import Context
-from .types.llm import Message, ToolCall
+from .types.llm import LlmResponse, Message, ToolCall
 
 LLM_FALLBACK_REPLY = "笨蛋，刚才脑袋短路了一下，稍后再试试喵。"
 
@@ -22,40 +22,41 @@ class AgentReply:
 
 
 class Agent:
-    """可复用的 Agent 单例，对 Session 执行推理。
-
-    Agent 持有共享的 LLM 客户端、MCP 网关与可观测性实例，
-    通过 run(session, ...) 在指定会话上执行 turn-loop，返回结构化回复。
-    """
+    """可复用的 Agent 单例，对 Session 执行推理。"""
 
     def __init__(
         self,
         llm_client: LlmClient,
         mcp_gateway: McpGateway,
         max_turns: int,
+        max_retries: int,
         temperature: float,
         observability: Observability,
+        memory_client: MemoryClient | None = None,
+        memory_enabled: bool = False,
+        memory_compress_every_n_chats: int = 10,
     ) -> None:
         self._llm_client = llm_client
         self._mcp_gateway = mcp_gateway
         self._max_turns = max_turns
+        self._max_retries = max_retries
         self._temperature = temperature
         self._observability = observability
-
-    # ------------------------------------------------------------------
-    # 会话执行
-    # ------------------------------------------------------------------
+        self._memory_client = memory_client
+        self._memory_enabled = memory_enabled
+        self._memory_compress_every_n_chats = memory_compress_every_n_chats
 
     def run(self, session: Session, user_message: str) -> AgentReply:
         """在指定 Session 上执行一轮推理循环，返回 AICHAN XML 回复。"""
         run_started_at = start_timer()
 
-        # ── 1. 暂存用户消息、启动观测 trace ──
         staged_messages: list[Message] = []
         pending_user_messages = [user_message]
 
+        self._refresh_memory(session)
+
         with session._lock:
-            message_count = len(session._context.messages) + len(pending_user_messages)
+            message_count = session.message_count_locked(len(pending_user_messages))
 
         run_trace = self._observability.start_run(
             session_id=session.session_id,
@@ -65,7 +66,6 @@ class Agent:
         )
 
         try:
-            # ── 2. turn-loop：LLM 推理 + 工具调用 ──
             for turn_idx in range(self._max_turns):
                 turn = turn_idx + 1
                 _stage_message(staged_messages, role="system", content=_turn_xml(index=turn))
@@ -73,26 +73,36 @@ class Agent:
                 pending_user_messages = []
 
                 with session._lock:
-                    input_messages = list(session._context.messages) + list(staged_messages)
+                    input_messages = session.render_input_messages_locked(staged_messages)
 
-                llm_started_at = start_timer()
-                llm_response = self._llm_client.generate(
-                    messages=input_messages,
-                    tools_schema=self._mcp_gateway.get_tools_schema(),
-                    temperature=self._temperature,
-                )
-                llm_elapsed_ms = elapsed_ms(llm_started_at)
-
-                self._observability.llm_generation(
-                    run=run_trace,
+                llm_response = self._generate_turn_response(
+                    run_trace=run_trace,
                     turn=turn,
                     input_messages=input_messages,
-                    output_content=llm_response.content,
-                    output_tool_calls=llm_response.tool_calls,
-                    finish_reason=llm_response.finish_reason,
-                    model=self._llm_client.model_name,
-                    duration_ms=llm_elapsed_ms,
                 )
+
+                if llm_response.finish_reason == "stop":
+                    queued_messages = _drain_queued_user_messages(session)
+                    if queued_messages:
+                        # 最终回复只有在真正发给用户时才写入上下文。
+                        # 这里若已收到新消息，就让这一轮结果失效，避免旧回复污染后续输入。
+                        pending_user_messages = queued_messages
+                        continue
+
+                    _stage_message(
+                        staged_messages,
+                        role="assistant",
+                        content=llm_response.content,
+                    )
+                    _commit_staged_messages(session, staged_messages)
+                    self._compress_memory_if_due(session)
+                    duration_ms = elapsed_ms(run_started_at)
+                    self._observability.finish_run_success(
+                        run=run_trace,
+                        output={"output_xml": llm_response.content},
+                        duration_ms=duration_ms,
+                    )
+                    return AgentReply(output_xml=llm_response.content)
 
                 _stage_message(
                     staged_messages,
@@ -100,33 +110,6 @@ class Agent:
                     content=llm_response.content,
                     tool_calls=llm_response.tool_calls,
                 )
-
-                if llm_response.finish_reason != "tool_calls":
-                    if llm_response.finish_reason == "stop":
-                        queued_messages = _drain_queued_user_messages(session)
-                        if queued_messages:
-                            # 模型刚准备结束时若用户又发了消息，旧 final reply 已不再覆盖最新输入。
-                            # 丢弃这条 assistant，插入新 user 后继续推理，避免未发送回复污染上下文。
-                            staged_messages.pop()
-                            pending_user_messages = queued_messages
-                            continue
-
-                        reply = _parse_agent_reply(llm_response.content)
-                        # 会话历史是下一轮模型输入的协议边界：即使模型本轮输出了半截 XML，
-                        # 也只能持久化收敛后的 `<reply>`，否则坏标签会污染后续上下文。
-                        staged_messages[-1]["content"] = reply.output_xml
-                        _commit_staged_messages(session, staged_messages)
-                        duration_ms = elapsed_ms(run_started_at)
-                        self._observability.finish_run_success(
-                            run=run_trace,
-                            output={"output_xml": reply.output_xml},
-                            duration_ms=duration_ms,
-                        )
-                        return reply
-                    raise RuntimeError(
-                        "LLM response ended with unexpected reason: "
-                        f"{llm_response.finish_reason}"
-                    )
 
                 for tool_call in llm_response.tool_calls:
                     tool_call_id = tool_call.id
@@ -141,7 +124,8 @@ class Agent:
                             else tool_args_str
                         )
                         tool_call_result = self._mcp_gateway.call_tool(
-                            tool_name=tool_name, tool_args=tool_args
+                            tool_name=tool_name,
+                            tool_args=tool_args,
                         )
                         self._observability.tool_span(
                             run=run_trace,
@@ -193,35 +177,105 @@ class Agent:
                 error=str(exc),
                 duration_ms=duration_ms,
             )
-            # LLM/API/MCP 边界的瞬时失败不再向 QQ 用户暴露 500。
-            # 这里统一返回固定文案，避免按网络错误类型扩散细粒度异常分支。
+            # 生成异常和最终 XML 非法统一视为本轮失败，超过重试预算后收口为固定兜底回复，
+            # 这样外层调用方不需要区分模型错误类型，也不会把半截 XML 泄漏给下游。
             output_xml = _text_reply_xml(LLM_FALLBACK_REPLY)
-            _stage_message(
-                staged_messages,
-                role="assistant",
-                content=output_xml,
-            )
+            _stage_message(staged_messages, role="assistant", content=output_xml)
             _commit_staged_messages(session, staged_messages)
             return AgentReply(output_xml=output_xml)
 
+    def _refresh_memory(self, session: Session) -> None:
+        if not self._memory_enabled or self._memory_client is None:
+            return
+        try:
+            memory_markdown = self._memory_client.read(session.session_id)
+        except Exception:
+            with session._lock:
+                session.clear_memory_locked()
+            return
+        with session._lock:
+            session.set_memory_markdown_locked(memory_markdown)
 
-def _parse_agent_reply(raw: str) -> AgentReply:
-    """把 LLM 最终输出收敛为 AICHAN XML 回复契约。
+    def _compress_memory_if_due(self, session: Session) -> None:
+        if not self._memory_enabled or self._memory_client is None:
+            return
+        with session._lock:
+            should_compress = session.mark_chat_completed_locked(self._memory_compress_every_n_chats)
+            if not should_compress:
+                return
+            messages_text = session.record_messages_text_locked()
+        try:
+            result = self._memory_client.compress(session.session_id, messages_text)
+        except Exception:
+            return
+        with session._lock:
+            session.replace_memory_and_clear_records_locked(result.content_markdown)
 
-    hub-service 只消费 `<reply>`，因此非法 XML 不继续向下游扩散，而是包装为文本。
-    这样模型偶发格式偏离时仍可回复用户，且不把容错逻辑分散到消息投递层。
-    """
+    def _generate_turn_response(
+        self,
+        *,
+        run_trace: RunTrace,
+        turn: int,
+        input_messages: list[Message],
+    ) -> LlmResponse:
+        """统一处理单轮生成重试。
+
+        这里把“LLM 调用异常”和“最终 stop 输出不是合法 XML”收敛成同一类失败。
+        工具调用轮次不在这里重放，避免重复执行工具；只有本轮的生成步骤会按预算重试。
+        """
+        last_error: Exception | None = None
+        tools_schema = self._mcp_gateway.get_tools_schema()
+
+        for attempt in range(self._max_retries + 1):
+            try:
+                llm_started_at = start_timer()
+                llm_response = self._llm_client.generate(
+                    messages=input_messages,
+                    tools_schema=tools_schema,
+                    temperature=self._temperature,
+                )
+                llm_elapsed_ms = elapsed_ms(llm_started_at)
+
+                self._observability.llm_generation(
+                    run=run_trace,
+                    turn=turn,
+                    input_messages=input_messages,
+                    output_content=llm_response.content,
+                    output_tool_calls=llm_response.tool_calls,
+                    finish_reason=llm_response.finish_reason,
+                    model=self._llm_client.model_name,
+                    duration_ms=llm_elapsed_ms,
+                )
+
+                if llm_response.finish_reason == "tool_calls":
+                    return llm_response
+
+                if llm_response.finish_reason != "stop":
+                    raise RuntimeError(
+                        "LLM response ended with unexpected reason: "
+                        f"{llm_response.finish_reason}"
+                    )
+
+                if not _is_well_formed_xml(llm_response.content):
+                    raise ValueError("LLM final reply is not valid XML")
+
+                return llm_response
+            except Exception as exc:
+                last_error = exc
+                if attempt >= self._max_retries:
+                    raise
+
+        if last_error is not None:
+            raise last_error
+        raise RuntimeError("LLM turn retry loop exited unexpectedly")
+
+
+def _is_well_formed_xml(raw: str) -> bool:
     try:
-        root = ElementTree.fromstring(raw)
+        ElementTree.fromstring(raw)
     except (ElementTree.ParseError, TypeError):
-        return AgentReply(output_xml=_text_reply_xml(raw))
-
-    if root.tag != "reply":
-        return AgentReply(output_xml=_text_reply_xml(raw))
-
-    return AgentReply(
-        output_xml=ElementTree.tostring(root, encoding="unicode", short_empty_elements=True)
-    )
+        return False
+    return True
 
 
 def _text_reply_xml(text: str) -> str:
@@ -259,7 +313,7 @@ def _commit_staged_messages(
     staged_messages: list[Message],
 ) -> None:
     with session._lock:
-        session._context.messages.extend(staged_messages)
+        session.append_record_messages_locked(staged_messages)
 
 
 def _drain_queued_user_messages(session: Session) -> list[str]:

@@ -1,10 +1,12 @@
-# agent-service
+﻿# agent-service
 
 ## 1. 模块定位
 
 `agent-service` 是 LLM 推理执行层：维护 `Session` 上下文、驱动多轮 LLM 推理与 MCP 工具调用，通过 HTTP 返回 AICHAN XML 回复。
 
 不负责 QQ 消息接入、OneBot v11 解析与投递；这些职责由 `hub-service` 处理。
+
+长期记忆由独立 `memory-service` 持久化。agent-service 每次运行前读取当前会话记忆并注入为 system message；压缩失败或读取失败只降级当前记忆能力，不阻断聊天。
 
 ## 2. 接口契约
 
@@ -61,6 +63,7 @@
 ```
 
 当前会话的 `session_id/platform/session_type/user_id|group_id/self_id` 和最大推理轮次会通过 `<session session_id="..." max_turn="..." ... />` system 消息提供。每轮推理还会写入一条 `<turn index="..."/>` system 消息，作为普通会话消息进入上下文。
+如果 memory-service 可用，`<session ... />` 后会插入一条长期记忆 system message。新会话或空记忆使用固定占位文本；读取失败则不插入该消息。
 群聊消息的 `<message>` 会携带 `user_id/nickname/at_bot`；`user_id` 是唯一身份，`nickname` 只用于称呼。
 图片、视频和文件节点只携带 file-service 入库后的 `object_key`，agent 需要通过 MCP 工具 `image_describe` / `video_describe` / `file_read_text` 获取内容，不能根据文件名或消息文字猜测媒体内容。`<face name="...">` 和 `<mface summary="...">` 是用户表情语气信号，可用于理解情绪，但不等同于用户明确说出的文本。
 
@@ -86,7 +89,7 @@ LLM 最终回复必须是 `<reply>`，`<reply>` 下只能包含一个或多个 `
 </reply>
 ```
 
-`agent.py` 中的 `_parse_agent_reply()` 负责把 LLM 输出收敛为 `<reply>`。若模型返回非法 XML 或非 `<reply>` 根节点，会包装为 `<reply><text>原始内容</text></reply>`。该逻辑只作为服务边界兜底，正常情况下应由系统提示词约束模型直接生成完整、闭合、可解析的 `<reply>`。
+`agent.py` 只在最终 `finish_reason == "stop"` 时检查回复是否为可解析的 XML。若本轮生成抛异常，或最终输出不是合法 XML，则不会把坏结果写入会话，而是按 `llm_max_retries` 预算重试同一轮生成；预算耗尽后统一返回固定 `<reply><text>...</text></reply>` 兜底文案。工具调用轮次本身不重放，因此不会因为 XML 校验失败重复执行工具。
 
 ### 2.3 对外消费（LLM API）
 
@@ -103,6 +106,13 @@ LLM 最终回复必须是 `<reply>`，`<reply>` 下只能包含一个或多个 `
 - 鉴权：`mcp_auth_token` 通过 `Authorization: Bearer` 发送
 - 当前自定义工具由 `tool-mcp-server` 提供：`qq_get_message_history`、`qq_get_user_info`、`file_get_metadata`、`file_read_text`、`image_describe`、`video_describe`
 
+### 2.5 对外消费（memory-service）
+
+- `GET /api/v1/memories/{session_id}`：每次 `Agent.run()` 开始前读取最新 markdown 记忆
+- `POST /api/v1/memories/{session_id}/compress`：每 10 次成功 chat 后提交普通消息记录层的时间序日志文本（格式为 `[time] role: content`）
+- 读取失败：清除当前会话 memory system message，本轮不注入记忆
+- 压缩失败：保留普通消息记录层，不裁剪历史，并等下一个 10 次成功 chat 周期再尝试
+
 ## 3. 核心数据模型
 
 ### 3.1 会话（`Session`）
@@ -111,11 +121,14 @@ LLM 最终回复必须是 `<reply>`，`<reply>` 下只能包含一个或多个 `
 - `metadata: dict` — 创建时快照
 - `_context: Context` — 消息历史
 - `_queued_user_messages: list[str]` — 运行中追加的新用户 XML 消息队列
+- `_completed_chat_count: int` — 自上次压缩尝试后的成功 chat 计数
 - `_lock` — 线程锁，仅在修改 Context 时短暂持有
 
 初始化时写入两条 system 消息：
 - `SYSTEM_PROMPT`
 - `<session session_id="..." max_turn="..." ... />`，包含 `session_id`、最大推理轮次，以及 metadata 中的 `platform/session_type/user_id|group_id/self_id`
+
+memory 读取成功后会在第 3 条插入或覆盖长期记忆 system message。普通消息记录层仍保留在 `_context` 中，包括 `<turn />`、user、assistant、tool 消息；但提交给 memory-service 的 `record_messages_text_locked()` 会把它们整理成带时间戳的逐行日志，并过滤掉 `<turn />` 这类纯结构分隔符。压缩成功后只清空普通消息记录层和对应日志快照，保留系统层和最新 memory 层。
 
 ### 3.2 上下文（`Context`）
 
@@ -125,21 +138,21 @@ LLM 最终回复必须是 `<reply>`，`<reply>` 下只能包含一个或多个 `
 ### 3.3 Agent 执行循环
 
 ```
+refresh memory markdown
 pending_user_messages = [input_xml]
   → for turn in max_turns:
     → staged add_message("system", "<turn index=... />")
     → staged add_message("user") × pending_user_messages
-    → LlmClient.generate(context.messages + staged_messages)
-    → staged add_message("assistant")
+    → generate with retry(context.messages + staged_messages)
     → if finish_reason == "stop":
         → drain queued_user_messages
         → if 有 queued:
-            → 丢弃本轮 final assistant
             → pending_user_messages = queued
             → continue
         → else:
-            → _parse_agent_reply()    # 收敛为 <reply>
+            → staged add_message("assistant")   # 只在最终 XML 合法且真正发送时提交
             → commit staged_messages
+            → 成功 chat 计数 +1；达到阈值则提交普通消息记录层给 memory-service 压缩
             → finish_run_success()    # 上报观测
             → return AgentReply(output_xml)
     → if finish_reason == "tool_calls":
@@ -154,10 +167,11 @@ pending_user_messages = [input_xml]
 关键设计：
 - LLM 调用期间不持锁；`/queue-message` 可以在运行中安全追加同会话用户消息
 - 本轮 user/assistant/tool 消息先暂存在 staged messages，成功返回最终 `<reply>` 时一次性提交
-- 每轮先写入 `<turn index="..."/>` system 消息，再写入本轮待处理 user messages；该 turn 消息会作为普通上下文持久化
+- 每轮先写入 `<turn index="..."/>` system 消息，再写入本轮待处理 user messages；该 turn 消息会作为普通上下文持久化，但不会进入提交给 memory-service 的日志文本
 - tool-call 分支先写入所有 tool result，queued user messages 延后到下一轮 `<turn>` 之后写入，保持 OpenAI tool-call 消息顺序合法
-- stop 分支若发现 queued user messages，丢弃尚未发送的 final assistant，插入新 user 后继续推理
-- 运行期异常记录观测后返回固定兜底回复，并提交本轮 user + fallback assistant，因为这条回复会实际发给用户
+- stop 分支若发现 queued user messages，不提交当前 final reply，直接插入新 user 后继续推理
+- 生成异常和最终 XML 非法统一视为“本轮生成失败”，按同一预算重试；预算耗尽后提交固定兜底回复
+- memory 压缩只在正常成功回复后触发；fallback 回复属于失败收口，不触发成功 chat 计数
 
 ### 3.4 LLM 客户端（`LlmClient`）
 
@@ -192,10 +206,12 @@ agent.chat.run (chain)
 ## 4. 异常处理
 
 - `LlmClient.generate()`：不捕获异常，直接向上抛
-- `Agent.run()`：通用异常记录观测后返回固定 XML 兜底回复
+- `Agent.run()`：通用异常记录观测后返回固定 XML 兜底回复；最终 XML 非法也走同一条异常收口
 - `Router.chat()`：统一捕获、记录日志、返回 HTTP 错误
 - 工具调用失败：写入 `tool` 错误消息，不中断回合
 - Langfuse 异常：降级吞掉，不中断主链路
+- memory 读取失败：不注入记忆，不中断主链路
+- memory 压缩失败：不裁剪历史，不中断主链路
 
 ## 5. 配置项
 
@@ -207,11 +223,15 @@ agent.chat.run (chain)
 | `agent.max_turns` | int | 最大推理轮次 |
 | `agent.temperature` | float | LLM 温度 |
 | `agent.llm_timeout` | float | LLM 请求超时（秒） |
-| `agent.llm_max_retries` | int | LLM 请求重试次数；当前配置为 3，全部失败后返回固定兜底回复 |
+| `agent.llm_max_retries` | int | 统一生成失败重试次数；同时作用于 OpenAI SDK 请求重试和 agent 单轮生成重试，预算耗尽后返回固定兜底回复 |
 | `agent.openai_api_key` | str | OpenAI 兼容 API Key |
 | `agent.openai_base_url` | str | OpenAI 兼容 API 地址 |
 | `agent.mcp_sse_url` | str | MCP SSE 网关地址 |
 | `agent.mcp_auth_token` | str | MCP 鉴权令牌 |
+| `agent.memory_enabled` | bool | 是否启用 memory-service |
+| `agent.memory_base_url` | str | memory-service HTTP 地址 |
+| `agent.memory_compress_every_n_chats` | int | 每多少次成功 chat 后压缩一次，默认 `10` |
+| `agent.memory_timeout` | float | memory-service HTTP 请求超时（秒） |
 | `agent.langfuse.enabled` | bool | 是否启用 Langfuse |
 | `agent.langfuse.host` | str | Langfuse 地址 |
 | `agent.langfuse.public_key` | str | Langfuse 公钥 |
@@ -240,5 +260,7 @@ agent.chat.run (chain)
 
 - 会话全内存：不支持多副本和重启恢复
 - `/sessions` 无回收机制：长期运行可能内存增长
-- `llm_max_retries=3`：瞬时连接失败优先由 SDK 重试，全部失败后返回固定兜底回复
+- `llm_max_retries=3`：同时覆盖 SDK 请求失败与最终 XML 非法两类生成失败，统一重试后仍失败则返回固定兜底回复
 - agent 只理解 AICHAN XML，不直接理解 OneBot v11 原始事件
+- 长期记忆读取和压缩都同步执行；第 10 次成功 chat 会增加一次 memory-service 调用延迟
+

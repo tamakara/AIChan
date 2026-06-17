@@ -12,6 +12,7 @@ members = [
     "aichan",
     "file-service",
     "hub-service",
+    "memory-service",
     "tool-mcp-server",
 ]
 
@@ -22,6 +23,7 @@ source = { editable = "agent-service" }
 dependencies = [
     { name = "anyio" },
     { name = "fastapi" },
+    { name = "httpx" },
     { name = "langfuse" },
     { name = "mcp" },
     { name = "openai" },
@@ -40,6 +42,7 @@ test = [
 requires-dist = [
     { name = "anyio", specifier = ">=4.6.2" },
     { name = "fastapi", specifier = ">=0.115.6" },
+    { name = "httpx", specifier = ">=0.28.1" },
     { name = "langfuse", specifier = ">=3.0.0" },
     { name = "mcp", specifier = ">=1.13.0" },
     { name = "openai", specifier = ">=1.65.0" },
@@ -729,6 +732,36 @@ sdist = { url = "https://files.pythonhosted.org/packages/8b/eb/c0cfc62075dc6e1ec
 wheels = [
     { url = "https://files.pythonhosted.org/packages/9c/46/f6b4ad632c67ef35209a66127e4bddc95759649dd595f71f13fba11bdf9a/mcp-1.27.0-py3-none-any.whl", hash = "sha256:5ce1fa81614958e267b21fb2aa34e0aea8e2c6ede60d52aba45fd47246b4d741", size = 215967, upload-time = "2026-04-02T14:48:07.24Z" },
 ]
+
+[[package]]
+name = "memory-service"
+version = "0.1.0"
+source = { editable = "memory-service" }
+dependencies = [
+    { name = "fastapi" },
+    { name = "openai" },
+    { name = "pydantic" },
+    { name = "pydantic-settings" },
+    { name = "pyyaml" },
+    { name = "uvicorn", extra = ["standard"] },
+]
+
+[package.optional-dependencies]
+test = [
+    { name = "pytest" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "fastapi", specifier = ">=0.115.6" },
+    { name = "openai", specifier = ">=1.65.0" },
+    { name = "pydantic", specifier = ">=2.11.7" },
+    { name = "pydantic-settings", specifier = ">=2.14.0" },
+    { name = "pytest", marker = "extra == 'test'", specifier = ">=8.3.4" },
+    { name = "pyyaml", specifier = ">=6.0.3" },
+    { name = "uvicorn", extras = ["standard"], specifier = ">=0.34.0" },
+]
+provides-extras = ["test"]
 
 [[package]]
 name = "minio"

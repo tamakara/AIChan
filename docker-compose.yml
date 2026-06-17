@@ -23,7 +23,10 @@ services:
       context: ./agent-service
     restart: unless-stopped
     depends_on:
-      - mcp-gateway
+      mcp-gateway:
+        condition: service_started
+      memory-service:
+        condition: service_healthy
     environment:
       AGENT__MODEL: "${AGENT__MODEL:?AGENT__MODEL is required}"
       AGENT__OPENAI_API_KEY: "${AGENT__OPENAI_API_KEY:?AGENT__OPENAI_API_KEY is required}"
@@ -36,6 +39,30 @@ services:
       - ./agent-service/config.yml:/app/agent-service/config.yml:ro
     ports:
       - "18000:8000"
+
+  memory-service:
+    build:
+      context: ./memory-service
+    restart: unless-stopped
+    environment:
+      MEMORY__MODEL: "${MEMORY__MODEL:?MEMORY__MODEL is required}"
+      MEMORY__OPENAI_API_KEY: "${MEMORY__OPENAI_API_KEY:?MEMORY__OPENAI_API_KEY is required}"
+      MEMORY__OPENAI_BASE_URL: "${MEMORY__OPENAI_BASE_URL:-https://api.xiaomimimo.com/v1}"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import socket; sock = socket.create_connection(('127.0.0.1', 8050), 2); sock.close()"
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
+    volumes:
+      - ./memory-service/config.yml:/app/memory-service/config.yml:ro
+      - memory-service-data:/data/memories
+    ports:
+      - "18050:8050"
 
   tool-mcp-server:
     image: tool-mcp-server:latest
@@ -140,3 +167,4 @@ services:
 volumes:
   minio-data:
   file-service-data:
+  memory-service-data:

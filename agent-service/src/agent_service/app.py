@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 
-from .services import Agent, LlmClient, McpGateway, SessionRegistry, create_observability
+from .services import Agent, HttpMemoryClient, LlmClient, McpGateway, SessionRegistry, create_observability
 from .config import get_settings
 from .router import create_router
 
@@ -24,12 +24,21 @@ def create_app() -> FastAPI:
     )
     mcp_gateway.register_mcp_server()
 
+    memory_client = HttpMemoryClient(
+        base_url=settings.agent.memory_base_url,
+        timeout=settings.agent.memory_timeout,
+    )
+
     agent = Agent(
         llm_client=llm_client,
         mcp_gateway=mcp_gateway,
         max_turns=settings.agent.max_turns,
+        max_retries=settings.agent.llm_max_retries,
         temperature=settings.agent.temperature,
         observability=observability,
+        memory_client=memory_client,
+        memory_enabled=settings.agent.memory_enabled,
+        memory_compress_every_n_chats=settings.agent.memory_compress_every_n_chats,
     )
 
     session_registry = SessionRegistry(max_turns=settings.agent.max_turns)

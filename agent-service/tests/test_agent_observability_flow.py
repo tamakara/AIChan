@@ -84,6 +84,7 @@ def test_agent_reports_full_observability_flow() -> None:
         llm_client=llm,
         mcp_gateway=StubMcpGateway(),
         max_turns=3,
+        max_retries=1,
         temperature=0.0,
         observability=observability,
     )
@@ -117,6 +118,7 @@ def test_agent_reports_failed_tool_span_but_can_continue() -> None:
         llm_client=llm,
         mcp_gateway=StubMcpGateway(),
         max_turns=3,
+        max_retries=1,
         temperature=0.0,
         observability=observability,
     )
