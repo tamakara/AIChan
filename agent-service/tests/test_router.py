@@ -187,7 +187,7 @@ def test_chat_uses_existing_session_and_injects_context() -> None:
 
     session = registry.get(session_id)
     assert session is not None
-    persisted_messages = session._context.messages  # noqa: SLF001
+    persisted_messages = session.messages
     assert len(persisted_messages) == 5
     assert persisted_messages[4]["role"] == "assistant"
 

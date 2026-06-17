@@ -60,7 +60,7 @@ class AgentSettings(BaseModel):
     mcp_auth_token: StrictStr
     memory_enabled: StrictBool
     memory_base_url: StrictStr
-    memory_compress_every_n_chats: StrictInt
+    memory_compress_every_n_records: StrictInt
     memory_timeout: float
     llm_timeout: float
     llm_max_retries: StrictInt
@@ -94,9 +94,9 @@ class AgentSettings(BaseModel):
             raise ValueError("必须大于 0")
         return float(value)
 
-    @field_validator("memory_compress_every_n_chats", mode="before")
+    @field_validator("memory_compress_every_n_records", mode="before")
     @classmethod
-    def _validate_memory_compress_every_n_chats(cls, value: Any) -> int:
+    def _validate_memory_compress_every_n_records(cls, value: Any) -> int:
         if isinstance(value, str):
             try:
                 value = int(value)

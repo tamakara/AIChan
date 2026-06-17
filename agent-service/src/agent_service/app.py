@@ -38,7 +38,7 @@ def create_app() -> FastAPI:
         observability=observability,
         memory_client=memory_client,
         memory_enabled=settings.agent.memory_enabled,
-        memory_compress_every_n_chats=settings.agent.memory_compress_every_n_chats,
+        memory_compress_every_n_records=settings.agent.memory_compress_every_n_records,
     )
 
     session_registry = SessionRegistry(max_turns=settings.agent.max_turns)

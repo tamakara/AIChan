@@ -5,7 +5,7 @@ from openai.types.chat.chat_completion_message_function_tool_call import Functio
 
 from agent_service.services.agent import Agent
 from agent_service.services.memory_client import MemoryCompressResult
-from agent_service.services.observability import NoopObservability
+from agent_service.services.observability import NoopObservability, RunTrace
 from agent_service.services.session import SessionRegistry
 from agent_service.services.types.llm import LlmResponse
 
@@ -85,6 +85,70 @@ class StubMemoryClient:
         return self.compress_result
 
 
+class RecordingObservability:
+    def __init__(self) -> None:
+        self.llm_inputs: list[list[object]] = []
+
+    def start_run(
+        self,
+        *,
+        session_id: str,
+        message_count: int,
+        max_turns: int,
+        agent_metadata: dict[str, object],
+    ) -> RunTrace:
+        return RunTrace(run_id="run_1", trace_name="agent.chat.run")
+
+    def llm_generation(
+        self,
+        *,
+        run: RunTrace,
+        turn: int,
+        input_messages: list[object],
+        output_content: str,
+        output_tool_calls: list[object],
+        finish_reason: str,
+        model: str,
+        duration_ms: int,
+    ) -> None:
+        self.llm_inputs.append(list(input_messages))
+
+    def tool_span(
+        self,
+        *,
+        run: RunTrace,
+        turn: int,
+        tool_name: str,
+        tool_args: dict[str, object],
+        status: str,
+        error: str | None,
+        duration_ms: int,
+        output: str | None,
+    ) -> None:
+        return
+
+    def finish_run_success(
+        self,
+        *,
+        run: RunTrace,
+        output: object,
+        duration_ms: int,
+    ) -> None:
+        return
+
+    def finish_run_error(
+        self,
+        *,
+        run: RunTrace,
+        error: str,
+        duration_ms: int,
+    ) -> None:
+        return
+
+    def flush(self, timeout_seconds: float) -> None:
+        return
+
+
 def _build_agent() -> Agent:
     return Agent(  # type: ignore[arg-type]
         llm_client=StubLlmClient(),
@@ -111,7 +175,7 @@ def _build_agent_with_memory(
         observability=NoopObservability(),
         memory_client=memory_client or StubMemoryClient(),
         memory_enabled=True,
-        memory_compress_every_n_chats=compress_every,
+        memory_compress_every_n_records=compress_every,
     )
 
 
@@ -173,7 +237,7 @@ def test_agent_run_session() -> None:
     )
 
     assert reply.output_xml == "<reply><text>ok</text></reply>"
-    assert [msg["role"] for msg in session._context.messages] == [  # noqa: SLF001
+    assert [msg["role"] for msg in session.messages] == [
         "system",
         "system",
         "system",
@@ -206,7 +270,7 @@ def test_agent_run_commits_normalized_reply_when_llm_returns_broken_xml() -> Non
     )
 
     assert reply.output_xml == "<reply><text>fixed</text></reply>"
-    assert session._context.messages[-1]["content"] == reply.output_xml  # noqa: SLF001
+    assert session.messages[-1]["content"] == reply.output_xml
     assert len(llm_client.calls) == 2
 
 
@@ -236,7 +300,7 @@ def test_agent_run_returns_fallback_when_invalid_xml_retries_exhausted() -> None
     assert reply.output_xml == (
         "<reply><text>笨蛋，刚才脑袋短路了一下，稍后再试试喵。</text></reply>"
     )
-    assert session._context.messages[-1]["content"] == reply.output_xml  # noqa: SLF001
+    assert session.messages[-1]["content"] == reply.output_xml
 
 
 def test_session_system_message_contains_metadata() -> None:
@@ -246,7 +310,7 @@ def test_session_system_message_contains_metadata() -> None:
         metadata={"platform": "qq", "session_type": "group", "group_id": 20001, "self_id": 10001},
     )
 
-    assert session._context.messages[1]["content"] == (  # noqa: SLF001
+    assert session.messages[1]["content"] == (
         '<session session_id="group_20001" max_turn="3" '
         'platform="qq" session_type="group" group_id="20001" self_id="10001" />'
     )
@@ -303,7 +367,7 @@ def test_stop_with_queued_message_drops_final_reply_and_continues() -> None:
     second_call_contents = [str(msg["content"]) for msg in llm_client.calls[1]]
     assert "<reply><text>old</text></reply>" not in second_call_contents
     assert "<messages><message><text>queued</text></message></messages>" in second_call_contents
-    persisted_contents = [str(msg["content"]) for msg in session._context.messages]  # noqa: SLF001
+    persisted_contents = [str(msg["content"]) for msg in session.messages]
     assert "<reply><text>old</text></reply>" not in persisted_contents
     assert "<reply><text>new</text></reply>" in persisted_contents
 
@@ -371,7 +435,7 @@ def test_agent_run_failure_commits_user_and_fallback_reply() -> None:
     assert reply.output_xml == (
         "<reply><text>笨蛋，刚才脑袋短路了一下，稍后再试试喵。</text></reply>"
     )
-    assert [msg["role"] for msg in session._context.messages] == [  # noqa: SLF001
+    assert [msg["role"] for msg in session.messages] == [
         "system",
         "system",
         "system",
@@ -450,24 +514,120 @@ def test_agent_compresses_and_trims_records_after_threshold() -> None:
     assert "<turn " not in messages_text
     assert "<session " not in messages_text
     assert "以下是该会话的长期记忆" not in messages_text
-    assert [msg["role"] for msg in session._context.messages] == ["system", "system", "system"]  # noqa: SLF001
-    assert "- 新记忆" in str(session._context.messages[2]["content"])  # noqa: SLF001
+    assert [msg["role"] for msg in session.messages] == ["system", "system", "system"]
+    memory_message = session.memory_message_locked()
+    assert memory_message is not None
+    assert "- 新记忆" in str(memory_message["content"])
+
+
+def test_agent_compresses_when_record_count_reaches_threshold() -> None:
+    memory_client = StubMemoryClient(
+        reads=["- 旧记忆\n"],
+        compress_result=MemoryCompressResult(
+            content_markdown="- 旧记忆\n- 新记忆\n",
+            added_markdown="- 新记忆",
+            added_count=1,
+        ),
+    )
+    agent = _build_agent_with_memory(memory_client=memory_client, compress_every=3)
+    registry = _build_registry()
+    session = registry.create(session_id="private_1", metadata={"session_type": "private"})
+
+    agent.run(session=session, user_message="hello")
+
+    assert len(memory_client.compress_calls) == 1
+    assert session.record_message_count_locked() == 0
+
+
+def test_next_run_after_compress_only_contains_system_memory_and_new_input() -> None:
+    memory_client = StubMemoryClient(
+        reads=["- 旧记忆\n", "- 旧记忆\n- 新记忆\n"],
+        compress_result=MemoryCompressResult(
+            content_markdown="- 旧记忆\n- 新记忆\n",
+            added_markdown="- 新记忆",
+            added_count=1,
+        ),
+    )
+    llm_client = StubLlmClient()
+    agent = _build_agent_with_memory(
+        llm_client=llm_client,
+        memory_client=memory_client,
+        compress_every=3,
+    )
+    registry = _build_registry()
+    session = registry.create(session_id="private_1", metadata={"session_type": "private"})
+
+    agent.run(session=session, user_message="hello")
+    agent.run(session=session, user_message="again")
+
+    second_call_messages = llm_client.calls[1][0]
+    second_call_contents = [str(msg["content"]) for msg in second_call_messages]
+    second_call_roles = [msg["role"] for msg in second_call_messages]
+
+    assert second_call_roles == ["system", "system", "system", "system", "user"]
+    assert "hello" not in second_call_contents[-1]
+    assert "<reply><text>ok</text></reply>" not in second_call_contents
+    assert "- 新记忆" in str(second_call_messages[2]["content"])
+    assert second_call_contents[3] == '<turn index="1" />'
+    assert second_call_contents[4] == "again"
 
 
 def test_agent_keeps_records_when_compress_fails_and_waits_next_cycle() -> None:
     memory_client = StubMemoryClient(reads=[""], fail_compress=True)
-    agent = _build_agent_with_memory(memory_client=memory_client, compress_every=2)
+    agent = _build_agent_with_memory(memory_client=memory_client, compress_every=3)
     registry = _build_registry()
     session = registry.create(session_id="private_1", metadata={"session_type": "private"})
 
     agent.run(session=session, user_message="first")
+    after_failure_len = len(session.messages)
     agent.run(session=session, user_message="second")
-    after_failure_len = len(session._context.messages)  # noqa: SLF001
-    agent.run(session=session, user_message="third")
 
-    assert len(memory_client.compress_calls) == 1
-    assert len(session._context.messages) > 3  # noqa: SLF001
-    assert len(session._context.messages) > after_failure_len  # noqa: SLF001
+    assert len(memory_client.compress_calls) == 2
+    assert len(session.messages) > 3
+    assert len(session.messages) > after_failure_len
+
+
+def test_langfuse_input_messages_match_actual_llm_input_after_compress() -> None:
+    memory_client = StubMemoryClient(
+        reads=["- 旧记忆\n", "- 旧记忆\n- 新记忆\n"],
+        compress_result=MemoryCompressResult(
+            content_markdown="- 旧记忆\n- 新记忆\n",
+            added_markdown="- 新记忆",
+            added_count=1,
+        ),
+    )
+    llm_client = StubLlmClient()
+    observability = RecordingObservability()
+    agent = Agent(  # type: ignore[arg-type]
+        llm_client=llm_client,
+        mcp_gateway=StubMcpGateway(),
+        max_turns=3,
+        max_retries=1,
+        temperature=0.0,
+        observability=observability,
+        memory_client=memory_client,
+        memory_enabled=True,
+        memory_compress_every_n_records=3,
+    )
+    registry = _build_registry()
+    session = registry.create(session_id="private_1", metadata={"session_type": "private"})
+
+    agent.run(session=session, user_message="hello")
+    agent.run(session=session, user_message="again")
+
+    llm_second_call = llm_client.calls[1][0]
+    observed_second_call = observability.llm_inputs[1]
+
+    assert observed_second_call == llm_second_call
+    assert [msg["role"] for msg in observed_second_call] == [
+        "system",
+        "system",
+        "system",
+        "system",
+        "user",
+    ]
+
+
 
 
 

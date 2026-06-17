@@ -34,7 +34,7 @@ class Agent:
         observability: Observability,
         memory_client: MemoryClient | None = None,
         memory_enabled: bool = False,
-        memory_compress_every_n_chats: int = 10,
+        memory_compress_every_n_records: int = 10,
     ) -> None:
         self._llm_client = llm_client
         self._mcp_gateway = mcp_gateway
@@ -44,7 +44,7 @@ class Agent:
         self._observability = observability
         self._memory_client = memory_client
         self._memory_enabled = memory_enabled
-        self._memory_compress_every_n_chats = memory_compress_every_n_chats
+        self._memory_compress_every_n_records = memory_compress_every_n_records
 
     def run(self, session: Session, user_message: str) -> AgentReply:
         """在指定 Session 上执行一轮推理循环，返回 AICHAN XML 回复。"""
@@ -200,7 +200,9 @@ class Agent:
         if not self._memory_enabled or self._memory_client is None:
             return
         with session._lock:
-            should_compress = session.mark_chat_completed_locked(self._memory_compress_every_n_chats)
+            should_compress = session.should_compress_records_locked(
+                self._memory_compress_every_n_records
+            )
             if not should_compress:
                 return
             messages_text = session.record_messages_text_locked()

@@ -16,7 +16,7 @@ def _base_settings_payload() -> dict:
             "openai_base_url": "https://example.com/v1",
             "memory_enabled": True,
             "memory_base_url": "http://memory-service:8050",
-            "memory_compress_every_n_chats": 10,
+            "memory_compress_every_n_records": 10,
             "memory_timeout": 10.0,
             "llm_timeout": 30.0,
             "llm_max_retries": 0,
@@ -76,7 +76,7 @@ agent:
   openai_base_url: https://yaml.example/v1
   memory_enabled: true
   memory_base_url: http://memory-service:8050
-  memory_compress_every_n_chats: 10
+  memory_compress_every_n_records: 10
   memory_timeout: 10.0
   llm_timeout: 30.0
   llm_max_retries: 0

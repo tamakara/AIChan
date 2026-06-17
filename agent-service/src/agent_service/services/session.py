@@ -29,12 +29,12 @@ class Session:
         self._lock = Lock()
         self._queued_user_messages: list[str] = []
         self._record_entries: list[RecordEntry] = []
-        self._completed_chat_count = 0
-        self._memory_enabled = False
-        self._context = Context()
-        # 系统提示词 + 会话标识
-        self._context.add_message(role="system", content=SYSTEM_PROMPT)
-        self._context.add_message(
+        self._memory_message: Message | None = None
+        # 上下文拆成系统层、记忆层、记录层三部分管理，避免压缩阈值和清理逻辑依赖魔法切片。
+        self._system_messages = Context()
+        self._record_context = Context()
+        self._system_messages.add_message(role="system", content=SYSTEM_PROMPT)
+        self._system_messages.add_message(
             role="system",
             content=_session_xml(
                 session_id=session_id,
@@ -45,33 +45,26 @@ class Session:
 
     @property
     def messages(self) -> list[Message]:
-        return self._context.messages
+        return self._all_messages_locked()
 
     def render_input_messages_locked(self, staged_messages: list[Message]) -> list[Message]:
-        return list(self._context.messages) + list(staged_messages)
+        return self._all_messages_locked() + list(staged_messages)
 
     def message_count_locked(self, pending_user_message_count: int) -> int:
-        return len(self._context.messages) + pending_user_message_count
+        return len(self._all_messages_locked()) + pending_user_message_count
 
     def set_memory_markdown_locked(self, memory_markdown: str) -> None:
         content = _memory_system_message(memory_markdown)
-        if self._memory_enabled:
-            self._context.messages[2] = {"role": "system", "content": content}
-            return
-        self._context.messages.insert(2, {"role": "system", "content": content})
-        self._memory_enabled = True
+        self._memory_message = {"role": "system", "content": content}
 
     def clear_memory_locked(self) -> None:
-        if not self._memory_enabled:
-            return
-        del self._context.messages[2]
-        self._memory_enabled = False
+        self._memory_message = None
 
     def append_record_messages_locked(self, messages: list[Message]) -> None:
         for message in messages:
             # 记忆压缩依赖的是“当时看见的记录”，所以这里先冻结一份消息快照并带上本地时间。
             # 这样后续即使会话上下文继续增长，已写入记忆日志的每行时间和内容都不会漂移。
-            self._context.messages.append(message)
+            self._record_context.messages.append(message)
             self._record_entries.append(
                 RecordEntry(recorded_at=_current_recorded_at(), message=dict(message))
             )
@@ -85,18 +78,14 @@ class Session:
             lines.extend(_format_record_entry_lines(entry))
         return "\n".join(lines)
 
-    def mark_chat_completed_locked(self, compress_every_n_chats: int) -> bool:
-        self._completed_chat_count += 1
-        if compress_every_n_chats <= 0:
+    def should_compress_records_locked(self, compress_every_n_records: int) -> bool:
+        if compress_every_n_records <= 0:
             return False
-        if self._completed_chat_count < compress_every_n_chats:
-            return False
-        self._completed_chat_count = 0
-        return True
+        return len(self._record_context.messages) >= compress_every_n_records
 
     def replace_memory_and_clear_records_locked(self, memory_markdown: str) -> None:
         self.set_memory_markdown_locked(memory_markdown)
-        del self._context.messages[self._record_start_index :]
+        self._record_context.messages.clear()
         self._record_entries.clear()
 
     def queue_user_message(self, user_message: str) -> None:
@@ -116,9 +105,18 @@ class Session:
     def metadata(self) -> dict[str, Any]:
         return dict(self._metadata)
 
-    @property
-    def _record_start_index(self) -> int:
-        return 3 if self._memory_enabled else 2
+    def record_message_count_locked(self) -> int:
+        return len(self._record_context.messages)
+
+    def memory_message_locked(self) -> Message | None:
+        return self._memory_message
+
+    def _all_messages_locked(self) -> list[Message]:
+        messages = list(self._system_messages.messages)
+        if self._memory_message is not None:
+            messages.append(self._memory_message)
+        messages.extend(self._record_context.messages)
+        return messages
 
 
 class SessionRegistry:

@@ -44,7 +44,7 @@ AICHAN 是一个基于 NapCat + OneBot v11 接入的 QQ 私聊/群聊助理系�
   → agent-service 读取 memory-service，将该会话 markdown 作为 memory system message 注入
   → Agent 多轮 LLM 推理 + MCP 工具调用
   → LLM 输出 <reply>
-  → 每 10 次成功 chat 后，agent-service 将普通消息记录提交给 memory-service 压缩，成功后裁剪历史
+  → 当记录层条目数达到阈值时，agent-service 将普通消息记录提交给 memory-service 压缩，成功后只清空记录层并保留系统层与记忆层
   → agent-service 返回 {output_xml}
   → hub-service 转换为 OneBot v11 消息段 / 文件上传动作
   → NapCat WS send_action(send_private_msg/send_group_msg/upload_*_file)

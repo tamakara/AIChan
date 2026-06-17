@@ -109,9 +109,9 @@ LLM 最终回复必须是 `<reply>`，`<reply>` 下只能包含一个或多个 `
 ### 2.5 对外消费（memory-service）
 
 - `GET /api/v1/memories/{session_id}`：每次 `Agent.run()` 开始前读取最新 markdown 记忆
-- `POST /api/v1/memories/{session_id}/compress`：每 10 次成功 chat 后提交普通消息记录层的时间序日志文本（格式为 `[time] role: content`）
+- `POST /api/v1/memories/{session_id}/compress`：当普通消息记录层条目数达到 `agent.memory_compress_every_n_records` 后，提交时间序日志文本（格式为 `[time] role: content`）
 - 读取失败：清除当前会话 memory system message，本轮不注入记忆
-- 压缩失败：保留普通消息记录层，不裁剪历史，并等下一个 10 次成功 chat 周期再尝试
+- 压缩失败：保留普通消息记录层，不裁剪历史；后续运行只要记录层仍达到阈值，就会继续尝试压缩
 
 ## 3. 核心数据模型
 
@@ -119,16 +119,18 @@ LLM 最终回复必须是 `<reply>`，`<reply>` 下只能包含一个或多个 `
 
 - `session_id: str` — 会话标识
 - `metadata: dict` — 创建时快照
-- `_context: Context` — 消息历史
+- `_system_messages: Context` — 系统层，只包含初始 system prompt 和 `<session ... />`
+- `_memory_message: Message | None` — 记忆层，只保留当前最新长期记忆 system message
+- `_record_context: Context` — 记录层，保存 `<turn />`、user、assistant、tool 等会话过程消息
+- `_record_entries: list[RecordEntry]` — 记录层对应的时间戳日志快照，供 memory 压缩使用
 - `_queued_user_messages: list[str]` — 运行中追加的新用户 XML 消息队列
-- `_completed_chat_count: int` — 自上次压缩尝试后的成功 chat 计数
 - `_lock` — 线程锁，仅在修改 Context 时短暂持有
 
 初始化时写入两条 system 消息：
 - `SYSTEM_PROMPT`
 - `<session session_id="..." max_turn="..." ... />`，包含 `session_id`、最大推理轮次，以及 metadata 中的 `platform/session_type/user_id|group_id/self_id`
 
-memory 读取成功后会在第 3 条插入或覆盖长期记忆 system message。普通消息记录层仍保留在 `_context` 中，包括 `<turn />`、user、assistant、tool 消息；但提交给 memory-service 的 `record_messages_text_locked()` 会把它们整理成带时间戳的逐行日志，并过滤掉 `<turn />` 这类纯结构分隔符。压缩成功后只清空普通消息记录层和对应日志快照，保留系统层和最新 memory 层。
+memory 读取成功后会在系统层后插入或覆盖长期记忆 system message。最终发给 LLM 的输入固定按“系统层 → 记忆层 → 记录层 → 本轮 staged 输入”拼装。普通消息记录层会保留 `<turn />`、user、assistant、tool 消息；但提交给 memory-service 的 `record_messages_text_locked()` 会把它们整理成带时间戳的逐行日志，并过滤掉 `<turn />` 这类纯结构分隔符。压缩成功后只清空记录层和对应日志快照，保留系统层和最新记忆层。
 
 ### 3.2 上下文（`Context`）
 
@@ -143,7 +145,7 @@ pending_user_messages = [input_xml]
   → for turn in max_turns:
     → staged add_message("system", "<turn index=... />")
     → staged add_message("user") × pending_user_messages
-    → generate with retry(context.messages + staged_messages)
+    → generate with retry(system层 + memory层 + record层 + staged_messages)
     → if finish_reason == "stop":
         → drain queued_user_messages
         → if 有 queued:
@@ -152,7 +154,7 @@ pending_user_messages = [input_xml]
         → else:
             → staged add_message("assistant")   # 只在最终 XML 合法且真正发送时提交
             → commit staged_messages
-            → 成功 chat 计数 +1；达到阈值则提交普通消息记录层给 memory-service 压缩
+            → 若记录层条目数达到阈值，则提交普通消息记录层给 memory-service 压缩
             → finish_run_success()    # 上报观测
             → return AgentReply(output_xml)
     → if finish_reason == "tool_calls":
@@ -167,11 +169,12 @@ pending_user_messages = [input_xml]
 关键设计：
 - LLM 调用期间不持锁；`/queue-message` 可以在运行中安全追加同会话用户消息
 - 本轮 user/assistant/tool 消息先暂存在 staged messages，成功返回最终 `<reply>` 时一次性提交
-- 每轮先写入 `<turn index="..."/>` system 消息，再写入本轮待处理 user messages；该 turn 消息会作为普通上下文持久化，但不会进入提交给 memory-service 的日志文本
+- 每轮先写入 `<turn index="..."/>` system 消息，再写入本轮待处理 user messages；该 turn 消息会进入记录层，参与压缩阈值计数，但不会进入提交给 memory-service 的日志文本
 - tool-call 分支先写入所有 tool result，queued user messages 延后到下一轮 `<turn>` 之后写入，保持 OpenAI tool-call 消息顺序合法
 - stop 分支若发现 queued user messages，不提交当前 final reply，直接插入新 user 后继续推理
 - 生成异常和最终 XML 非法统一视为“本轮生成失败”，按同一预算重试；预算耗尽后提交固定兜底回复
-- memory 压缩只在正常成功回复后触发；fallback 回复属于失败收口，不触发成功 chat 计数
+- memory 压缩只在正常成功回复后触发；fallback 回复属于失败收口，不会额外触发压缩
+- `agent.memory_compress_every_n_records=10` 的 `10` 只统计记录层条目数，不包含初始 system prompt，也不包含长期记忆 system message
 
 ### 3.4 LLM 客户端（`LlmClient`）
 
@@ -230,7 +233,7 @@ agent.chat.run (chain)
 | `agent.mcp_auth_token` | str | MCP 鉴权令牌 |
 | `agent.memory_enabled` | bool | 是否启用 memory-service |
 | `agent.memory_base_url` | str | memory-service HTTP 地址 |
-| `agent.memory_compress_every_n_chats` | int | 每多少次成功 chat 后压缩一次，默认 `10` |
+| `agent.memory_compress_every_n_records` | int | 记录层条目数达到多少后压缩一次，默认 `10`；只统计 `<turn />`、`user`、`assistant`、`tool` 等会话记录，不包含系统层和记忆层 |
 | `agent.memory_timeout` | float | memory-service HTTP 请求超时（秒） |
 | `agent.langfuse.enabled` | bool | 是否启用 Langfuse |
 | `agent.langfuse.host` | str | Langfuse 地址 |
@@ -262,5 +265,5 @@ agent.chat.run (chain)
 - `/sessions` 无回收机制：长期运行可能内存增长
 - `llm_max_retries=3`：同时覆盖 SDK 请求失败与最终 XML 非法两类生成失败，统一重试后仍失败则返回固定兜底回复
 - agent 只理解 AICHAN XML，不直接理解 OneBot v11 原始事件
-- 长期记忆读取和压缩都同步执行；第 10 次成功 chat 会增加一次 memory-service 调用延迟
+- 长期记忆读取和压缩都同步执行；记录层达到阈值的那次成功回复会增加一次 memory-service 调用延迟
 
