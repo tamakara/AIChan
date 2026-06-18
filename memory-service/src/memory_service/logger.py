@@ -8,10 +8,13 @@ EVENT_LABELS = {
     "memory_app.boot": "记忆服务初始化",
     "memory_app.ready": "记忆服务启动完成",
     "memory.compress_completed": "记忆压缩完成",
+    "memory.user_memory_updated": "用户记忆更新完成",
+    "memory.user_memory_failed": "用户记忆更新失败",
 }
 FIELD_LABELS = {
     "root_dir": "目录",
     "session_id": "会话",
+    "user_id": "用户",
     "added_count": "新增条目",
     "elapsed_ms": "耗时",
 }
@@ -20,6 +23,8 @@ EVENT_HIGHLIGHT_KEYS = {
     "memory_app.boot": ("root_dir",),
     "memory_app.ready": ("elapsed_ms",),
     "memory.compress_completed": ("session_id", "added_count", "elapsed_ms"),
+    "memory.user_memory_updated": ("user_id", "elapsed_ms"),
+    "memory.user_memory_failed": ("user_id",),
 }
 
 
@@ -45,6 +50,10 @@ def elapsed_ms(started_at: float) -> int:
 
 def log_info(logger: logging.Logger, event: str, **fields: Any) -> None:
     logger.info(_build_log_message(event, fields))
+
+
+def log_exception(logger: logging.Logger, event: str, **fields: Any) -> None:
+    logger.exception(_build_log_message(event, fields))
 
 
 def _build_log_message(event: str, fields: dict[str, Any]) -> str:

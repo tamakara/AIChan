@@ -2,7 +2,7 @@
 
 ## 1. 模块定位
 
-`tool-mcp-server` 是 AICHAN 自定义 MCP 工具层。它不直接连接 NapCat，不持有 MinIO 凭证；QQ 查询通过 HTTP 调用 `hub-service`，文件读取、图片理解和视频理解通过 HTTP 调用 `file-service`。
+`tool-mcp-server` 是 AICHAN 自定义 MCP 工具层。它不直接连接 NapCat，不持有 MinIO 凭证；QQ 查询通过 HTTP 调用 `hub-service`，文件读取、图片理解和视频理解通过 HTTP 调用 `file-service`，用户长期记忆检索通过 HTTP 调用 `memory-service`。
 
 ## 2. 启动方式
 
@@ -22,6 +22,7 @@ MCP Gateway 通过 `tool-mcp-server/docker-mcp-catalog.yml` 中的 remote server
 | `qq_get_user_info` | 查询用户信息，调用 hub-service |
 | `file_get_metadata` | 根据 SHA-256 `object_key` 查询文件元数据，调用 file-service |
 | `file_read_text` | 根据 SHA-256 `object_key` 读取文本类文件，非文本由 file-service 返回 422 |
+| `memory_get_user_memory` | 根据 `user_id` 读取 memory-service 内化后的用户长期记忆 |
 | `image_describe` | 根据 SHA-256 `object_key` 读取图片 bytes，调用独立 vision 模型生成描述或回答问题 |
 | `video_describe` | 根据 SHA-256 `object_key` 读取视频 bytes，抽取关键帧后调用独立 vision 模型生成描述或回答问题 |
 
@@ -59,14 +60,15 @@ MCP Gateway 通过 `tool-mcp-server/docker-mcp-catalog.yml` 中的 remote server
 | `server.port` | int | HTTP 健康检查服务监听端口 |
 | `mcp.qq_base_url` | str | hub-service HTTP API 地址，当前指向 `http://hub-service:8020` |
 | `mcp.file_base_url` | str | file-service HTTP API 地址，当前指向 `http://file-service:8040` |
-| `mcp.timeout_seconds` | float | 调用 hub-service/file-service 的超时秒数 |
+| `mcp.memory_base_url` | str | memory-service HTTP API 地址，当前指向 `http://memory-service:8050` |
+| `mcp.timeout_seconds` | float | 调用 hub-service/file-service/memory-service 的超时秒数 |
 | `vision.openai_base_url` | str | OpenAI 兼容 vision API 地址 |
 | `vision.openai_api_key` | str | vision API Key |
 | `vision.model` | str | vision 模型名 |
 | `vision.timeout_seconds` | float | vision 请求超时秒数 |
 | `vision.video_frame_count` | int | 视频理解抽帧数量，范围 1-12 |
 
-配置加载由 `pydantic-settings` 统一处理，优先级为：显式初始化参数 > 环境变量 > 根目录 `.env` > `tool-mcp-server/config.yml`。内部 `mcp.qq_base_url`、`mcp.file_base_url` 和 timeout 固定维护在 `config.yml`；vision 把 key、base URL、模型名和视频抽帧数量放到环境变量，例如 `VISION__OPENAI_API_KEY`、`VISION__OPENAI_BASE_URL`、`VISION__MODEL`、`VISION__VIDEO_FRAME_COUNT`。
+配置加载由 `pydantic-settings` 统一处理，优先级为：显式初始化参数 > 环境变量 > 根目录 `.env` > `tool-mcp-server/config.yml`。内部 `mcp.qq_base_url`、`mcp.file_base_url`、`mcp.memory_base_url` 和 timeout 固定维护在 `config.yml`；vision 把 key、base URL、模型名和视频抽帧数量放到环境变量，例如 `VISION__OPENAI_API_KEY`、`VISION__OPENAI_BASE_URL`、`VISION__MODEL`、`VISION__VIDEO_FRAME_COUNT`。
 
 ## 5. 边界约束
 

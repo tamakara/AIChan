@@ -7,6 +7,7 @@
 不负责 QQ 消息接入、OneBot v11 解析与投递；这些职责由 `hub-service` 处理。
 
 长期记忆由独立 `memory-service` 持久化。agent-service 每次运行前读取当前会话记忆并注入为 system message；压缩失败或读取失败只降级当前记忆能力，不阻断聊天。
+记忆压缩采用进程内后台线程异步执行，请求返回不等待压缩完成；压缩成功后才会更新本地记忆层并裁剪对应旧记录。
 
 ## 2. 接口契约
 
@@ -104,14 +105,15 @@ LLM 最终回复必须是 `<reply>`，`<reply>` 下只能包含一个或多个 `
 - 启动阶段：`list_tools` 拉取并固化工具列表
 - 运行阶段：`call_tool` 执行，返回 JSON 字符串写回 `tool` 消息
 - 鉴权：`mcp_auth_token` 通过 `Authorization: Bearer` 发送
-- 当前自定义工具由 `tool-mcp-server` 提供：`qq_get_message_history`、`qq_get_user_info`、`file_get_metadata`、`file_read_text`、`image_describe`、`video_describe`
+- 当前自定义工具由 `tool-mcp-server` 提供：`qq_get_message_history`、`qq_get_user_info`、`file_get_metadata`、`file_read_text`、`memory_get_user_memory`、`image_describe`、`video_describe`
 
 ### 2.5 对外消费（memory-service）
 
 - `GET /api/v1/memories/{session_id}`：每次 `Agent.run()` 开始前读取最新 markdown 记忆
 - `POST /api/v1/memories/{session_id}/compress`：当普通消息记录层条目数达到 `agent.memory_compress_every_n_records` 后，提交时间序日志文本（格式为 `[time] role: content`）
 - 读取失败：清除当前会话 memory system message，本轮不注入记忆
-- 压缩失败：保留普通消息记录层，不裁剪历史；后续运行只要记录层仍达到阈值，就会继续尝试压缩
+- 压缩触发：正常回复提交后只负责异步投递后台压缩任务，不等待结果
+- 压缩失败：保留普通消息记录层，不裁剪历史；后续新的聊天请求会再次检查阈值并重新投递
 
 ## 3. 核心数据模型
 
@@ -123,6 +125,7 @@ LLM 最终回复必须是 `<reply>`，`<reply>` 下只能包含一个或多个 `
 - `_memory_message: Message | None` — 记忆层，只保留当前最新长期记忆 system message
 - `_record_context: Context` — 记录层，保存 `<turn />`、user、assistant、tool 等会话过程消息
 - `_record_entries: list[RecordEntry]` — 记录层对应的时间戳日志快照，供 memory 压缩使用
+- `_compression_snapshot: MemoryCompressionSnapshot | None` — 当前后台压缩任务对应的冻结快照边界
 - `_queued_user_messages: list[str]` — 运行中追加的新用户 XML 消息队列
 - `_lock` — 线程锁，仅在修改 Context 时短暂持有
 
@@ -130,7 +133,7 @@ LLM 最终回复必须是 `<reply>`，`<reply>` 下只能包含一个或多个 `
 - `SYSTEM_PROMPT`
 - `<session session_id="..." max_turn="..." ... />`，包含 `session_id`、最大推理轮次，以及 metadata 中的 `platform/session_type/user_id|group_id/self_id`
 
-memory 读取成功后会在系统层后插入或覆盖长期记忆 system message。最终发给 LLM 的输入固定按“系统层 → 记忆层 → 记录层 → 本轮 staged 输入”拼装。普通消息记录层会保留 `<turn />`、user、assistant、tool 消息；但提交给 memory-service 的 `record_messages_text_locked()` 会把它们整理成带时间戳的逐行日志，并过滤掉 `<turn />` 这类纯结构分隔符。压缩成功后只清空记录层和对应日志快照，保留系统层和最新记忆层。
+memory 读取成功后会在系统层后插入或覆盖长期记忆 system message。最终发给 LLM 的输入固定按“系统层 → 记忆层 → 记录层 → 本轮 staged 输入”拼装。普通消息记录层会保留 `<turn />`、user、assistant、tool 消息；但提交给 memory-service 的快照文本会整理成带时间戳的逐行日志，并过滤掉 `<turn />` 这类纯结构分隔符。异步压缩进行中，旧记录仍继续保留在后续 LLM 输入里；压缩成功后只按快照边界裁掉旧前缀，保留压缩期间新增的记录和系统层、最新记忆层。
 
 ### 3.2 上下文（`Context`）
 
@@ -154,7 +157,7 @@ pending_user_messages = [input_xml]
         → else:
             → staged add_message("assistant")   # 只在最终 XML 合法且真正发送时提交
             → commit staged_messages
-            → 若记录层条目数达到阈值，则提交普通消息记录层给 memory-service 压缩
+            → 若记录层条目数达到阈值，则异步投递普通消息记录层给 memory-service 压缩
             → finish_run_success()    # 上报观测
             → return AgentReply(output_xml)
     → if finish_reason == "tool_calls":
@@ -174,6 +177,7 @@ pending_user_messages = [input_xml]
 - stop 分支若发现 queued user messages，不提交当前 final reply，直接插入新 user 后继续推理
 - 生成异常和最终 XML 非法统一视为“本轮生成失败”，按同一预算重试；预算耗尽后提交固定兜底回复
 - memory 压缩只在正常成功回复后触发；fallback 回复属于失败收口，不会额外触发压缩
+- 同一会话任意时刻最多只有一个后台压缩任务；压缩进行中不会重复投递
 - `agent.memory_compress_every_n_records=10` 的 `10` 只统计记录层条目数，不包含初始 system prompt，也不包含长期记忆 system message
 
 ### 3.4 LLM 客户端（`LlmClient`）
@@ -214,7 +218,7 @@ agent.chat.run (chain)
 - 工具调用失败：写入 `tool` 错误消息，不中断回合
 - Langfuse 异常：降级吞掉，不中断主链路
 - memory 读取失败：不注入记忆，不中断主链路
-- memory 压缩失败：不裁剪历史，不中断主链路
+- memory 压缩失败：后台任务只清除 in-flight 状态，不裁剪历史，不中断主链路
 
 ## 5. 配置项
 
@@ -265,5 +269,5 @@ agent.chat.run (chain)
 - `/sessions` 无回收机制：长期运行可能内存增长
 - `llm_max_retries=3`：同时覆盖 SDK 请求失败与最终 XML 非法两类生成失败，统一重试后仍失败则返回固定兜底回复
 - agent 只理解 AICHAN XML，不直接理解 OneBot v11 原始事件
-- 长期记忆读取和压缩都同步执行；记录层达到阈值的那次成功回复会增加一次 memory-service 调用延迟
+- 长期记忆读取同步执行；压缩改为进程内后台线程异步执行，请求时延不再等待 memory-service 压缩返回
 

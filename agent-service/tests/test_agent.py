@@ -4,6 +4,7 @@ from openai.types.chat import ChatCompletionMessageFunctionToolCall
 from openai.types.chat.chat_completion_message_function_tool_call import Function
 
 from agent_service.services.agent import Agent
+from agent_service.services.memory_compression_scheduler import MemoryCompressionSnapshot
 from agent_service.services.memory_client import MemoryCompressResult
 from agent_service.services.observability import NoopObservability, RunTrace
 from agent_service.services.session import SessionRegistry
@@ -149,6 +150,36 @@ class RecordingObservability:
         return
 
 
+class ManualMemoryCompressionScheduler:
+    def __init__(self, memory_client: StubMemoryClient) -> None:
+        self.memory_client = memory_client
+        self.jobs: list[tuple[object, MemoryCompressionSnapshot]] = []
+
+    def schedule(self, session, snapshot: MemoryCompressionSnapshot) -> bool:
+        self.jobs.append((session, snapshot))
+        return True
+
+    def shutdown(self, timeout_seconds: float) -> None:
+        return
+
+    def complete_next(self) -> None:
+        session, snapshot = self.jobs.pop(0)
+        result = self.memory_client.compress(session.session_id, snapshot.messages_text)
+        with session._lock:
+            session.complete_memory_compression_locked(
+                target_max_seq=snapshot.target_max_seq,
+                memory_markdown=result.content_markdown,
+            )
+
+    def fail_next(self) -> None:
+        session, snapshot = self.jobs.pop(0)
+        try:
+            self.memory_client.compress(session.session_id, snapshot.messages_text)
+        finally:
+            with session._lock:
+                session.fail_memory_compression_locked(target_max_seq=snapshot.target_max_seq)
+
+
 def _build_agent() -> Agent:
     return Agent(  # type: ignore[arg-type]
         llm_client=StubLlmClient(),
@@ -164,6 +195,7 @@ def _build_agent_with_memory(
     *,
     llm_client=None,
     memory_client: StubMemoryClient | None = None,
+    memory_compression_scheduler=None,
     compress_every: int = 10,
 ) -> Agent:
     return Agent(  # type: ignore[arg-type]
@@ -174,6 +206,7 @@ def _build_agent_with_memory(
         temperature=0.0,
         observability=NoopObservability(),
         memory_client=memory_client or StubMemoryClient(),
+        memory_compression_scheduler=memory_compression_scheduler,
         memory_enabled=True,
         memory_compress_every_n_records=compress_every,
     )
@@ -497,12 +530,31 @@ def test_agent_compresses_and_trims_records_after_threshold() -> None:
             added_count=1,
         ),
     )
-    agent = _build_agent_with_memory(memory_client=memory_client, compress_every=1)
+    scheduler = ManualMemoryCompressionScheduler(memory_client)
+    agent = _build_agent_with_memory(
+        memory_client=memory_client,
+        memory_compression_scheduler=scheduler,
+        compress_every=1,
+    )
     registry = _build_registry()
     session = registry.create(session_id="private_1", metadata={"session_type": "private"})
 
     agent.run(session=session, user_message="hello")
 
+    assert len(scheduler.jobs) == 1
+    assert len(memory_client.compress_calls) == 0
+    assert [msg["role"] for msg in session.messages] == [
+        "system",
+        "system",
+        "system",
+        "system",
+        "user",
+        "assistant",
+    ]
+
+    scheduler.complete_next()
+
+    assert len(memory_client.compress_calls) == 1
     assert len(memory_client.compress_calls) == 1
     _, messages_text = memory_client.compress_calls[0]
     assert re.search(r"^\[[^\]]+\] user: hello$", messages_text, re.MULTILINE)
@@ -529,11 +581,22 @@ def test_agent_compresses_when_record_count_reaches_threshold() -> None:
             added_count=1,
         ),
     )
-    agent = _build_agent_with_memory(memory_client=memory_client, compress_every=3)
+    scheduler = ManualMemoryCompressionScheduler(memory_client)
+    agent = _build_agent_with_memory(
+        memory_client=memory_client,
+        memory_compression_scheduler=scheduler,
+        compress_every=3,
+    )
     registry = _build_registry()
     session = registry.create(session_id="private_1", metadata={"session_type": "private"})
 
     agent.run(session=session, user_message="hello")
+
+    assert len(scheduler.jobs) == 1
+    assert len(memory_client.compress_calls) == 0
+    assert session.record_message_count_locked() == 3
+
+    scheduler.complete_next()
 
     assert len(memory_client.compress_calls) == 1
     assert session.record_message_count_locked() == 0
@@ -549,15 +612,18 @@ def test_next_run_after_compress_only_contains_system_memory_and_new_input() -> 
         ),
     )
     llm_client = StubLlmClient()
+    scheduler = ManualMemoryCompressionScheduler(memory_client)
     agent = _build_agent_with_memory(
         llm_client=llm_client,
         memory_client=memory_client,
+        memory_compression_scheduler=scheduler,
         compress_every=3,
     )
     registry = _build_registry()
     session = registry.create(session_id="private_1", metadata={"session_type": "private"})
 
     agent.run(session=session, user_message="hello")
+    scheduler.complete_next()
     agent.run(session=session, user_message="again")
 
     second_call_messages = llm_client.calls[1][0]
@@ -572,17 +638,64 @@ def test_next_run_after_compress_only_contains_system_memory_and_new_input() -> 
     assert second_call_contents[4] == "again"
 
 
+def test_compress_completion_only_trims_old_prefix_and_keeps_new_records() -> None:
+    memory_client = StubMemoryClient(
+        reads=["- 旧记忆\n"],
+        compress_result=MemoryCompressResult(
+            content_markdown="- 旧记忆\n- 新记忆\n",
+            added_markdown="- 新记忆",
+            added_count=1,
+        ),
+    )
+    scheduler = ManualMemoryCompressionScheduler(memory_client)
+    llm_client = StubLlmClient()
+    agent = _build_agent_with_memory(
+        llm_client=llm_client,
+        memory_client=memory_client,
+        memory_compression_scheduler=scheduler,
+        compress_every=3,
+    )
+    registry = _build_registry()
+    session = registry.create(session_id="private_1", metadata={"session_type": "private"})
+
+    agent.run(session=session, user_message="hello")
+    agent.run(session=session, user_message="again")
+
+    assert len(scheduler.jobs) == 1
+    assert session.record_message_count_locked() == 6
+
+    scheduler.complete_next()
+
+    assert session.record_message_count_locked() == 3
+    remaining_contents = [str(msg["content"]) for msg in session.messages]
+    assert "hello" not in remaining_contents
+    assert "again" in remaining_contents
+    assert "<reply><text>ok</text></reply>" in remaining_contents
+
+
 def test_agent_keeps_records_when_compress_fails_and_waits_next_cycle() -> None:
     memory_client = StubMemoryClient(reads=[""], fail_compress=True)
-    agent = _build_agent_with_memory(memory_client=memory_client, compress_every=3)
+    scheduler = ManualMemoryCompressionScheduler(memory_client)
+    agent = _build_agent_with_memory(
+        memory_client=memory_client,
+        memory_compression_scheduler=scheduler,
+        compress_every=3,
+    )
     registry = _build_registry()
     session = registry.create(session_id="private_1", metadata={"session_type": "private"})
 
     agent.run(session=session, user_message="first")
     after_failure_len = len(session.messages)
+    assert len(scheduler.jobs) == 1
+    try:
+        scheduler.fail_next()
+        assert False, "expected compress failure"
+    except RuntimeError:
+        pass
     agent.run(session=session, user_message="second")
 
-    assert len(memory_client.compress_calls) == 2
+    assert len(memory_client.compress_calls) == 1
+    assert len(scheduler.jobs) == 1
     assert len(session.messages) > 3
     assert len(session.messages) > after_failure_len
 
@@ -598,6 +711,7 @@ def test_langfuse_input_messages_match_actual_llm_input_after_compress() -> None
     )
     llm_client = StubLlmClient()
     observability = RecordingObservability()
+    scheduler = ManualMemoryCompressionScheduler(memory_client)
     agent = Agent(  # type: ignore[arg-type]
         llm_client=llm_client,
         mcp_gateway=StubMcpGateway(),
@@ -606,6 +720,7 @@ def test_langfuse_input_messages_match_actual_llm_input_after_compress() -> None
         temperature=0.0,
         observability=observability,
         memory_client=memory_client,
+        memory_compression_scheduler=scheduler,
         memory_enabled=True,
         memory_compress_every_n_records=3,
     )
@@ -613,6 +728,7 @@ def test_langfuse_input_messages_match_actual_llm_input_after_compress() -> None
     session = registry.create(session_id="private_1", metadata={"session_type": "private"})
 
     agent.run(session=session, user_message="hello")
+    scheduler.complete_next()
     agent.run(session=session, user_message="again")
 
     llm_second_call = llm_client.calls[1][0]

@@ -78,6 +78,7 @@ services:
       VISION__OPENAI_API_KEY: "${VISION__OPENAI_API_KEY:-}"
       VISION__MODEL: "${VISION__MODEL:-}"
       VISION__VIDEO_FRAME_COUNT: "${VISION__VIDEO_FRAME_COUNT:-6}"
+      MCP__MEMORY_BASE_URL: "${MCP__MEMORY_BASE_URL:-http://memory-service:8050}"
     healthcheck:
       test:
         - CMD

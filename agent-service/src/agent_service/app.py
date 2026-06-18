@@ -1,6 +1,14 @@
 from fastapi import FastAPI
 
-from .services import Agent, HttpMemoryClient, LlmClient, McpGateway, SessionRegistry, create_observability
+from .services import (
+    Agent,
+    HttpMemoryClient,
+    LlmClient,
+    McpGateway,
+    SessionRegistry,
+    ThreadedMemoryCompressionScheduler,
+    create_observability,
+)
 from .config import get_settings
 from .router import create_router
 
@@ -28,6 +36,10 @@ def create_app() -> FastAPI:
         base_url=settings.agent.memory_base_url,
         timeout=settings.agent.memory_timeout,
     )
+    memory_compression_scheduler = ThreadedMemoryCompressionScheduler(
+        memory_client=memory_client,
+        max_workers=1,
+    )
 
     agent = Agent(
         llm_client=llm_client,
@@ -37,6 +49,7 @@ def create_app() -> FastAPI:
         temperature=settings.agent.temperature,
         observability=observability,
         memory_client=memory_client,
+        memory_compression_scheduler=memory_compression_scheduler,
         memory_enabled=settings.agent.memory_enabled,
         memory_compress_every_n_records=settings.agent.memory_compress_every_n_records,
     )
@@ -57,6 +70,9 @@ def create_app() -> FastAPI:
 
     @app.on_event("shutdown")
     async def on_shutdown() -> None:
+        memory_compression_scheduler.shutdown(
+            timeout_seconds=settings.agent.memory_timeout,
+        )
         observability.flush(timeout_seconds=settings.agent.langfuse.request_timeout)
 
     return app

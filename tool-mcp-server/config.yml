@@ -5,6 +5,7 @@ server:
 mcp:
   qq_base_url: http://hub-service:8020
   file_base_url: http://file-service:8040
+  memory_base_url: http://memory-service:8050
   timeout_seconds: 5
 
 vision:

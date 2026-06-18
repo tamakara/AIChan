@@ -3,7 +3,12 @@ from fastapi import FastAPI
 from .config import get_settings
 from .logger import elapsed_ms, get_logger, log_info, start_timer
 from .router import create_router
-from .services import MemoryService, OpenAiMemoryCompressor
+from .services import (
+    MemoryService,
+    OpenAiMemoryCompressor,
+    OpenAiUserMemorySynthesizer,
+    ThreadedUserMemoryScheduler,
+)
 
 
 def create_app() -> FastAPI:
@@ -16,6 +21,8 @@ def create_app() -> FastAPI:
     memory_service = MemoryService(
         root_dir=settings.memory.root_dir,
         compressor=OpenAiMemoryCompressor(settings.memory),
+        user_memory_synthesizer=OpenAiUserMemorySynthesizer(settings.memory),
+        user_memory_scheduler=ThreadedUserMemoryScheduler(max_workers=1),
     )
 
     app = FastAPI(
@@ -28,6 +35,10 @@ def create_app() -> FastAPI:
     @app.on_event("startup")
     async def startup() -> None:
         log_info(logger, "memory_app.ready", elapsed_ms=elapsed_ms(boot_started_at))
+
+    @app.on_event("shutdown")
+    async def shutdown() -> None:
+        memory_service.shutdown(timeout_seconds=settings.memory.llm_timeout)
 
     return app
 

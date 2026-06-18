@@ -6,6 +6,7 @@ from xml.etree import ElementTree
 
 from ..logger import elapsed_ms, start_timer
 from .llm_client import LlmClient
+from .memory_compression_scheduler import MemoryCompressionScheduler, NoopMemoryCompressionScheduler
 from .memory_client import MemoryClient
 from .mcp_gateway import McpGateway
 from .observability import Observability, RunTrace
@@ -33,6 +34,7 @@ class Agent:
         temperature: float,
         observability: Observability,
         memory_client: MemoryClient | None = None,
+        memory_compression_scheduler: MemoryCompressionScheduler | None = None,
         memory_enabled: bool = False,
         memory_compress_every_n_records: int = 10,
     ) -> None:
@@ -43,6 +45,9 @@ class Agent:
         self._temperature = temperature
         self._observability = observability
         self._memory_client = memory_client
+        self._memory_compression_scheduler = (
+            memory_compression_scheduler or NoopMemoryCompressionScheduler()
+        )
         self._memory_enabled = memory_enabled
         self._memory_compress_every_n_records = memory_compress_every_n_records
 
@@ -200,18 +205,12 @@ class Agent:
         if not self._memory_enabled or self._memory_client is None:
             return
         with session._lock:
-            should_compress = session.should_compress_records_locked(
+            snapshot = session.prepare_memory_compression_locked(
                 self._memory_compress_every_n_records
             )
-            if not should_compress:
+            if snapshot is None:
                 return
-            messages_text = session.record_messages_text_locked()
-        try:
-            result = self._memory_client.compress(session.session_id, messages_text)
-        except Exception:
-            return
-        with session._lock:
-            session.replace_memory_and_clear_records_locked(result.content_markdown)
+        self._memory_compression_scheduler.schedule(session, snapshot)
 
     def _generate_turn_response(
         self,

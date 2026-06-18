@@ -38,6 +38,9 @@ class StubAsyncClient:
             return StubResponse(payload={"ok": True, "data": {"object_key": "k", "text": "hello"}})
         if path.endswith("/content"):
             return StubResponse(content=b"image")
+        if path.endswith("/memory"):
+            user_id = path.split("/")[-2]
+            return StubResponse(payload={"user_id": user_id, "content_markdown": "## 用户画像\n\n## 相关记忆\n"})
         return StubResponse(payload={"ok": True, "data": {"messages": []}})
 
 
@@ -49,7 +52,12 @@ def patch_async_client(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_file_methods_call_hub_file_api() -> None:
-    client = ToolMcpClient(qq_base_url="http://hub", file_base_url="http://file", timeout_seconds=5)
+    client = ToolMcpClient(
+        qq_base_url="http://hub",
+        file_base_url="http://file",
+        memory_base_url="http://memory",
+        timeout_seconds=5,
+    )
 
     object_key = "a" * 64
     metadata = await client.get_file_metadata(object_key)
@@ -63,4 +71,21 @@ async def test_file_methods_call_hub_file_api() -> None:
         ("http://file", f"/api/v1/files/{object_key}/metadata", None),
         ("http://file", f"/api/v1/files/{object_key}/text", {"max_chars": 20}),
         ("http://file", f"/api/v1/files/{object_key}/content", None),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_get_user_memory_calls_memory_service_raw_api() -> None:
+    client = ToolMcpClient(
+        qq_base_url="http://hub",
+        file_base_url="http://file",
+        memory_base_url="http://memory",
+        timeout_seconds=5,
+    )
+
+    result = await client.get_user_memory("123")
+
+    assert result == {"user_id": "123", "content_markdown": "## 用户画像\n\n## 相关记忆\n"}
+    assert StubAsyncClient.requests == [
+        ("http://memory", "/api/v1/users/123/memory", None),
     ]

@@ -14,6 +14,7 @@ registry:
       - name: qq_get_user_info
       - name: file_get_metadata
       - name: file_read_text
+      - name: memory_get_user_memory
       - name: image_describe
       - name: video_describe
     prompts: 0

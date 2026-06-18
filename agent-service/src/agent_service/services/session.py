@@ -16,8 +16,15 @@ MEMORY_SYSTEM_PREFIX = "以下是该会话的长期记忆；为空时表示暂�
 
 @dataclass(frozen=True)
 class RecordEntry:
+    seq: int
     recorded_at: str
     message: Message
+
+
+@dataclass(frozen=True)
+class MemoryCompressionSnapshot:
+    target_max_seq: int
+    messages_text: str
 
 
 class Session:
@@ -29,6 +36,8 @@ class Session:
         self._lock = Lock()
         self._queued_user_messages: list[str] = []
         self._record_entries: list[RecordEntry] = []
+        self._next_record_seq = 0
+        self._compression_snapshot: MemoryCompressionSnapshot | None = None
         self._memory_message: Message | None = None
         # 上下文拆成系统层、记忆层、记录层三部分管理，避免压缩阈值和清理逻辑依赖魔法切片。
         self._system_messages = Context()
@@ -45,7 +54,8 @@ class Session:
 
     @property
     def messages(self) -> list[Message]:
-        return self._all_messages_locked()
+        with self._lock:
+            return self._all_messages_locked()
 
     def render_input_messages_locked(self, staged_messages: list[Message]) -> list[Message]:
         return self._all_messages_locked() + list(staged_messages)
@@ -64,29 +74,63 @@ class Session:
         for message in messages:
             # 记忆压缩依赖的是“当时看见的记录”，所以这里先冻结一份消息快照并带上本地时间。
             # 这样后续即使会话上下文继续增长，已写入记忆日志的每行时间和内容都不会漂移。
+            self._next_record_seq += 1
             self._record_context.messages.append(message)
             self._record_entries.append(
-                RecordEntry(recorded_at=_current_recorded_at(), message=dict(message))
+                RecordEntry(
+                    seq=self._next_record_seq,
+                    recorded_at=_current_recorded_at(),
+                    message=dict(message),
+                )
             )
 
     def record_messages_locked(self) -> list[Message]:
         return [entry.message for entry in self._record_entries]
 
     def record_messages_text_locked(self) -> str:
-        lines: list[str] = []
-        for entry in self._record_entries:
-            lines.extend(_format_record_entry_lines(entry))
-        return "\n".join(lines)
+        return _format_record_entries_text(self._record_entries)
 
     def should_compress_records_locked(self, compress_every_n_records: int) -> bool:
         if compress_every_n_records <= 0:
             return False
         return len(self._record_context.messages) >= compress_every_n_records
 
-    def replace_memory_and_clear_records_locked(self, memory_markdown: str) -> None:
+    def prepare_memory_compression_locked(
+        self,
+        compress_every_n_records: int,
+    ) -> MemoryCompressionSnapshot | None:
+        if self._compression_snapshot is not None:
+            return None
+        if not self.should_compress_records_locked(compress_every_n_records):
+            return None
+        snapshot = MemoryCompressionSnapshot(
+            target_max_seq=self._record_entries[-1].seq,
+            messages_text=_format_record_entries_text(self._record_entries),
+        )
+        self._compression_snapshot = snapshot
+        return snapshot
+
+    def complete_memory_compression_locked(
+        self,
+        *,
+        target_max_seq: int,
+        memory_markdown: str,
+    ) -> None:
+        snapshot = self._compression_snapshot
+        if snapshot is None or snapshot.target_max_seq != target_max_seq:
+            return
         self.set_memory_markdown_locked(memory_markdown)
-        self._record_context.messages.clear()
-        self._record_entries.clear()
+        self._record_entries = [
+            entry for entry in self._record_entries if entry.seq > target_max_seq
+        ]
+        self._record_context.messages = [entry.message for entry in self._record_entries]
+        self._compression_snapshot = None
+
+    def fail_memory_compression_locked(self, *, target_max_seq: int) -> None:
+        snapshot = self._compression_snapshot
+        if snapshot is None or snapshot.target_max_seq != target_max_seq:
+            return
+        self._compression_snapshot = None
 
     def queue_user_message(self, user_message: str) -> None:
         with self._lock:
@@ -110,6 +154,9 @@ class Session:
 
     def memory_message_locked(self) -> Message | None:
         return self._memory_message
+
+    def compression_in_flight_locked(self) -> bool:
+        return self._compression_snapshot is not None
 
     def _all_messages_locked(self) -> list[Message]:
         messages = list(self._system_messages.messages)
@@ -180,6 +227,13 @@ def _current_recorded_at() -> str:
     # 这里记录的是服务端实际写入记忆的本地时间，不追求“事件发生秒级真相”，
     # 但必须稳定、可读，方便后续把聊天轨迹当日志逐行压缩。
     return datetime.now().astimezone().isoformat(timespec="seconds")
+
+
+def _format_record_entries_text(entries: list[RecordEntry]) -> str:
+    lines: list[str] = []
+    for entry in entries:
+        lines.extend(_format_record_entry_lines(entry))
+    return "\n".join(lines)
 
 
 def _format_record_entry_lines(entry: RecordEntry) -> list[str]:

@@ -4,7 +4,7 @@
 
 AICHAN 是一个基于 NapCat + OneBot v11 接入的 QQ 私聊/群聊助理系统：NapCat 接入 QQ 消息 → `hub-service` 做会话白名单、XML 转换、会话编排与 QQ 动作出口 → `agent-service` LLM 推理 → 回复回 QQ。
 
-会话状态不依赖 Redis 等队列中间件，服务间直接通过 HTTP + WebSocket 通信；文件真身由 `file-service` 统一用 SHA-256 写入私有 MinIO，业务元数据写入 SQLite；长期记忆由 `memory-service` 按会话写入 markdown 文件。
+会话状态不依赖 Redis 等队列中间件，服务间直接通过 HTTP + WebSocket 通信；文件真身由 `file-service` 统一用 SHA-256 写入私有 MinIO，业务元数据写入 SQLite；长期记忆由 `memory-service` 写入 markdown 文件，其中 session 级无损日志供 agent 注入，user 级内化记忆通过 MCP 工具按需检索。
 
 ## 2. 架构总览
 
@@ -23,10 +23,10 @@ AICHAN 是一个基于 NapCat + OneBot v11 接入的 QQ 私聊/群聊助理系�
 | 服务 | 职责 | 端口 |
 |------|------|------|
 | `napcat` | OneBot v11 QQ 客户端，收发消息 | 6099 (WebUI) |
-| `tool-mcp-server` | 将 QQ 查询、文本文件读取、图片/视频理解包装为 MCP 工具；QQ 查询走 hub-service，文件读取走 file-service | 内部 |
+| `tool-mcp-server` | 将 QQ 查询、文本文件读取、图片/视频理解、用户记忆检索包装为 MCP 工具 | 内部 |
 | `hub-service` | 会话编排中枢：私聊/群聊白名单、防抖合并、XML 转换、调用 agent、统一持有 NapCat WS | 8020 |
 | `agent-service` | LLM 推理执行：多轮对话、MCP 工具调用、AICHAN XML 回复生成 | 8000 |
-| `memory-service` | 会话长期记忆：按 session_id 读取 markdown，压缩普通消息记录并追加 bullet | 8050 |
+| `memory-service` | 双层长期记忆：按 session_id 保存无损压缩日志，按 user_id 异步内化用户画像与相关记忆 | 8050 |
 | `file-service` | 文件存储边界：SHA-256 MinIO 真身 + SQLite 影子元数据 | 8040 |
 | `mcp-gateway` | MCP 工具网关，聚合 playwright/fetch/time/tool 工具 | 9000 |
 | `minio` | 私有对象存储，只保存 SHA-256 文件真身 | 9000/9001 |
@@ -43,8 +43,10 @@ AICHAN 是一个基于 NapCat + OneBot v11 接入的 QQ 私聊/群聊助理系�
   → POST /chat → agent-service
   → agent-service 读取 memory-service，将该会话 markdown 作为 memory system message 注入
   → Agent 多轮 LLM 推理 + MCP 工具调用
+  → 如需要用户长期画像，agent 可通过 MCP 工具 memory_get_user_memory(user_id) 检索 user 级记忆
   → LLM 输出 <reply>
-  → 当记录层条目数达到阈值时，agent-service 将普通消息记录提交给 memory-service 压缩，成功后只清空记录层并保留系统层与记忆层
+  → 当记录层条目数达到阈值时，agent-service 异步提交普通消息记录给 memory-service 压缩，成功后按快照边界清理旧记录并保留系统层与记忆层
+  → memory-service 在 session 无损压缩成功后异步按 user_id 内化用户记忆
   → agent-service 返回 {output_xml}
   → hub-service 转换为 OneBot v11 消息段 / 文件上传动作
   → NapCat WS send_action(send_private_msg/send_group_msg/upload_*_file)
@@ -61,6 +63,7 @@ AICHAN 是一个基于 NapCat + OneBot v11 接入的 QQ 私聊/群聊助理系�
 | `agent-service` | `POST /chat` | 发送 `<messages>`，返回 `<reply>` |
 | `memory-service` | `GET /api/v1/memories/{id}` | 读取会话 markdown 记忆 |
 | `memory-service` | `POST /api/v1/memories/{id}/compress` | 压缩并追加会话记忆 |
+| `memory-service` | `GET /api/v1/users/{id}/memory` | 读取用户级内化长期记忆 |
 | `hub-service` | `GET /healthz` | 存活探针 |
 | `hub-service` | `GET /api/v1/user/{id}/info` | QQ 用户信息查询，供 MCP 工具调用 |
 | `hub-service` | `GET /api/v1/message/history` | QQ 历史消息查询，供 MCP 工具调用 |
@@ -128,7 +131,7 @@ docker compose logs -f hub-service agent-service memory-service file-service
 ## 8. 设计权衡
 
 - 会话状态在 `agent-service` 和 `hub-service` 的进程内存中，重启丢失，单实例部署
-- 长期记忆在 `memory-service` markdown volume 中持久化，但只做追加，不做去重和控长
+- session 无损日志在 `memory-service` markdown volume 中持久化并持续追加；user 级记忆允许内化、去重和分类
 - 防抖窗口内合并消息，减少 LLM 调用次数
 - NapCat 只有一条反向 WS 连接，由 `hub-service` 统一持有，避免收发链路和工具查询链路各自维护连接
 - OneBot v11 复杂性收口在 `hub-service`，agent 只处理 AICHAN XML

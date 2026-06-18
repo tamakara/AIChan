@@ -13,6 +13,7 @@ def create_server() -> FastMCP:
     client = ToolMcpClient(
         qq_base_url=settings.mcp.qq_base_url,
         file_base_url=settings.mcp.file_base_url,
+        memory_base_url=settings.mcp.memory_base_url,
         timeout_seconds=settings.mcp.timeout_seconds,
     )
     vision_client = VisionClient(settings.vision)
@@ -89,6 +90,20 @@ def create_server() -> FastMCP:
             raise ValueError("max_chars must be between 1 and 50000")
 
         result = await client.read_file_text(object_key=object_key, max_chars=max_chars)
+        return json.dumps(result, ensure_ascii=False)
+
+    @mcp.tool()
+    async def memory_get_user_memory(user_id: str) -> str:
+        """按用户 ID 读取 memory-service 内化后的长期用户记忆。
+
+        Args:
+            user_id: QQ 用户 ID 或其他上游传入的用户标识。
+        """
+        normalized_user_id = str(user_id).strip()
+        if not normalized_user_id:
+            raise ValueError("user_id must not be empty")
+
+        result = await client.get_user_memory(user_id=normalized_user_id)
         return json.dumps(result, ensure_ascii=False)
 
     @mcp.tool()

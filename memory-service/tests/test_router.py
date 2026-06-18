@@ -4,7 +4,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from memory_service.router import create_router
-from memory_service.services.memory import MemoryService
+from memory_service.services.memory import USER_MEMORY_EMPTY_TEMPLATE, MemoryService
 
 
 class StubCompressor:
@@ -64,3 +64,12 @@ def test_post_compress_returns_full_content_and_added_summary(tmp_path: Path) ->
         "added_count": 1,
     }
     assert compressor.calls == ["user: 记住我喜欢直接结论"]
+
+
+def test_get_missing_user_memory_returns_empty_template(tmp_path: Path) -> None:
+    client = build_client(tmp_path)
+
+    response = client.get("/api/v1/users/123/memory")
+
+    assert response.status_code == 200
+    assert response.json() == {"user_id": "123", "content_markdown": USER_MEMORY_EMPTY_TEMPLATE}

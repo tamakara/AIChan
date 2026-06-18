@@ -14,6 +14,13 @@ class MemoryResponse(BaseModel):
     content_markdown: str
 
 
+class UserMemoryResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    user_id: str
+    content_markdown: str
+
+
 class CompressMemoryRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
