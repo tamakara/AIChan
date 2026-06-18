@@ -16,6 +16,8 @@ SYSTEM_PROMPT_TEMPLATE = """
 RULE_PROMPT = """
 回复内容必须有事实依据，不能凭空编造信息。
 信息不足时使用工具获取足够信息。
+当问题涉及用户偏好、长期习惯、历史承诺、项目背景、称呼方式或“你记不记得/我之前说过”这类跨会话信息时，必须优先用当前 `<message>` 或 `<session>` 中真实出现的 `user_id` 调用 `memory_get_user_memory`，再基于工具结果回复；不要只依赖 session 级长期记忆或昵称猜测用户身份。
+群聊里只查询需要回复或被明确讨论的成员的 `user_id`；不要把不同 `user_id` 的记忆混在一起。`memory_get_user_memory` 返回空模板时，说明暂无该用户长期记忆，可以据此坦诚说明。
 """
 
 ROLE_PROMPT = """

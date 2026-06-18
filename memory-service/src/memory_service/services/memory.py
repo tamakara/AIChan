@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-import hashlib
 import re
 from dataclasses import dataclass
 from pathlib import Path
 from threading import Lock
 from typing import Protocol
+from urllib.parse import quote
 
 from openai import OpenAI
 
@@ -195,12 +195,10 @@ class MemoryService:
             return lock
 
     def _session_memory_path(self, session_id: str) -> Path:
-        digest = hashlib.sha256(session_id.encode("utf-8")).hexdigest()
-        return self._session_dir / f"{digest}.md"
+        return self._session_dir / f"{_memory_filename(session_id, field_name='session_id')}.md"
 
     def _user_memory_path(self, user_id: str) -> Path:
-        digest = hashlib.sha256(user_id.encode("utf-8")).hexdigest()
-        return self._user_dir / f"{digest}.md"
+        return self._user_dir / f"{_memory_filename(user_id, field_name='user_id')}.md"
 
 
 def _normalize_bullets(raw: str) -> str:
@@ -237,6 +235,15 @@ def _extract_user_messages(messages_text: str) -> dict[str, str]:
             continue
         user_messages.setdefault(user_id, []).append(line)
     return {user_id: "\n".join(lines) for user_id, lines in user_messages.items()}
+
+
+def _memory_filename(raw_id: str, *, field_name: str) -> str:
+    normalized = raw_id.strip()
+    if not normalized:
+        raise ValueError(f"{field_name} must not be empty")
+    # 记忆文件需要能从磁盘上直接看出归属；只对路径保留字符做编码，避免 `../`
+    # 这类上游异常值逃逸目标目录，同时让常见 private_123 / group_456 / QQ 数字 ID 保持可读。
+    return quote(normalized, safe="")
 
 
 def _normalize_user_memory_markdown(raw: str) -> str:

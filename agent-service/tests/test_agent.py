@@ -34,6 +34,19 @@ class SequencedLlmClient:
         return self._responses.pop(0)
 
 
+class RecordingToolAwareLlmClient:
+    def __init__(self, responses: list[LlmResponse]) -> None:
+        self.model_name = "gpt-test"
+        self.calls: list[tuple[list, list, float]] = []
+        self._responses = responses
+
+    def generate(self, messages, tools_schema, temperature) -> LlmResponse:
+        self.calls.append((messages, tools_schema, temperature))
+        if not self._responses:
+            raise RuntimeError("no response")
+        return self._responses.pop(0)
+
+
 class FailingLlmClient:
     def __init__(self) -> None:
         self.model_name = "gpt-test"
@@ -45,11 +58,17 @@ class FailingLlmClient:
 
 
 class StubMcpGateway:
+    def __init__(self, tools_schema: list[dict] | None = None, result: str = '{"ok": true}') -> None:
+        self.tools_schema = tools_schema or []
+        self.result = result
+        self.calls: list[tuple[str, dict]] = []
+
     def get_tools_schema(self):
-        return []
+        return self.tools_schema
 
     def call_tool(self, tool_name: str, tool_args: dict) -> str:
-        return '{"ok": true}'
+        self.calls.append((tool_name, tool_args))
+        return self.result
 
 
 class StubMemoryClient:
@@ -216,10 +235,10 @@ def _build_registry() -> SessionRegistry:
     return SessionRegistry(max_turns=3)
 
 
-def _tool_call(tool_name: str) -> ChatCompletionMessageFunctionToolCall:
+def _tool_call(tool_name: str, arguments: str = '{"x": 1}') -> ChatCompletionMessageFunctionToolCall:
     return ChatCompletionMessageFunctionToolCall(
         id="call_1",
-        function=Function(name=tool_name, arguments='{"x": 1}'),
+        function=Function(name=tool_name, arguments=arguments),
         type="function",
     )
 
@@ -445,6 +464,61 @@ def test_tool_call_turn_inserts_queued_message_after_tool_result() -> None:
     assert second_call_contents[-3] == '{"ok": true}'
     assert second_call_contents[-2] == '<turn index="2" />'
     assert second_call_contents[-1] == "<messages><message><text>queued</text></message></messages>"
+
+
+def test_agent_exposes_and_calls_user_memory_tool() -> None:
+    memory_tool_schema = {
+        "type": "function",
+        "function": {
+            "name": "memory_get_user_memory",
+            "description": "按用户 ID 读取 memory-service 内化后的长期用户记忆。",
+            "parameters": {
+                "type": "object",
+                "properties": {"user_id": {"type": "string"}},
+                "required": ["user_id"],
+            },
+        },
+    }
+    llm_client = RecordingToolAwareLlmClient(
+        [
+            LlmResponse(
+                content="",
+                tool_calls=[_tool_call("memory_get_user_memory", '{"user_id": "123"}')],
+                finish_reason="tool_calls",
+            ),
+            LlmResponse(content="<reply><text>done</text></reply>", tool_calls=[], finish_reason="stop"),
+        ]
+    )
+    mcp_gateway = StubMcpGateway(
+        tools_schema=[memory_tool_schema],
+        result='{"user_id": "123", "content_markdown": "## 用户画像\\n- 喜欢直接结论\\n\\n## 相关记忆\\n"}',
+    )
+    agent = Agent(  # type: ignore[arg-type]
+        llm_client=llm_client,
+        mcp_gateway=mcp_gateway,
+        max_turns=3,
+        max_retries=1,
+        temperature=0.0,
+        observability=NoopObservability(),
+    )
+    registry = _build_registry()
+    session = registry.create(
+        session_id="private_123",
+        metadata={"platform": "qq", "session_type": "private", "user_id": 123},
+    )
+
+    reply = agent.run(
+        session=session,
+        user_message='<messages><message user_id="123"><text>还记得我的偏好吗？</text></message></messages>',
+    )
+
+    assert reply.output_xml == "<reply><text>done</text></reply>"
+    assert llm_client.calls[0][1] == [memory_tool_schema]
+    assert mcp_gateway.calls == [("memory_get_user_memory", {"user_id": "123"})]
+    second_call_messages = llm_client.calls[1][0]
+    assert second_call_messages[-2]["role"] == "tool"
+    assert "喜欢直接结论" in str(second_call_messages[-2]["content"])
+    assert second_call_messages[-1]["content"] == '<turn index="2" />'
 
 
 def test_agent_run_failure_commits_user_and_fallback_reply() -> None:

@@ -67,6 +67,7 @@
 如果 memory-service 可用，`<session ... />` 后会插入一条长期记忆 system message。新会话或空记忆使用固定占位文本；读取失败则不插入该消息。
 群聊消息的 `<message>` 会携带 `user_id/nickname/at_bot`；`user_id` 是唯一身份，`nickname` 只用于称呼。
 图片、视频和文件节点只携带 file-service 入库后的 `object_key`，agent 需要通过 MCP 工具 `image_describe` / `video_describe` / `file_read_text` 获取内容，不能根据文件名或消息文字猜测媒体内容。`<face name="...">` 和 `<mface summary="...">` 是用户表情语气信号，可用于理解情绪，但不等同于用户明确说出的文本。
+当问题涉及用户偏好、长期习惯、历史承诺、项目背景、称呼方式或“之前说过/还记得”这类跨会话信息时，系统提示要求 agent 使用当前 `<message>` 或 `<session>` 中真实出现的 `user_id` 主动调用 `memory_get_user_memory`。群聊里只查询需要回复或被明确讨论的成员，避免把不同 `user_id` 的长期记忆混用。
 
 LLM 最终回复必须是 `<reply>`，`<reply>` 下只能包含一个或多个 `<message>`，每个 `<message>` 会被组装成一条 QQ 消息：
 
@@ -106,6 +107,7 @@ LLM 最终回复必须是 `<reply>`，`<reply>` 下只能包含一个或多个 `
 - 运行阶段：`call_tool` 执行，返回 JSON 字符串写回 `tool` 消息
 - 鉴权：`mcp_auth_token` 通过 `Authorization: Bearer` 发送
 - 当前自定义工具由 `tool-mcp-server` 提供：`qq_get_message_history`、`qq_get_user_info`、`file_get_metadata`、`file_read_text`、`memory_get_user_memory`、`image_describe`、`video_describe`
+- `memory_get_user_memory` 由 agent 作为普通 MCP function tool 使用；工具结果会以 OpenAI tool 消息进入下一轮 LLM 输入，供最终回复引用。
 
 ### 2.5 对外消费（memory-service）
 

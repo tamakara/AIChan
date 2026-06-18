@@ -67,7 +67,7 @@ def test_compress_creates_markdown_file_and_appends_bullets(tmp_path: Path) -> N
     assert result.added_count == 2
     assert result.content_markdown == "- 用户喜欢中文注释\n- 已确认使用 V1\n"
     assert compressor.calls == ["user: hello"]
-    assert len(list((tmp_path / "sessions").glob("*.md"))) == 1
+    assert (tmp_path / "sessions" / "private_1.md").read_text(encoding="utf-8") == result.content_markdown
     assert list(tmp_path.glob("*.md")) == []
 
 
@@ -81,7 +81,7 @@ def test_consecutive_compress_appends_instead_of_overwriting(tmp_path: Path) -> 
     assert result.content_markdown == "- 第一条\n- 第二条\n"
 
 
-def test_different_sessions_are_isolated_by_hash_files(tmp_path: Path) -> None:
+def test_different_sessions_are_isolated_by_readable_files(tmp_path: Path) -> None:
     compressor = StubCompressor(outputs=["- A", "- B"])
     service = MemoryService(root_dir=tmp_path, compressor=compressor)
 
@@ -90,8 +90,11 @@ def test_different_sessions_are_isolated_by_hash_files(tmp_path: Path) -> None:
 
     assert service.read("../private_1") == "- A\n"
     assert service.read("private_1") == "- B\n"
-    assert sorted(path.name for path in (tmp_path / "sessions").glob("*.md")) != ["private_1.md"]
-    assert len(list((tmp_path / "sessions").glob("*.md"))) == 2
+    assert sorted(path.name for path in (tmp_path / "sessions").glob("*.md")) == [
+        "..%2Fprivate_1.md",
+        "private_1.md",
+    ]
+    assert not (tmp_path / "private_1.md").exists()
 
 
 def test_blank_input_does_not_call_llm_or_append(tmp_path: Path) -> None:
@@ -151,12 +154,36 @@ def test_compress_schedules_user_memory_update_from_message_user_id(tmp_path: Pa
     scheduler.run_all()
 
     assert service.read_user_memory("123") == "## 用户画像\n- 用户喜欢中文注释\n\n## 相关记忆\n- 正在重构 memory\n"
-    assert len(list((tmp_path / "users").glob("*.md"))) == 1
+    assert (tmp_path / "users" / "123.md").read_text(encoding="utf-8") == (
+        "## 用户画像\n- 用户喜欢中文注释\n\n## 相关记忆\n- 正在重构 memory\n"
+    )
     assert list(tmp_path.glob("123.md")) == []
     current_markdown, new_logs_markdown = synthesizer.calls[0]
     assert current_markdown == USER_MEMORY_EMPTY_TEMPLATE
     assert '<message user_id="123">我喜欢中文注释</message>' in new_logs_markdown
     assert "用户 123 说喜欢中文注释" in new_logs_markdown
+
+
+def test_user_memory_filename_uses_readable_user_id_with_path_escape_encoding(tmp_path: Path) -> None:
+    scheduler = InlineScheduler()
+    service = MemoryService(
+        root_dir=tmp_path,
+        compressor=StubCompressor(outputs=["- 用户异常 ID 也不能逃逸目录"]),
+        user_memory_synthesizer=StubUserMemorySynthesizer(
+            outputs=["## 用户画像\n- 路径字符被编码\n\n## 相关记忆"]
+        ),
+        user_memory_scheduler=scheduler,
+    )
+
+    service.compress_and_append(
+        "group_1",
+        '[2026-06-18T10:00:00+08:00] user: <message user_id="../123">测试</message>',
+    )
+    scheduler.run_all()
+
+    assert service.read_user_memory("../123") == "## 用户画像\n- 路径字符被编码\n\n## 相关记忆\n"
+    assert (tmp_path / "users" / "..%2F123.md").exists()
+    assert not (tmp_path / "123.md").exists()
 
 
 def test_group_chat_updates_multiple_user_memories_without_crossing_raw_messages(tmp_path: Path) -> None:

@@ -40,13 +40,13 @@
 
 会话日志存到：
 
-`root_dir/sessions/<sha256(session_id)>.md`
+`root_dir/sessions/<url-encoded-session_id>.md`
 
 用户记忆存到：
 
-`root_dir/users/<sha256(user_id)>.md`
+`root_dir/users/<url-encoded-user_id>.md`
 
-`session_id` 和 `user_id` 都不直接进入路径，统一做 `sha256`，避免路径逃逸。
+`session_id` 和 `user_id` 都需要便于人工排查和定位，因此不做哈希。常见会话 ID 会直接落成 `private_123.md` / `group_456.md`，常见 QQ 数字 ID 会直接落成 `123.md`；包含 `/` 等路径保留字符的异常 ID 会做 URL segment 编码后再写入对应目录。
 
 ## 4. 压缩与内化
 
