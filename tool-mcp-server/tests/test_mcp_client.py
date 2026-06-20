@@ -40,7 +40,19 @@ class StubAsyncClient:
             return StubResponse(content=b"image")
         if path.endswith("/memory"):
             user_id = path.split("/")[-2]
-            return StubResponse(payload={"user_id": user_id, "content_markdown": "## 用户画像\n\n## 相关记忆\n"})
+            params = params or {}
+            start_line = int(params.get("start_line", 0))
+            line_count = int(params.get("line_count", 200))
+            return StubResponse(
+                payload={
+                    "user_id": user_id,
+                    "content_markdown": "## 用户画像\n\n## 相关记忆\n",
+                    "start_line": start_line,
+                    "line_count": line_count,
+                    "total_lines": 3,
+                    "has_more": False,
+                }
+            )
         return StubResponse(payload={"ok": True, "data": {"messages": []}})
 
 
@@ -83,9 +95,16 @@ async def test_get_user_memory_calls_memory_service_raw_api() -> None:
         timeout_seconds=5,
     )
 
-    result = await client.get_user_memory("123")
+    result = await client.get_user_memory("123", start_line=4, line_count=20)
 
-    assert result == {"user_id": "123", "content_markdown": "## 用户画像\n\n## 相关记忆\n"}
+    assert result == {
+        "user_id": "123",
+        "content_markdown": "## 用户画像\n\n## 相关记忆\n",
+        "start_line": 4,
+        "line_count": 20,
+        "total_lines": 3,
+        "has_more": False,
+    }
     assert StubAsyncClient.requests == [
-        ("http://memory", "/api/v1/users/123/memory", None),
+        ("http://memory", "/api/v1/users/123/memory", {"start_line": 4, "line_count": 20}),
     ]

@@ -10,3 +10,4 @@ memory:
   openai_base_url: ""
   llm_timeout: 30.0
   llm_max_retries: 3
+  session_max_lines: 500

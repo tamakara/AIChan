@@ -30,6 +30,7 @@ class MemorySettings(BaseModel):
     openai_base_url: StrictStr
     llm_timeout: float
     llm_max_retries: StrictInt
+    session_max_lines: StrictInt
 
     @field_validator("root_dir", "model", "openai_api_key", "openai_base_url")
     @classmethod
@@ -64,6 +65,20 @@ class MemorySettings(BaseModel):
             raise TypeError("必须是整数")
         if value < 0:
             raise ValueError("不能小于 0")
+        return value
+
+    @field_validator("session_max_lines", mode="before")
+    @classmethod
+    def _validate_session_max_lines(cls, value: Any) -> int:
+        if isinstance(value, str):
+            try:
+                value = int(value)
+            except ValueError as exc:
+                raise TypeError("必须是整数") from exc
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise TypeError("必须是整数")
+        if value < 1:
+            raise ValueError("必须大于 0")
         return value
 
 

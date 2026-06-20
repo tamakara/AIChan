@@ -91,13 +91,27 @@ class ToolMcpClient:
                 raise RuntimeError(f"tool-mcp request failed: {exc}") from exc
         return response.content
 
-    async def get_user_memory(self, user_id: str) -> dict[str, Any]:
+    async def get_user_memory(
+        self,
+        user_id: str,
+        *,
+        start_line: int,
+        line_count: int,
+    ) -> dict[str, Any]:
         payload = await self._get_raw_json(
             self._memory_base_url,
             f"/api/v1/users/{user_id}/memory",
+            params={"start_line": start_line, "line_count": line_count},
             action="user memory",
         )
-        if not isinstance(payload.get("user_id"), str) or not isinstance(payload.get("content_markdown"), str):
+        if (
+            not isinstance(payload.get("user_id"), str)
+            or not isinstance(payload.get("content_markdown"), str)
+            or not isinstance(payload.get("start_line"), int)
+            or not isinstance(payload.get("line_count"), int)
+            or not isinstance(payload.get("total_lines"), int)
+            or not isinstance(payload.get("has_more"), bool)
+        ):
             raise RuntimeError("tool-mcp returned invalid user memory payload")
         return payload
 

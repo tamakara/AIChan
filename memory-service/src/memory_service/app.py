@@ -21,6 +21,7 @@ def create_app() -> FastAPI:
     memory_service = MemoryService(
         root_dir=settings.memory.root_dir,
         compressor=OpenAiMemoryCompressor(settings.memory),
+        session_max_lines=settings.memory.session_max_lines,
         user_memory_synthesizer=OpenAiUserMemorySynthesizer(settings.memory),
         user_memory_scheduler=ThreadedUserMemoryScheduler(max_workers=1),
     )

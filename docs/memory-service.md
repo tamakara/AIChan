@@ -31,10 +31,17 @@
   - 语义：同步返回 session 无损压缩结果；压缩成功后，服务会异步提炼用户级记忆，不阻塞该接口。
 
 - `GET /api/v1/users/{user_id}/memory`
+  - 查询参数：
+    - `start_line: int = 0`，0-based 起始行号
+    - `line_count: int = 200`，最多返回多少行
   - 响应：
     - `user_id: str`
     - `content_markdown: str`
-  - 语义：读取用户长期记忆，不存在时返回空模板，不返回 `404`。
+    - `start_line: int`
+    - `line_count: int`
+    - `total_lines: int`
+    - `has_more: bool`
+  - 语义：按原始 markdown 行读取用户长期记忆，不存在时返回空模板，不返回 `404`。超范围分页不报错，按切片语义返回空或剩余内容；只要切片非空，`content_markdown` 末尾补一个换行。
 
 ## 3. 存储结构
 
@@ -71,6 +78,7 @@ session 无损压缩 prompt 要求：
 - 同一批记录里出现多个 `user_id` 时，分别更新各自用户记忆。
 - 每个用户更新都串行加锁，避免并发写入覆盖。
 - 内化失败只记日志，不影响 `/compress` 响应，也不回滚 session 日志。
+- session 无损日志每次 `/compress` 追加后都会按原始行数做容量控制；超过 `memory.session_max_lines` 时，直接删掉最旧前缀行，只保留最后 N 行。
 
 ## 5. 配置项
 
@@ -85,10 +93,11 @@ session 无损压缩 prompt 要求：
 | `memory.openai_base_url` | str | OpenAI 兼容 API 地址 |
 | `memory.llm_timeout` | float | LLM 请求超时（秒） |
 | `memory.llm_max_retries` | int | OpenAI SDK 重试次数 |
+| `memory.session_max_lines` | int | session 无损日志允许保留的最大原始行数，默认 `500` |
 
 ## 6. 故障语义
 
 - session 读取失败：返回空字符串。
-- user 记忆读取失败：返回空模板。
+- user 记忆读取失败：返回空模板；分页元信息仍按空模板或当前切片结果计算。
 - session 压缩失败：`/compress` 返回 500。
 - user 内化失败：只记录日志，不影响 `/compress`。

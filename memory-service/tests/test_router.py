@@ -72,4 +72,58 @@ def test_get_missing_user_memory_returns_empty_template(tmp_path: Path) -> None:
     response = client.get("/api/v1/users/123/memory")
 
     assert response.status_code == 200
-    assert response.json() == {"user_id": "123", "content_markdown": USER_MEMORY_EMPTY_TEMPLATE}
+    assert response.json() == {
+        "user_id": "123",
+        "content_markdown": USER_MEMORY_EMPTY_TEMPLATE,
+        "start_line": 0,
+        "line_count": 200,
+        "total_lines": 3,
+        "has_more": False,
+    }
+
+
+def test_get_user_memory_returns_requested_page_with_metadata(tmp_path: Path) -> None:
+    client = build_client(tmp_path)
+    (tmp_path / "users").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "users" / "123.md").write_text(
+        "## 用户画像\n- A\n\n## 相关记忆\n- B\n- C\n",
+        encoding="utf-8",
+    )
+
+    response = client.get("/api/v1/users/123/memory", params={"start_line": 2, "line_count": 2})
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "user_id": "123",
+        "content_markdown": "\n## 相关记忆\n",
+        "start_line": 2,
+        "line_count": 2,
+        "total_lines": 6,
+        "has_more": True,
+    }
+
+
+def test_get_user_memory_returns_empty_page_when_start_line_exceeds_total_lines(tmp_path: Path) -> None:
+    client = build_client(tmp_path)
+
+    response = client.get("/api/v1/users/123/memory", params={"start_line": 10, "line_count": 5})
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "user_id": "123",
+        "content_markdown": "",
+        "start_line": 10,
+        "line_count": 5,
+        "total_lines": 3,
+        "has_more": False,
+    }
+
+
+def test_get_user_memory_rejects_invalid_pagination_query(tmp_path: Path) -> None:
+    client = build_client(tmp_path)
+
+    negative_start = client.get("/api/v1/users/123/memory", params={"start_line": -1})
+    zero_count = client.get("/api/v1/users/123/memory", params={"line_count": 0})
+
+    assert negative_start.status_code == 422
+    assert zero_count.status_code == 422

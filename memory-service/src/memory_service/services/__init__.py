@@ -1,4 +1,10 @@
-from .memory import CompressResult, MemoryCompressor, MemoryService, OpenAiMemoryCompressor
+from .memory import (
+    CompressResult,
+    MemoryCompressor,
+    MemoryService,
+    OpenAiMemoryCompressor,
+    UserMemoryPage,
+)
 from .user_memory import (
     OpenAiUserMemorySynthesizer,
     ThreadedUserMemoryScheduler,
@@ -13,6 +19,7 @@ __all__ = [
     "OpenAiMemoryCompressor",
     "OpenAiUserMemorySynthesizer",
     "ThreadedUserMemoryScheduler",
+    "UserMemoryPage",
     "UserMemoryScheduler",
     "UserMemorySynthesizer",
 ]

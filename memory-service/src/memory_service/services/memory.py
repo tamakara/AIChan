@@ -39,6 +39,16 @@ class CompressResult:
     added_count: int
 
 
+@dataclass(frozen=True)
+class UserMemoryPage:
+    user_id: str
+    content_markdown: str
+    start_line: int
+    line_count: int
+    total_lines: int
+    has_more: bool
+
+
 class MemoryCompressor(Protocol):
     def compress(self, messages_text: str) -> str:
         pass
@@ -71,12 +81,14 @@ class MemoryService:
         self,
         root_dir: str | Path,
         compressor: MemoryCompressor,
+        session_max_lines: int = 500,
         user_memory_synthesizer: UserMemorySynthesizer | None = None,
         user_memory_scheduler: UserMemoryScheduler | None = None,
     ) -> None:
         self._logger = get_logger("memory")
         self._root_dir = Path(root_dir)
         self._compressor = compressor
+        self._session_max_lines = session_max_lines
         self._user_memory_synthesizer = user_memory_synthesizer
         self._user_memory_scheduler = user_memory_scheduler
         self._root_dir.mkdir(parents=True, exist_ok=True)
@@ -99,6 +111,19 @@ class MemoryService:
             return USER_MEMORY_EMPTY_TEMPLATE
         return path.read_text(encoding="utf-8")
 
+    def read_user_memory_page(self, user_id: str, start_line: int, line_count: int) -> UserMemoryPage:
+        if start_line < 0:
+            raise ValueError("start_line must be non-negative")
+        if line_count < 1:
+            raise ValueError("line_count must be positive")
+        content_markdown = self.read_user_memory(user_id)
+        return _paginate_user_memory(
+            user_id=user_id,
+            content_markdown=content_markdown,
+            start_line=start_line,
+            line_count=line_count,
+        )
+
     def compress_and_append(self, session_id: str, messages_text: str) -> CompressResult:
         current = self.read(session_id)
         if not messages_text.strip():
@@ -111,6 +136,10 @@ class MemoryService:
             return CompressResult(content_markdown=current, added_markdown="", added_count=0)
 
         content_markdown = _append_markdown(current=current, added=added_markdown)
+        content_markdown = _truncate_session_markdown(
+            content_markdown=content_markdown,
+            max_lines=self._session_max_lines,
+        )
         self._session_memory_path(session_id).write_text(content_markdown, encoding="utf-8")
         self._schedule_user_memory_update(messages_text=messages_text, added_markdown=added_markdown)
         return CompressResult(
@@ -284,3 +313,35 @@ def _normalize_user_memory_markdown(raw: str) -> str:
     if related_block:
         body = f"{body}\n{related_block}"
     return f"{body}\n"
+
+
+def _paginate_user_memory(
+    *,
+    user_id: str,
+    content_markdown: str,
+    start_line: int,
+    line_count: int,
+) -> UserMemoryPage:
+    lines = content_markdown.splitlines()
+    total_lines = len(lines)
+    paged_lines = lines[start_line : start_line + line_count]
+    paged_markdown = "\n".join(paged_lines)
+    if paged_lines:
+        paged_markdown = f"{paged_markdown}\n"
+    has_more = start_line + len(paged_lines) < total_lines
+    return UserMemoryPage(
+        user_id=user_id,
+        content_markdown=paged_markdown,
+        start_line=start_line,
+        line_count=line_count,
+        total_lines=total_lines,
+        has_more=has_more,
+    )
+
+
+def _truncate_session_markdown(*, content_markdown: str, max_lines: int) -> str:
+    lines = content_markdown.splitlines()
+    if len(lines) <= max_lines:
+        return content_markdown
+    kept_lines = lines[-max_lines:]
+    return "\n".join(kept_lines) + "\n"

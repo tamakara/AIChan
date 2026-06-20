@@ -22,11 +22,23 @@ MCP Gateway 通过 `tool-mcp-server/docker-mcp-catalog.yml` 中的 remote server
 | `qq_get_user_info` | 查询用户信息，调用 hub-service |
 | `file_get_metadata` | 根据 SHA-256 `object_key` 查询文件元数据，调用 file-service |
 | `file_read_text` | 根据 SHA-256 `object_key` 读取文本类文件，非文本由 file-service 返回 422 |
-| `memory_get_user_memory` | 根据 `user_id` 读取 memory-service 内化后的用户长期记忆 |
+| `memory_get_user_memory` | 根据 `user_id` 按行分页读取 memory-service 内化后的用户长期记忆 |
 | `image_describe` | 根据 SHA-256 `object_key` 读取图片 bytes，调用独立 vision 模型生成描述或回答问题 |
 | `video_describe` | 根据 SHA-256 `object_key` 读取视频 bytes，抽取关键帧后调用独立 vision 模型生成描述或回答问题 |
 
-`memory_get_user_memory` 内部调用 `memory-service` 的 `GET /api/v1/users/{user_id}/memory`。该接口不使用 hub/file-service 的 `{ok, data}` 包装，tool-mcp-server 会按 memory-service 原始 JSON 响应校验 `user_id` 和 `content_markdown`。
+`memory_get_user_memory` 内部调用 `memory-service` 的 `GET /api/v1/users/{user_id}/memory`，支持：
+
+- `start_line=0` 表示第一行
+- `line_count` 表示最多返回多少行原始 markdown
+
+该接口不使用 hub/file-service 的 `{ok, data}` 包装，tool-mcp-server 会按 memory-service 原始 JSON 响应校验以下字段：
+
+- `user_id`
+- `content_markdown`
+- `start_line`
+- `line_count`
+- `total_lines`
+- `has_more`
 
 `image_describe` 返回 JSON 字符串：
 

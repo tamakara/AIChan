@@ -132,6 +132,44 @@ def test_read_missing_user_memory_returns_empty_template(tmp_path: Path) -> None
     assert service.read_user_memory("123") == USER_MEMORY_EMPTY_TEMPLATE
 
 
+def test_read_user_memory_page_returns_original_markdown_slice(tmp_path: Path) -> None:
+    service = MemoryService(root_dir=tmp_path, compressor=StubCompressor())
+    (tmp_path / "users").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "users" / "123.md").write_text(
+        "## 用户画像\n- A\n\n## 相关记忆\n- B\n- C\n",
+        encoding="utf-8",
+    )
+
+    page = service.read_user_memory_page("123", start_line=1, line_count=3)
+
+    assert page.user_id == "123"
+    assert page.content_markdown == "- A\n\n## 相关记忆\n"
+    assert page.start_line == 1
+    assert page.line_count == 3
+    assert page.total_lines == 6
+    assert page.has_more is True
+
+
+def test_read_user_memory_page_returns_empty_slice_when_start_line_out_of_range(tmp_path: Path) -> None:
+    service = MemoryService(root_dir=tmp_path, compressor=StubCompressor())
+
+    page = service.read_user_memory_page("123", start_line=10, line_count=5)
+
+    assert page.content_markdown == ""
+    assert page.total_lines == 3
+    assert page.has_more is False
+
+
+def test_read_user_memory_page_rejects_invalid_pagination(tmp_path: Path) -> None:
+    service = MemoryService(root_dir=tmp_path, compressor=StubCompressor())
+
+    with pytest.raises(ValueError, match="start_line must be non-negative"):
+        service.read_user_memory_page("123", start_line=-1, line_count=5)
+
+    with pytest.raises(ValueError, match="line_count must be positive"):
+        service.read_user_memory_page("123", start_line=0, line_count=0)
+
+
 def test_compress_schedules_user_memory_update_from_message_user_id(tmp_path: Path) -> None:
     scheduler = InlineScheduler()
     synthesizer = StubUserMemorySynthesizer()
@@ -256,3 +294,26 @@ def test_shutdown_delegates_to_user_memory_scheduler(tmp_path: Path) -> None:
     service.shutdown(timeout_seconds=3.5)
 
     assert scheduler.shutdown_calls == [3.5]
+
+
+def test_session_markdown_is_truncated_to_last_max_lines(tmp_path: Path) -> None:
+    compressor = StubCompressor(outputs=["- 第一条\n- 第二条", "- 第三条\n- 第四条"])
+    service = MemoryService(root_dir=tmp_path, compressor=compressor, session_max_lines=3)
+
+    service.compress_and_append("private_1", "first")
+    result = service.compress_and_append("private_1", "second")
+
+    assert result.added_markdown == "- 第三条\n- 第四条"
+    assert result.added_count == 2
+    assert result.content_markdown == "- 第二条\n- 第三条\n- 第四条\n"
+    assert service.read("private_1") == "- 第二条\n- 第三条\n- 第四条\n"
+
+
+def test_session_markdown_is_not_truncated_when_under_limit(tmp_path: Path) -> None:
+    compressor = StubCompressor(outputs=["- 第一条", "- 第二条"])
+    service = MemoryService(root_dir=tmp_path, compressor=compressor, session_max_lines=5)
+
+    service.compress_and_append("private_1", "first")
+    result = service.compress_and_append("private_1", "second")
+
+    assert result.content_markdown == "- 第一条\n- 第二条\n"

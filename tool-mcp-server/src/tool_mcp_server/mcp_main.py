@@ -93,17 +93,31 @@ def create_server() -> FastMCP:
         return json.dumps(result, ensure_ascii=False)
 
     @mcp.tool()
-    async def memory_get_user_memory(user_id: str) -> str:
+    async def memory_get_user_memory(
+        user_id: str,
+        start_line: int = 0,
+        line_count: int = 200,
+    ) -> str:
         """按用户 ID 读取 memory-service 内化后的长期用户记忆。
 
         Args:
             user_id: QQ 用户 ID 或其他上游传入的用户标识。
+            start_line: 0-based 起始行号；0 表示第一行。
+            line_count: 最多返回多少行原始 markdown。
         """
         normalized_user_id = str(user_id).strip()
         if not normalized_user_id:
             raise ValueError("user_id must not be empty")
+        if start_line < 0:
+            raise ValueError("start_line must be non-negative")
+        if line_count < 1:
+            raise ValueError("line_count must be positive")
 
-        result = await client.get_user_memory(user_id=normalized_user_id)
+        result = await client.get_user_memory(
+            user_id=normalized_user_id,
+            start_line=start_line,
+            line_count=line_count,
+        )
         return json.dumps(result, ensure_ascii=False)
 
     @mcp.tool()

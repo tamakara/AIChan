@@ -1,4 +1,6 @@
-from fastapi import APIRouter
+from dataclasses import asdict
+
+from fastapi import APIRouter, Query
 
 from ..logger import elapsed_ms, get_logger, log_info, start_timer
 from ..services import MemoryService
@@ -24,11 +26,17 @@ def create_router(memory_service: MemoryService) -> APIRouter:
         return MemoryResponse(session_id=session_id, content_markdown=memory_service.read(session_id))
 
     @router.get("/api/v1/users/{user_id}/memory", response_model=UserMemoryResponse)
-    def get_user_memory(user_id: str) -> UserMemoryResponse:
-        return UserMemoryResponse(
+    def get_user_memory(
+        user_id: str,
+        start_line: int = Query(default=0, ge=0),
+        line_count: int = Query(default=200, ge=1),
+    ) -> UserMemoryResponse:
+        page = memory_service.read_user_memory_page(
             user_id=user_id,
-            content_markdown=memory_service.read_user_memory(user_id),
+            start_line=start_line,
+            line_count=line_count,
         )
+        return UserMemoryResponse(**asdict(page))
 
     @router.post("/api/v1/memories/{session_id}/compress", response_model=CompressMemoryResponse)
     def compress_memory(session_id: str, request: CompressMemoryRequest) -> CompressMemoryResponse:

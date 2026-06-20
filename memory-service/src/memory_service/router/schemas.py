@@ -19,6 +19,10 @@ class UserMemoryResponse(BaseModel):
 
     user_id: str
     content_markdown: str
+    start_line: int
+    line_count: int
+    total_lines: int
+    has_more: bool
 
 
 class CompressMemoryRequest(BaseModel):
