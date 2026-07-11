@@ -92,19 +92,31 @@ hub-service 不再提供 `/api/v1/files/...` 文件读取接口；文件元数�
 
 ## 4. 防抖调度流程
 
-```
-事件到达 → private/group session 白名单过滤 → 入队 pending_events
-  → 重置 debounce_deadline
-  → 防抖静默窗口等待
-  → 窗口内无新消息 → 提取批次到 inflight_events
-  → 带 url 的媒体交给 file-service 入库；无 url 的 file 先尝试通过 NapCat file_id 换取下载 URL
-  → 转换为 <messages>
-  → POST /chat({input_xml})
-  → 运行期间新消息：单条转换为 <messages> 并 POST /queue-message
-  → agent-service 在同一轮推理内 drain queued messages 并收敛为最终 {output_xml}
-  → 按 <reply> 下 <message> 顺序转换并逐条 send_private_msg/send_group_msg/upload_*_file
-  → 仍有 pending → 重置窗口重跑
-  → 无 pending → 会话空闲
+```mermaid
+flowchart TD
+    event[收到 OneBot message 事件] --> allow{会话在白名单内<br/>且满足 mention / block 规则?}
+    allow -->|否| ignore([忽略])
+    allow -->|是| state{SessionRunner 正在调用 agent?}
+
+    state -->|否| pending[加入 pending_events<br/>重置防抖截止时间]
+    pending --> quiet{静默窗口结束?}
+    quiet -->|否，有新消息| pending
+    quiet -->|是| batch[冻结为 inflight 批次]
+    batch --> media[解析媒体 URL<br/>必要时向 NapCat 查询 file_id]
+    media --> store[有媒体时调用 file-service 入库]
+    store --> xml[转换为 messages XML]
+    xml --> chat[POST agent /chat]
+
+    state -->|是| queuedxml[将新事件转换为 messages XML]
+    queuedxml --> queue[POST agent /queue-message]
+    queue --> absorbed([由 agent 在 turn 边界吸收])
+
+    chat --> reply[取得 reply XML]
+    reply --> outbound[按 XML 顺序生成消息或文件上传动作]
+    outbound --> send[通过 NapCat WS 逐条发送]
+    send --> remaining{还有 pending 事件?}
+    remaining -->|是| pending
+    remaining -->|否| idle([会话空闲])
 ```
 
 关键规则：

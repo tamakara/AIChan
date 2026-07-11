@@ -4,6 +4,18 @@
 
 `tool-mcp-server` 是 AICHAN 自定义 MCP 工具层。它不直接连接 NapCat，不持有 MinIO 凭证；QQ 查询通过 HTTP 调用 `hub-service`，文件读取、图片理解和视频理解通过 HTTP 调用 `file-service`，用户长期记忆检索通过 HTTP 调用 `memory-service`。
 
+```mermaid
+flowchart LR
+    agent[agent-service] -->|MCP SSE| gateway[MCP Gateway]
+    gateway -->|Streamable HTTP /mcp| tools[tool-mcp-server]
+    tools -->|QQ 信息与历史| hub[hub-service]
+    tools -->|metadata / text / bytes| files[file-service]
+    tools -->|user memory| memory[memory-service]
+    tools -->|图片或抽帧后的画面| vision[Vision LLM API]
+```
+
+该层只做“模型工具协议 ↔ 领域 HTTP API”的适配和媒体理解编排，不复制领域数据，也不绕过服务边界访问 NapCat、MinIO 或记忆卷。
+
 ## 2. 启动方式
 
 Compose 中的常驻 `tool-mcp-server` 容器直接运行 MCP 网络服务：

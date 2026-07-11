@@ -144,31 +144,32 @@ memory 读取成功后会在系统层后插入或覆盖长期记忆 system messa
 
 ### 3.3 Agent 执行循环
 
-```
-refresh memory markdown
-pending_user_messages = [input_xml]
-  → for turn in max_turns:
-    → staged add_message("system", "<turn index=... />")
-    → staged add_message("user") × pending_user_messages
-    → generate with retry(system层 + memory层 + record层 + staged_messages)
-    → if finish_reason == "stop":
-        → drain queued_user_messages
-        → if 有 queued:
-            → pending_user_messages = queued
-            → continue
-        → else:
-            → staged add_message("assistant")   # 只在最终 XML 合法且真正发送时提交
-            → commit staged_messages
-            → 若记录层条目数达到阈值，则异步投递普通消息记录层给 memory-service 压缩
-            → finish_run_success()    # 上报观测
-            → return AgentReply(output_xml)
-    → if finish_reason == "tool_calls":
-        → for each tool_call:
-            → McpGateway.call_tool()
-            → staged add_message("tool")
-        → drain queued_user_messages
-        → pending_user_messages = queued
-    → else: raise
+```mermaid
+flowchart TD
+    start([收到 /chat]) --> refresh[从 memory-service 刷新 session 记忆]
+    refresh --> staged[建立 staged messages<br/>写入 turn 与待处理 user 消息]
+    staged --> generate[调用 LLM]
+    generate --> result{finish_reason}
+
+    result -->|tool_calls| calltools[逐个调用 MCP 工具<br/>写入 assistant tool_calls 与 tool result]
+    calltools --> drain1[吸收 queued user messages]
+    drain1 --> limit1{还有推理轮次?}
+    limit1 -->|是| staged
+    limit1 -->|否| fallback[生成固定兜底 reply]
+
+    result -->|stop| valid{reply XML 合法?}
+    valid -->|否且有重试预算| generate
+    valid -->|否且预算耗尽| fallback
+    valid -->|是| drain2[吸收 queued user messages]
+    drain2 --> queued{存在运行中新消息?}
+    queued -->|是| staged
+    queued -->|否| commit[一次性提交 staged messages]
+    fallback --> failedcommit[提交 staged messages 与兜底 assistant<br/>不触发记忆压缩]
+    failedcommit --> finish
+    commit --> compress{记录层达到压缩阈值?}
+    compress -->|是| background[后台投递 memory 压缩]
+    compress -->|否| finish([返回 output_xml])
+    background --> finish
 ```
 
 关键设计：
@@ -198,18 +199,12 @@ pending_user_messages = [input_xml]
 - `finish_run_success/error`：合并 metadata（不覆盖 start_run 的初始字段）
 
 Langfuse trace 结构：
-```
-agent.chat.run (chain)
-├── metadata: {message_count, max_turns, run_id, status, duration_ms}
-├── output: {output_xml}
-├── agent.llm.generation (generation) × N
-│   ├── input: context.messages
-│   ├── output: {content, tool_calls, finish_reason}
-│   └── metadata: {turn, duration_ms}
-└── <tool_name> (tool) × N
-    ├── input: tool_args
-    ├── output: 结构化 JSON（自动解析）
-    └── metadata: {turn, status, error, duration_ms}
+
+```mermaid
+flowchart TD
+    trace[agent.chat.run<br/>chain] --> generation[agent.llm.generation × N<br/>input・output・turn・duration]
+    trace --> tool[tool_name × N<br/>args・JSON result・status・duration]
+    trace --> outcome[最终 metadata<br/>status・duration・output_xml]
 ```
 
 ## 4. 异常处理

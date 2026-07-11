@@ -8,50 +8,103 @@ AICHAN 是一个基于 NapCat + OneBot v11 接入的 QQ 私聊/群聊助理系�
 
 ## 2. 架构总览
 
+```mermaid
+flowchart TB
+    subgraph access[QQ 接入层]
+        user([QQ 用户]) <--> napcat[NapCat<br/>OneBot v11]
+        napcat <-->|反向 WebSocket<br/>事件与动作| hub[hub-service<br/>白名单・防抖・XML 转换]
+    end
+
+    subgraph reasoning[推理与工具层]
+        hub -->|POST /sessions・/chat・/queue-message| agent[agent-service<br/>会话上下文・Agent Loop]
+        agent -->|Chat Completions| llm[主 LLM API]
+        agent -->|MCP SSE| gateway[MCP Gateway]
+        gateway -->|Streamable HTTP| tools[tool-mcp-server]
+    end
+
+    subgraph domain[领域服务层]
+        files[file-service<br/>文件存储边界]
+        memory[memory-service<br/>长期记忆边界]
+    end
+
+    hub -->|媒体入库 / 出站读取| files
+    agent -->|session 记忆读取 / 压缩| memory
+    tools -->|QQ 信息查询| hub
+    tools -->|文件读取 / 媒体理解| files
+    tools -->|user 记忆读取| memory
+
+    subgraph persistence[持久化层]
+        minio[(MinIO<br/>文件真身)]
+        sqlite[(SQLite<br/>文件元数据)]
+        markdown[(Markdown Volume<br/>session / user 记忆)]
+    end
+
+    files --> minio
+    files --> sqlite
+    memory --> markdown
 ```
-用户 ↔ NapCat ↔ hub-service ↔ agent-service ↔ MCP Gateway ↔ tool-mcp-server
-                  (WS)         (HTTP)    │    (SSE)             (MCP HTTP)
-                    │                    │             │
-                    └────────── file-service            │
-                                   │                    │
-                              MinIO + SQLite            │
-                                      memory-service ───┘
-                                         │
-                                  markdown volume
-```
+
+图中实线代表运行时调用。`memory-service` 自身提供 HTTP 领域接口；`memory_get_user_memory` MCP 工具由 `tool-mcp-server` 包装后经 MCP Gateway 暴露给 agent。
 
 | 服务 | 职责 | 端口 |
 |------|------|------|
 | `napcat` | OneBot v11 QQ 客户端，收发消息 | 6099 (WebUI) |
-| `tool-mcp-server` | 将 QQ 查询、文本文件读取、图片/视频理解、用户记忆检索包装为 MCP 工具 | 内部 |
+| `tool-mcp-server` | 将 QQ 查询、文本文件读取、图片/视频理解、用户记忆检索包装为 MCP 工具 | 8030（内部） |
 | `hub-service` | 会话编排中枢：私聊/群聊白名单、防抖合并、XML 转换、调用 agent、统一持有 NapCat WS | 8020 |
 | `agent-service` | LLM 推理执行：多轮对话、MCP 工具调用、AICHAN XML 回复生成 | 8000 |
 | `memory-service` | 双层长期记忆：按 session_id 保存无损压缩日志，按 user_id 异步内化用户画像与相关记忆 | 8050 |
 | `file-service` | 文件存储边界：SHA-256 MinIO 真身 + SQLite 影子元数据 | 8040 |
-| `mcp-gateway` | MCP 工具网关，聚合 playwright/fetch/time/tool 工具 | 9000 |
+| `mcp-gateway` | MCP 工具网关，聚合 Tavily、time 与项目自定义工具 | 9000 |
 | `minio` | 私有对象存储，只保存 SHA-256 文件真身 | 9000/9001 |
 
 ## 3. 消息数据流
 
+```mermaid
+sequenceDiagram
+    autonumber
+    actor U as QQ 用户
+    participant N as NapCat
+    participant H as hub-service
+    participant F as file-service
+    participant A as agent-service
+    participant M as memory-service
+    participant G as MCP Gateway
+    participant T as tool-mcp-server
+    participant L as LLM API
+
+    U->>N: 发送私聊或群聊消息
+    N->>H: OneBot v11 WebSocket 事件
+    H->>H: 白名单过滤并按 session_id 防抖合并
+    opt 消息包含媒体
+        H->>F: POST /api/v1/files/from-url
+        F-->>H: SHA-256 object_key
+    end
+    H->>A: POST /chat，携带 messages XML
+    A->>M: GET session 长期记忆
+    M-->>A: Markdown 记忆
+    loop 最多 max_turns
+        A->>L: 上下文 + MCP tools schema
+        alt 模型请求调用工具
+            L-->>A: tool_calls
+            A->>G: call_tool
+            G->>T: 调用自定义 MCP 工具
+            T-->>G: 领域服务查询结果
+            G-->>A: tool result
+        else 模型完成回复
+            L-->>A: reply XML
+        end
+    end
+    A-->>H: output_xml
+    H->>H: 转换为 OneBot 消息段或文件上传动作
+    H->>N: WebSocket send_action
+    N-->>U: QQ 回复
+    opt 记录层达到压缩阈值
+        A-->>M: 后台提交 session 日志压缩
+        M-->>M: 异步按 user_id 内化用户记忆
+    end
 ```
-[QQ 用户发消息]
-  → NapCat OneBot v11 WS 事件 → hub-service 接收
-  → private/group session 白名单过滤
-  → 按规范化 session_id 防抖合并多轮输入
-  → 图片/文件/语音/视频交给 file-service 入库；无 url 的 QQ 文件会先通过 NapCat file_id 尝试换取下载 URL
-  → OneBot v11 私聊/群聊事件转换为 <messages>，媒体节点只保留 SHA-256 object_key
-  → POST /chat → agent-service
-  → agent-service 读取 memory-service，将该会话 markdown 作为 memory system message 注入
-  → Agent 多轮 LLM 推理 + MCP 工具调用
-  → 如需要用户长期画像，agent 可通过 MCP 工具 memory_get_user_memory(user_id) 检索 user 级记忆
-  → LLM 输出 <reply>
-  → 当记录层条目数达到阈值时，agent-service 异步提交普通消息记录给 memory-service 压缩，成功后按快照边界清理旧记录并保留系统层与记忆层
-  → memory-service 在 session 无损压缩成功后异步按 user_id 内化用户记忆
-  → agent-service 返回 {output_xml}
-  → hub-service 转换为 OneBot v11 消息段 / 文件上传动作
-  → NapCat WS send_action(send_private_msg/send_group_msg/upload_*_file)
-  → QQ 用户收到回复
-```
+
+运行中同一会话出现新消息时，hub 不等待上一轮完成，而是调用 agent 的 `/sessions/{session_id}/queue-message`；agent 在 turn 边界吸收新输入，并放弃尚未发送的旧回复。
 
 ## 4. 接口契约
 

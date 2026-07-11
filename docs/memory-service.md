@@ -9,6 +9,17 @@
 
 前者保留聊天记录的可追溯日志形态，后者是可检索的长期记忆，不要求逐字保真。
 
+`memory-service` 是 HTTP 领域服务，不直接实现 MCP 协议。agent 自动读写 session 记忆；模型按需使用的 `memory_get_user_memory` 则由 `tool-mcp-server` 包装为 MCP 工具。
+
+```mermaid
+flowchart LR
+    agent[agent-service] -->|GET session 记忆<br/>POST compress| api[memory-service HTTP API]
+    api --> session[(sessions/*.md<br/>无损日志)]
+    api -->|压缩成功后异步内化| user[(users/*.md<br/>用户画像与相关记忆)]
+    tools[tool-mcp-server] -->|GET user 记忆| api
+    model[Agent 中的模型] -->|MCP: memory_get_user_memory| tools
+```
+
 ## 2. 接口契约
 
 - `GET /healthz`
@@ -56,6 +67,28 @@
 `session_id` 和 `user_id` 都需要便于人工排查和定位，因此不做哈希。常见会话 ID 会直接落成 `private_123.md` / `group_456.md`，常见 QQ 数字 ID 会直接落成 `123.md`；包含 `/` 等路径保留字符的异常 ID 会做 URL segment 编码后再写入对应目录。
 
 ## 4. 压缩与内化
+
+```mermaid
+sequenceDiagram
+    participant A as agent-service
+    participant M as memory-service
+    participant L as Memory LLM
+    participant S as session Markdown
+    participant U as user Markdown
+
+    A->>M: POST /memories/{session_id}/compress
+    M->>L: 无损压缩 messages_text
+    L-->>M: added_markdown
+    M->>S: 追加并裁剪至 session_max_lines
+    M-->>A: 同步返回压缩结果
+    M-->>M: 异步从原始记录提取 user_id
+    loop 每个相关用户
+        M->>M: 获取 user_id 级锁
+        M->>L: 基于旧记忆内化新增记录
+        L-->>M: 用户画像与相关记忆
+        M->>U: 覆盖该用户 Markdown
+    end
+```
 
 session 无损压缩 prompt 要求：
 

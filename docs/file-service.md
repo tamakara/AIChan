@@ -14,6 +14,20 @@
 
 不再按 QQ、会话、消息、来源或扩展名拆分对象路径。同一内容重复出现时，MinIO 只保留一份真身，SQLite 追加新的影子元数据。
 
+```mermaid
+flowchart LR
+    caller[hub-service / tool-mcp-server] -->|临时 URL| download[file-service 下载并校验大小]
+    download --> hash[计算 SHA-256]
+    hash --> exists{物理文件已存在?}
+    exists -->|否| object[(MinIO<br/>sha256 真身)]
+    exists -->|是| reuse[复用已有真身]
+    object --> shadow[(SQLite file_shadows)]
+    reuse --> shadow
+    shadow --> result[返回 object_key 与最新元数据]
+    cleaner[定时清理任务] -->|按 updated_at 删除过期项| object
+    cleaner -->|同步清理元数据| shadow
+```
+
 ## 2. 接口契约
 
 - `GET /healthz`
@@ -50,6 +64,25 @@
   - 仅支持 `text/*` 或常见文本扩展名；非文本返回 422
 
 ## 3. 存储模型
+
+```mermaid
+erDiagram
+    PHYSICAL_FILES ||--o{ FILE_SHADOWS : "sha256"
+    PHYSICAL_FILES {
+        string sha256 PK
+        string mime
+        int size
+        datetime created_at
+        datetime updated_at
+    }
+    FILE_SHADOWS {
+        string sha256 FK
+        string name
+        string mime
+        int size
+        datetime created_at
+    }
+```
 
 MinIO：
 - bucket：`storage.bucket`

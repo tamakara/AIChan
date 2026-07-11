@@ -4,6 +4,16 @@
 
 AICHAN 在 `hub-service` 与 `agent-service` 之间使用自有 XML 协议。OneBot v11 只存在于 NapCat 接入和 QQ 动作发送边界，`hub-service` 负责把 QQ 私聊/群聊事件转换为 `<messages>`，并把 agent 的 `<reply>` 按顺序转回 OneBot v11 动作。
 
+```mermaid
+flowchart LR
+    event[OneBot v11 JSON 事件] -->|hub 过滤与媒体入库| input[AICHAN messages XML]
+    input -->|HTTP POST /chat| agent[agent-service]
+    agent --> output[AICHAN reply XML]
+    output -->|hub 校验并转换| action[OneBot v11 消息段 / 上传动作]
+```
+
+协议边界的目的，是让 agent 不依赖 OneBot 字段细节，让 hub 不依赖模型厂商的消息结构。
+
 ## 2. 输入格式
 
 `hub-service` 在防抖窗口结束后，将同一 QQ 会话窗口内的消息合并为一个 `<messages>`。窗口级信息不重复写在每条消息里，而是在创建 agent session 时通过 `session_id=private_<user_id>|group_<group_id>` 和 `<session ... />` 系统消息提供。
@@ -125,8 +135,10 @@ LLM 最终回复必须是 `<reply>`，`<reply>` 下只能包含一个或多个 `
 
 ## 5. 容错处理
 
-agent-service 只接受最终 `<reply>` 作为标准输出。LLM 若返回非法 XML 或非 `<reply>` 根节点，agent-service 会将原始内容包装为：
+agent-service 只接受可解析且根节点为 `<reply>` 的最终输出。LLM 返回非法 XML 或错误根节点时，本轮 staged 消息不会提交，agent 会在统一生成重试预算内重试；预算耗尽后返回固定兜底：
 
 ```xml
-<reply><text>原始内容</text></reply>
+<reply><text>笨蛋，刚才脑袋短路了一下，稍后再试试喵。</text></reply>
 ```
+
+固定兜底是服务异常收口格式；正常模型输出仍应使用 `<reply><message>...</message></reply>` 的分组格式。
