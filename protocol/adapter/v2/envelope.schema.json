@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aichan.local/protocol/adapter/v2/envelope.schema.json",
+  "$defs": {
+    "base": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["version", "type", "id", "payload"],
+      "properties": {
+        "version": {"const": "2.0"},
+        "type": {"type": "string"},
+        "id": {"type": "string", "minLength": 1},
+        "correlation_id": {"type": ["string", "null"]},
+        "payload": {"type": "object"}
+      }
+    },
+    "registration": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["adapter_id", "instance_id", "display_name"],
+      "properties": {
+        "adapter_id": {"type": "string", "minLength": 1},
+        "instance_id": {"type": "string", "minLength": 1},
+        "display_name": {"type": "string", "minLength": 1},
+        "config_schema": {"type": "object"},
+        "config_summary": {"type": "object"},
+        "capabilities": {"type": "array", "items": {"type": "object"}},
+        "extensions": {"type": "array", "items": {"type": "object"}},
+        "skills": {"type": "array", "items": {"type": "object"}}
+      }
+    },
+    "event": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["event_id", "conversation_type", "conversation_id", "messages_xml"],
+      "properties": {
+        "event_id": {"type": "string", "minLength": 1},
+        "conversation_type": {"type": "string", "minLength": 1},
+        "conversation_id": {"type": "string", "minLength": 1},
+        "bot_id": {"type": ["string", "null"]},
+        "messages_xml": {"type": "string", "minLength": 1}
+      }
+    }
+  },
+  "oneOf": [
+    {"allOf": [{"$ref": "#/$defs/base"}, {"properties": {"type": {"const": "adapter.register"}, "payload": {"$ref": "#/$defs/registration"}}}]},
+    {"allOf": [{"$ref": "#/$defs/base"}, {"properties": {"type": {"const": "event.publish"}, "payload": {"$ref": "#/$defs/event"}}}]},
+    {"allOf": [{"$ref": "#/$defs/base"}, {"properties": {"type": {"enum": ["adapter.registered", "heartbeat.ping", "heartbeat.pong", "event.ack", "reply.deliver", "reply.ack", "capability.invoke", "capability.result", "protocol.error"]}}}]}
+  ]
+}

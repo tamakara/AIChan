@@ -1,0 +1,16 @@
+{
+  "version": "2.0",
+  "type": "adapter.register",
+  "id": "register-1",
+  "correlation_id": null,
+  "payload": {
+    "adapter_id": "qq",
+    "instance_id": "main",
+    "display_name": "QQ / NapCat",
+    "config_schema": {"type": "object"},
+    "config_summary": {"session_count": 1},
+    "capabilities": [{"name": "user.get", "input_schema": {"type": "object", "properties": {"user_id": {"type": "string"}}, "required": ["user_id"], "additionalProperties": false}, "output_schema": {"type": "object"}}],
+    "extensions": [{"type": "qq.poke", "directions": ["output"], "parameters_schema": {"type": "object", "properties": {"target_id": {"type": "string"}, "count": {"type": "integer"}}, "required": ["target_id"], "additionalProperties": false}}],
+    "skills": []
+  }
+}

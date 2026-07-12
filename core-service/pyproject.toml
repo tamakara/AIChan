@@ -1,20 +1,26 @@
 [project]
-name = "file-service"
+name = "core-service"
 version = "0.1.0"
-description = "AICHAN file storage service with SHA-256 object keys."
+description = "AICHAN Core adapter orchestration and asynchronous agent runtime."
 authors = [
     { name = "魂辛カラ", email = "tamakara@qq.com" }
 ]
 requires-python = ">=3.12"
 dependencies = [
+    "anyio>=4.6.2",
+    "defusedxml>=0.7.1",
     "fastapi>=0.115.6",
     "httpx>=0.28.1",
-    "minio>=7.2.16",
+    "jsonschema>=4.26.0",
+    "langfuse>=3.0.0",
+    "mcp>=1.13.0",
+    "openai>=1.65.0",
     "pydantic>=2.11.7",
     "pydantic-settings>=2.14.0",
-    "python-multipart>=0.0.20",
     "pyyaml>=6.0.3",
+    "python-multipart>=0.0.20",
     "uvicorn[standard]>=0.34.0",
+    "websockets>=16.0",
 ]
 
 [project.optional-dependencies]
@@ -24,7 +30,8 @@ test = [
 ]
 
 [project.scripts]
-file-service = "file_service.main:main"
+# 使用明确的服务名作为唯一入口，避免 `run` 这类通用命令名在容器/宿主机环境中语义不清。
+core-service = "core_service.main:main"
 
 [build-system]
 requires = ["uv_build>=0.11.7,<0.12.0"]

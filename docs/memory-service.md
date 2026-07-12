@@ -9,14 +9,14 @@
 
 前者保留聊天记录的可追溯日志形态，后者是可检索的长期记忆，不要求逐字保真。
 
-`memory-service` 是 HTTP 领域服务，不直接实现 MCP 协议。agent 自动读写 session 记忆；模型按需使用的 `memory_get_user_memory` 则由 `tool-mcp-server` 包装为 MCP 工具。
+`memory-service` 是 HTTP 领域服务，不直接实现 MCP 协议。Core 自动读写 session 记忆；模型按需使用的 `memory_get_user_memory` 由 `core-mcp-server` 包装为 MCP 工具。
 
 ```mermaid
 flowchart LR
-    agent[agent-service] -->|GET session 记忆<br/>POST compress| api[memory-service HTTP API]
+    agent[core-service] -->|GET session 记忆<br/>POST compress| api[memory-service HTTP API]
     api --> session[(sessions/*.md<br/>无损日志)]
     api -->|压缩成功后异步内化| user[(users/*.md<br/>用户画像与相关记忆)]
-    tools[tool-mcp-server] -->|GET user 记忆| api
+    tools[core-mcp-server] -->|GET user 记忆| api
     model[Agent 中的模型] -->|MCP: memory_get_user_memory| tools
 ```
 
@@ -70,7 +70,7 @@ flowchart LR
 
 ```mermaid
 sequenceDiagram
-    participant A as agent-service
+    participant A as core-service
     participant M as memory-service
     participant L as Memory LLM
     participant S as session Markdown

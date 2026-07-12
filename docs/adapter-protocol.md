@@ -1,22 +1,17 @@
-# Adapter Protocol v1
+# Adapter Protocol 2.0
 
-## 传输与鉴权
+适配器使用 Bearer Token 主动连接 `WS /api/v2/adapters/ws`。Envelope 固定包含 `version/type/id/correlation_id/payload`，其中 `version` 只能为 `2.0`，首包必须是 `adapter.register`。
 
-适配器主动连接 `WS /api/v1/adapters/ws`，请求携带 Bearer Token。所有 JSON 信封包含 `version/type/id/correlation_id/payload`，`version` 固定为 `1.0`。首条消息必须是 `adapter.register`。
-
-注册 payload 包含适配器/实例身份、配置 JSON Schema、脱敏配置摘要、capabilities、extensions 和 skills。`adapter_id:instance_id` 必须与 token 授权项一致；同实例新连接会替换旧连接。
-
-## 消息类型
+注册 Manifest 包含身份、配置摘要、capabilities、extensions 和 Markdown skills。Capability 的 JSON Schema 会直接生成 `adapter__*` 会话工具，并用于调用前后的输入输出校验。Extension 使用点分类型名和仅含标量属性的 object schema。
 
 | 请求 | 响应 | 说明 |
 |---|---|---|
-| `adapter.register` | `adapter.registered` | 注册完整能力快照 |
+| `adapter.register` | `adapter.registered` | 注册完整在线 Manifest |
 | `heartbeat.ping` | `heartbeat.pong` | 连接保活 |
-| `event.publish` | `event.ack` | 上报规范化 XML |
-| `reply.deliver` | `reply.ack` | hub 投递 agent 回复 |
-| `capability.invoke` | `capability.result` | 同轮查询适配器能力 |
-| 任意 | `protocol.error` | 协议错误 |
+| `event.publish` | `event.ack` | 通过 `messages_xml` 上报 XML v2 |
+| `reply.deliver` | `reply.ack` | 通过 `reply_xml` 接收回复 |
+| `capability.invoke` | `capability.result` | 调用当前适配器强类型能力 |
 
-event 和 command 使用稳定 ID。发送方等待 10 秒 ACK，最多尝试三次；接收方在进程内去重。媒体不走 WebSocket，统一使用 hub 的适配器文件 API。
+事件和命令使用稳定 ID。ACK 默认等待 10 秒、最多三次；接收端在当前进程内去重。媒体通过 `/api/v2/adapter/files/...` 入库或读取，不在 WebSocket 中传输二进制。
 
-语言无关信封 schema 位于 `protocol/adapter/v1/envelope.schema.json`。
+JSON Schema 和示例位于 `protocol/adapter/v2`。本次升级不兼容 v1。

@@ -16,7 +16,7 @@
 
 ```mermaid
 flowchart LR
-    caller[hub-service / tool-mcp-server] -->|临时 URL| download[file-service 下载并校验大小]
+    caller[core-service / core-mcp-server] -->|临时 URL| download[file-service 下载并校验大小]
     download --> hash[计算 SHA-256]
     hash --> exists{物理文件已存在?}
     exists -->|否| object[(MinIO<br/>sha256 真身)]
@@ -129,4 +129,4 @@ Docker Compose 会启动 `file-service`，并挂载：
 - `./file-service/config.yml:/app/file-service/config.yml:ro`
 - `file-service-data:/data`
 
-宿主机调试端口为 `http://localhost:18040`，容器内服务地址为 `http://file-service:8040`。
+服务默认只在 Compose 网络内通过 `http://file-service:8040` 访问，不暴露宿主机端口。

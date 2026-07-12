@@ -1,7 +1,7 @@
 [project]
-name = "file-service"
+name = "core-mcp-server"
 version = "0.1.0"
-description = "AICHAN file storage service with SHA-256 object keys."
+description = "AICHAN file, vision, and memory MCP tools."
 authors = [
     { name = "魂辛カラ", email = "tamakara@qq.com" }
 ]
@@ -9,10 +9,11 @@ requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.115.6",
     "httpx>=0.28.1",
-    "minio>=7.2.16",
+    "mcp>=1.13.0",
+    "opencv-python-headless>=4.10.0.84",
+    "openai>=1.99.9",
     "pydantic>=2.11.7",
     "pydantic-settings>=2.14.0",
-    "python-multipart>=0.0.20",
     "pyyaml>=6.0.3",
     "uvicorn[standard]>=0.34.0",
 ]
@@ -24,7 +25,7 @@ test = [
 ]
 
 [project.scripts]
-file-service = "file_service.main:main"
+core-mcp-server = "core_mcp_server.mcp_main:main"
 
 [build-system]
 requires = ["uv_build>=0.11.7,<0.12.0"]

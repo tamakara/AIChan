@@ -1,47 +1,4 @@
 services:
-  mcp-gateway:
-    image: docker/mcp-gateway:latest
-    restart: unless-stopped
-    depends_on:
-      tool-mcp-server:
-        condition: service_healthy
-    command:
-      - --transport=sse
-      - --port=9000
-      - --additional-catalog=/app/tool-mcp-server/docker-mcp-catalog.yml
-      - --servers=tavily,time,tool-mcp-server
-      - --secrets=/.env
-    ports:
-      - "19000:9000"
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
-      - ./.env:/.env:ro
-      - ./tool-mcp-server/docker-mcp-catalog.yml:/app/tool-mcp-server/docker-mcp-catalog.yml:ro
-
-  agent-service:
-    build:
-      context: ./agent-service
-    restart: unless-stopped
-    depends_on:
-      mcp-gateway:
-        condition: service_started
-      memory-service:
-        condition: service_healthy
-      skill-service:
-        condition: service_healthy
-    environment:
-      AGENT__MODEL: "${AGENT__MODEL:?AGENT__MODEL is required}"
-      AGENT__OPENAI_API_KEY: "${AGENT__OPENAI_API_KEY:?AGENT__OPENAI_API_KEY is required}"
-      AGENT__OPENAI_BASE_URL: "${AGENT__OPENAI_BASE_URL:-https://api.xiaomimimo.com/v1}"
-      AGENT__MCP_AUTH_TOKEN: "${AGENT__MCP_AUTH_TOKEN:-}"
-      AGENT__LANGFUSE__HOST: "${AGENT__LANGFUSE__HOST:?AGENT__LANGFUSE__HOST is required}"
-      AGENT__LANGFUSE__PUBLIC_KEY: "${AGENT__LANGFUSE__PUBLIC_KEY:?AGENT__LANGFUSE__PUBLIC_KEY is required}"
-      AGENT__LANGFUSE__SECRET_KEY: "${AGENT__LANGFUSE__SECRET_KEY:?AGENT__LANGFUSE__SECRET_KEY is required}"
-    volumes:
-      - ./agent-service/config.yml:/app/agent-service/config.yml:ro
-    ports:
-      - "18000:8000"
-
   memory-service:
     build:
       context: ./memory-service
@@ -51,11 +8,7 @@ services:
       MEMORY__OPENAI_API_KEY: "${MEMORY__OPENAI_API_KEY:?MEMORY__OPENAI_API_KEY is required}"
       MEMORY__OPENAI_BASE_URL: "${MEMORY__OPENAI_BASE_URL:-https://api.xiaomimimo.com/v1}"
     healthcheck:
-      test:
-        - CMD
-        - python
-        - -c
-        - "import socket; sock = socket.create_connection(('127.0.0.1', 8050), 2); sock.close()"
+      test: [CMD, python, -c, "import socket; s=socket.create_connection(('127.0.0.1',8050),2); s.close()"]
       interval: 5s
       timeout: 3s
       retries: 20
@@ -63,65 +16,11 @@ services:
     volumes:
       - ./memory-service/config.yml:/app/memory-service/config.yml:ro
       - memory-service-data:/data/memories
-    ports:
-      - "18050:8050"
-
-  skill-service:
-    build:
-      context: .
-      dockerfile: skill-service/Dockerfile
-    restart: unless-stopped
-    healthcheck:
-      test:
-        - CMD
-        - python
-        - -c
-        - "import socket; sock = socket.create_connection(('127.0.0.1', 8060), 2); sock.close()"
-      interval: 5s
-      timeout: 3s
-      retries: 20
-      start_period: 5s
-    volumes:
-      - ./skill-service/config.yml:/app/skill-service/config.yml:ro
-      - ./skills:/app/skills:ro
-    ports:
-      - "18060:8060"
-
-  tool-mcp-server:
-    image: tool-mcp-server:latest
-    build:
-      context: ./tool-mcp-server
-    restart: unless-stopped
-    command:
-      - tool-mcp-mcp
-      - --transport
-      - streamable-http
-    environment:
-      VISION__OPENAI_BASE_URL: "${VISION__OPENAI_BASE_URL:-}"
-      VISION__OPENAI_API_KEY: "${VISION__OPENAI_API_KEY:-}"
-      VISION__MODEL: "${VISION__MODEL:-}"
-      VISION__VIDEO_FRAME_COUNT: "${VISION__VIDEO_FRAME_COUNT:-6}"
-    healthcheck:
-      test:
-        - CMD
-        - python
-        - -c
-        - "import socket; sock = socket.create_connection(('127.0.0.1', 8030), 2); sock.close()"
-      interval: 5s
-      timeout: 3s
-      retries: 20
-      start_period: 5s
-    volumes:
-      - ./tool-mcp-server/config.yml:/app/tool-mcp-server/config.yml:ro
 
   minio:
     image: minio/minio:latest
     restart: unless-stopped
-    command:
-      - server
-      - /data
-      - --console-address
-      - :9001
+    command: [server, /data, --console-address, ":9001"]
     environment:
       MINIO_ROOT_USER: "${MINIO_ROOT_USER:-minio_user}"
       MINIO_ROOT_PASSWORD: "${MINIO_ROOT_PASSWORD:-minio_password}"
@@ -141,11 +40,7 @@ services:
       STORAGE__ACCESS_KEY: "${MINIO_ROOT_USER:-minio_user}"
       STORAGE__SECRET_KEY: "${MINIO_ROOT_PASSWORD:-minio_password}"
     healthcheck:
-      test:
-        - CMD
-        - python
-        - -c
-        - "import socket; sock = socket.create_connection(('127.0.0.1', 8040), 2); sock.close()"
+      test: [CMD, python, -c, "import socket; s=socket.create_connection(('127.0.0.1',8040),2); s.close()"]
       interval: 5s
       timeout: 3s
       retries: 20
@@ -153,25 +48,80 @@ services:
     volumes:
       - ./file-service/config.yml:/app/file-service/config.yml:ro
       - file-service-data:/data
-    ports:
-      - "18040:8040"
 
-  hub-service:
+  core-mcp-server:
+    image: core-mcp-server:latest
     build:
-      context: .
-      dockerfile: hub-service/Dockerfile
+      context: ./core-mcp-server
     restart: unless-stopped
     depends_on:
-      agent-service:
-        condition: service_started
       file-service:
         condition: service_healthy
-      skill-service:
+      memory-service:
+        condition: service_healthy
+    command: [core-mcp-server, --transport, streamable-http]
+    environment:
+      VISION__OPENAI_BASE_URL: "${VISION__OPENAI_BASE_URL:-}"
+      VISION__OPENAI_API_KEY: "${VISION__OPENAI_API_KEY:-}"
+      VISION__MODEL: "${VISION__MODEL:-}"
+      VISION__VIDEO_FRAME_COUNT: "${VISION__VIDEO_FRAME_COUNT:-6}"
+    healthcheck:
+      test: [CMD, python, -c, "import socket; s=socket.create_connection(('127.0.0.1',8030),2); s.close()"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
+    volumes:
+      - ./core-mcp-server/config.yml:/app/core-mcp-server/config.yml:ro
+
+  mcp-gateway:
+    image: docker/mcp-gateway:latest
+    restart: unless-stopped
+    depends_on:
+      core-mcp-server:
+        condition: service_healthy
+    command:
+      - --transport=sse
+      - --port=9000
+      - --additional-catalog=/app/core-mcp-server/docker-mcp-catalog.yml
+      - --servers=tavily,time,core-mcp-server
+      - --secrets=/.env.mcp
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./.env.mcp:/.env.mcp:ro
+      - ./core-mcp-server/docker-mcp-catalog.yml:/app/core-mcp-server/docker-mcp-catalog.yml:ro
+
+  core-service:
+    build:
+      context: .
+      dockerfile: core-service/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      mcp-gateway:
+        condition: service_started
+      memory-service:
+        condition: service_healthy
+      file-service:
         condition: service_healthy
     environment:
-      HUB__ADAPTER_TOKENS: "${HUB__ADAPTER_TOKENS:-{}}"
+      CORE__MODEL: "${CORE__MODEL:?CORE__MODEL is required}"
+      CORE__OPENAI_API_KEY: "${CORE__OPENAI_API_KEY:?CORE__OPENAI_API_KEY is required}"
+      CORE__OPENAI_BASE_URL: "${CORE__OPENAI_BASE_URL:-https://api.xiaomimimo.com/v1}"
+      CORE__MCP_AUTH_TOKEN: "${CORE__MCP_AUTH_TOKEN:-}"
+      CORE__ADAPTER_TOKENS: "${CORE__ADAPTER_TOKENS:-{}}"
+      CORE__LANGFUSE__HOST: "${CORE__LANGFUSE__HOST:?CORE__LANGFUSE__HOST is required}"
+      CORE__LANGFUSE__PUBLIC_KEY: "${CORE__LANGFUSE__PUBLIC_KEY:?CORE__LANGFUSE__PUBLIC_KEY is required}"
+      CORE__LANGFUSE__SECRET_KEY: "${CORE__LANGFUSE__SECRET_KEY:?CORE__LANGFUSE__SECRET_KEY is required}"
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8020/healthz',timeout=2)"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
     volumes:
-      - ./hub-service/config.yml:/app/hub-service/config.yml:ro
+      - ./core-service/config.yml:/app/core-service/config.yml:ro
+      - ./core-service/prompts:/app/core-service/prompts:ro
+      - ./skills:/app/skills:ro
     ports:
       - "18020:8020"
     networks:
