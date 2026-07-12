@@ -1,7 +1,7 @@
 [project]
 name = "tool-mcp-server"
 version = "0.1.0"
-description = "AICHAN custom MCP tools for QQ context, files, image understanding, and video understanding."
+description = "AICHAN adapter, file, vision, and memory MCP tools."
 authors = [
     { name = "魂辛カラ", email = "tamakara@qq.com" }
 ]

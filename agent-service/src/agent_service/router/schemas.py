@@ -31,7 +31,7 @@ class QueueMessageRequest(BaseModel):
 
 
 class ChatResponse(BaseModel):
-    """agent 返回 AICHAN XML 回复，由 hub-service 转为 QQ 私聊消息。"""
+    """agent 返回渠道无关的 AICHAN XML 回复，由当前适配器负责投递。"""
 
     model_config = ConfigDict(extra="forbid")
 

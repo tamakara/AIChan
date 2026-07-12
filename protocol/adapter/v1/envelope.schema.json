@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aichan.local/protocol/adapter/v1/envelope.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "type", "id", "payload"],
+  "properties": {
+    "version": {"const": "1.0"},
+    "type": {"enum": ["adapter.register", "adapter.registered", "heartbeat.ping", "heartbeat.pong", "event.publish", "event.ack", "reply.deliver", "reply.ack", "capability.invoke", "capability.result", "protocol.error"]},
+    "id": {"type": "string", "minLength": 1},
+    "correlation_id": {"type": ["string", "null"]},
+    "payload": {"type": "object"}
+  }
+}

@@ -27,6 +27,8 @@ services:
         condition: service_started
       memory-service:
         condition: service_healthy
+      skill-service:
+        condition: service_healthy
     environment:
       AGENT__MODEL: "${AGENT__MODEL:?AGENT__MODEL is required}"
       AGENT__OPENAI_API_KEY: "${AGENT__OPENAI_API_KEY:?AGENT__OPENAI_API_KEY is required}"
@@ -63,6 +65,27 @@ services:
       - memory-service-data:/data/memories
     ports:
       - "18050:8050"
+
+  skill-service:
+    build:
+      context: .
+      dockerfile: skill-service/Dockerfile
+    restart: unless-stopped
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import socket; sock = socket.create_connection(('127.0.0.1', 8060), 2); sock.close()"
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
+    volumes:
+      - ./skill-service/config.yml:/app/skill-service/config.yml:ro
+      - ./skills:/app/skills:ro
+    ports:
+      - "18060:8060"
 
   tool-mcp-server:
     image: tool-mcp-server:latest
@@ -133,38 +156,33 @@ services:
     ports:
       - "18040:8040"
 
-  napcat:
-    image: mlikiowa/napcat-docker:latest
-    restart: unless-stopped
-    depends_on:
-      hub-service:
-        condition: service_started
-    environment:
-      - NAPCAT_UID=1000
-      - NAPCAT_GID=1000
-    volumes:
-      - ./napcat/config/napcat.json:/app/napcat/config/napcat.json
-      - ./napcat/config/onebot11.json:/app/napcat/config/onebot11.json
-      - ./napcat/config/webui.json:/app/napcat/config/webui.json
-      - ./napcat/ntqq:/app/.config/QQ
-    ports:
-      - "6099:6099"
-
   hub-service:
     build:
-      context: ./hub-service
+      context: .
+      dockerfile: hub-service/Dockerfile
     restart: unless-stopped
     depends_on:
       agent-service:
         condition: service_started
       file-service:
         condition: service_healthy
+      skill-service:
+        condition: service_healthy
+    environment:
+      HUB__ADAPTER_TOKENS: "${HUB__ADAPTER_TOKENS:-{}}"
     volumes:
       - ./hub-service/config.yml:/app/hub-service/config.yml:ro
     ports:
       - "18020:8020"
+    networks:
+      - default
+      - aichan-adapter
 
 volumes:
   minio-data:
   file-service-data:
   memory-service-data:
+
+networks:
+  aichan-adapter:
+    name: aichan-adapter-network

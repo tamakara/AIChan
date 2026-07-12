@@ -1,7 +1,7 @@
 [project]
 name = "hub-service"
 version = "0.1.0"
-description = "QQ reminder hub service managed by uv."
+description = "AICHAN channel-neutral adapter hub."
 authors = [
     { name = "魂辛カラ", email = "tamakara@qq.com" }
 ]
@@ -9,9 +9,10 @@ requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.115.6",
     "httpx>=0.28.1",
-    "nonebot-adapter-onebot>=2.4.0",
+    "jsonschema>=4.26.0",
     "pydantic>=2.11.7",
     "pydantic-settings>=2.14.0",
+    "python-multipart>=0.0.20",
     "pyyaml>=6.0.3",
     "uvicorn[standard]>=0.34.0",
     "websockets>=16.0",
@@ -20,6 +21,7 @@ dependencies = [
 [project.optional-dependencies]
 test = [
     "pytest>=8.3.4",
+    "pytest-asyncio>=0.25.2",
 ]
 
 [project.scripts]

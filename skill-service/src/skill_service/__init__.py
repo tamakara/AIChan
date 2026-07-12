@@ -1,0 +1,1 @@
+"""AICHAN skill service."""

@@ -1,0 +1,24 @@
+server:
+  host: 0.0.0.0
+  port: 8070
+adapter:
+  adapter_id: qq
+  instance_id: main
+  hub_ws_url: ws://hub-service:8020/api/v1/adapters/ws
+  hub_http_url: http://hub-service:8020
+  hub_token: local-dev-token
+  action_timeout_seconds: 10.0
+  ack_timeout_seconds: 10.0
+  reconnect_seconds: 3.0
+  session_whitelist:
+    - type: private
+      id: 2041214551
+      enabled: true
+    - type: group
+      id: 1019750164
+      enabled: true
+      require_mention: true
+    - type: group
+      id: 643517564
+      enabled: true
+      require_mention: true

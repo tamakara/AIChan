@@ -1,0 +1,11 @@
+{
+  "host": "0.0.0.0",
+  "port": 6099,
+  "token": "0d000721",
+  "loginRate": 3,
+  "autoLoginAccount": "",
+  "disableWebUI": false,
+  "accessControlMode": "none",
+  "ipWhitelist": [],
+  "ipBlacklist": []
+}

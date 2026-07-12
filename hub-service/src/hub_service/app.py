@@ -1,83 +1,31 @@
 from fastapi import FastAPI
 
 from .config import get_settings
-from .logger import elapsed_ms, get_logger, log_info, start_timer
-from .router import create_router
-from .services import NapcatConnectionState, NapcatWsGateway, OutboundClient, SessionRegistry
-from .services.media_storage import MediaStorage
-from .services.napcat_file_resolver import NapcatFileResolver
-from .services.napcat_ws import SessionAccessRule
+from .router.router import create_router
+from .services import AdapterRegistry, AgentClient, FileServiceClient, SessionRegistry, SkillServiceClient
 
 
 def create_app() -> FastAPI:
-    boot_started_at = start_timer()
-    logger = get_logger("app")
     settings = get_settings()
-    log_info(
-        logger,
-        "hub_app.boot",
-        agent_url=settings.hub.agent_url,
-        session_whitelist=[entry.session_id for entry in settings.hub.session_whitelist],
+    agent = AgentClient(settings.hub.agent_url)
+    files = FileServiceClient(settings.hub.file_service_url)
+    skills = SkillServiceClient(settings.hub.skill_service_url)
+    adapters = AdapterRegistry(
+        settings.hub.adapter_tokens, skills, settings.hub.ack_timeout_seconds,
+        settings.hub.ack_max_attempts, settings.hub.capability_timeout_seconds,
     )
+    sessions = SessionRegistry(agent, adapters, settings.hub.debounce_seconds)
+    adapters.set_event_handler(sessions.submit_event)
 
-    # WS 连接状态与网关
-    napcat_connection_state = NapcatConnectionState()
-    napcat_ws_gateway = NapcatWsGateway(
-        connection_state=napcat_connection_state,
-        action_timeout_seconds=settings.napcat.ws_action_timeout_seconds,
-        session_whitelist=tuple(
-            SessionAccessRule(
-                session_id=entry.session_id,
-                enabled=entry.enabled,
-                require_mention=entry.require_mention,
-                blocked_user_ids=frozenset(entry.blocked_user_ids),
-            )
-            for entry in settings.hub.session_whitelist
-        ),
-    )
-
-    # 下游通信与会话管理
-    media_storage = MediaStorage(settings.file_service)
-    file_resolver = NapcatFileResolver(napcat_ws_gateway)
-    outbound_client = OutboundClient(
-        agent_service_url=settings.hub.agent_url,
-        napcat_ws=napcat_ws_gateway,
-        media_storage=media_storage,
-    )
-    session_registry = SessionRegistry(
-        outbound_client=outbound_client,
-        media_storage=media_storage,
-        file_resolver=file_resolver,
-        debounce_seconds=settings.hub.debounce_seconds,
-    )
-
-    # WS 事件回调 → 会话注册中心
-    napcat_ws_gateway.set_on_event(session_registry.submit_event)
-
-    app = FastAPI(
-        title="hub-service",
-        version="0.1.0",
-        description="QQ session hub — OneBot v11 native, no Redis.",
-    )
-
-    app.include_router(
-        create_router(
-            napcat_ws_gateway=napcat_ws_gateway,
-            napcat_connection_state=napcat_connection_state,
-        )
-    )
-
-    @app.on_event("startup")
-    async def startup() -> None:
-        log_info(logger, "hub_app.ready", elapsed_ms=elapsed_ms(boot_started_at))
+    app = FastAPI(title="hub-service", version="1.0.0", description="AICHAN channel-neutral adapter hub")
+    app.include_router(create_router(adapters, sessions, files))
 
     @app.on_event("shutdown")
     async def shutdown() -> None:
-        shutdown_started_at = start_timer()
-        log_info(logger, "hub_app.stopping")
-        await session_registry.shutdown()
-        await outbound_client.aclose()
-        log_info(logger, "hub_app.stopped", elapsed_ms=elapsed_ms(shutdown_started_at))
+        await sessions.shutdown()
+        await agent.aclose()
+        await files.aclose()
+        await skills.aclose()
 
     return app
 

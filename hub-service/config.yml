@@ -2,26 +2,13 @@ server:
   host: 0.0.0.0
   port: 8020
   log_level: debug
-
 hub:
   agent_url: http://agent-service:8000
+  file_service_url: http://file-service:8040
+  skill_service_url: http://skill-service:8060
   debounce_seconds: 2.0
-  session_whitelist:
-    - type: private
-      id: 2041214551
-      enabled: true
-    - type: group
-      id: 1019750164
-      enabled: true
-      require_mention: true
-    - type: group
-      id: 643517564
-      enabled: true
-      require_mention: true
-
-napcat:
-  ws_action_timeout_seconds: 5
-
-file_service:
-  base_url: http://file-service:8040
-  timeout_seconds: 25
+  ack_timeout_seconds: 10.0
+  ack_max_attempts: 3
+  capability_timeout_seconds: 30.0
+  adapter_tokens:
+    "qq:main": local-dev-token

@@ -1,0 +1,38 @@
+services:
+  aichan-qq-adapter:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      ADAPTER__HUB_TOKEN: "${ADAPTER__HUB_TOKEN:-local-dev-token}"
+    volumes:
+      - ./config.yml:/app/config.yml:ro
+      - ./skills:/app/skills:ro
+    ports:
+      - "18070:8070"
+    networks:
+      - default
+      - aichan-adapter
+
+  napcat:
+    image: mlikiowa/napcat-docker:latest
+    restart: unless-stopped
+    depends_on:
+      aichan-qq-adapter:
+        condition: service_started
+    environment:
+      NAPCAT_UID: "${NAPCAT_UID:-1000}"
+      NAPCAT_GID: "${NAPCAT_GID:-1000}"
+    volumes:
+      - ./napcat/config/napcat.json:/app/napcat/config/napcat.json
+      - ./napcat/config/onebot11.json:/app/napcat/config/onebot11.json
+      - ./napcat/config/webui.json:/app/napcat/config/webui.json
+      - ./napcat/ntqq:/app/.config/QQ
+    ports:
+      - "6099:6099"
+
+networks:
+  aichan-adapter:
+    external: true
+    name: aichan-adapter-network

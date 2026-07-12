@@ -2,6 +2,7 @@ from fastapi import APIRouter, HTTPException
 
 from ..logger import elapsed_ms, get_logger, log_exception, log_info, start_timer
 from ..services import Agent, SessionRegistry
+from ..services.skill_client import SkillClient
 from .schemas import (
     ChatRequest,
     ChatResponse,
@@ -15,6 +16,7 @@ from .schemas import (
 def create_router(
     agent: Agent,
     session_registry: SessionRegistry,
+    skill_client: SkillClient | None = None,
 ) -> APIRouter:
     router = APIRouter()
     logger = get_logger("router")
@@ -25,7 +27,16 @@ def create_router(
 
     @router.post("/sessions", response_model=CreateSessionResponse)
     def create_session(req: CreateSessionRequest) -> CreateSessionResponse:
-        session = session_registry.create(session_id=req.session_id, metadata=req.metadata)
+        skills = []
+        if skill_client is not None:
+            try:
+                skills = skill_client.resolve(
+                    str(req.metadata["adapter_id"]),
+                    str(req.metadata["instance_id"]),
+                )
+            except Exception as exc:
+                raise HTTPException(status_code=503, detail="skill-service unavailable") from exc
+        session = session_registry.create(session_id=req.session_id, metadata=req.metadata, skills=skills)
         log_info(
             logger,
             "agent.session_created",

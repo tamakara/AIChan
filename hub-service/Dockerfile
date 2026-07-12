@@ -11,9 +11,9 @@ RUN pip install --no-cache-dir --retries 8 --timeout 180 uv==0.7.2
 
 WORKDIR /app
 
-COPY pyproject.toml ./
-COPY config.yml ./hub-service/config.yml
-COPY src ./src
+COPY hub-service/pyproject.toml ./
+COPY hub-service/config.yml ./hub-service/config.yml
+COPY hub-service/src ./src
 
 RUN /bin/sh -c 'for i in 1 2 3; do uv pip install --system . && exit 0; echo "uv pip install failed, retry ${i}/3"; sleep 5; done; exit 1'
 

@@ -7,6 +7,7 @@ from .services import (
     McpGateway,
     SessionRegistry,
     ThreadedMemoryCompressionScheduler,
+    SkillClient,
     create_observability,
 )
 from .config import get_settings
@@ -40,6 +41,7 @@ def create_app() -> FastAPI:
         memory_client=memory_client,
         max_workers=1,
     )
+    skill_client = SkillClient(settings.agent.skill_base_url, settings.agent.skill_timeout)
 
     agent = Agent(
         llm_client=llm_client,
@@ -52,6 +54,7 @@ def create_app() -> FastAPI:
         memory_compression_scheduler=memory_compression_scheduler,
         memory_enabled=settings.agent.memory_enabled,
         memory_compress_every_n_records=settings.agent.memory_compress_every_n_records,
+        skill_client=skill_client,
     )
 
     session_registry = SessionRegistry(max_turns=settings.agent.max_turns)
@@ -65,6 +68,7 @@ def create_app() -> FastAPI:
         create_router(
             agent=agent,
             session_registry=session_registry,
+            skill_client=skill_client,
         )
     )
 

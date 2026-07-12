@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, Query, Response, status
+from fastapi import APIRouter, File, HTTPException, Query, Response, UploadFile, status
 
 from ..services.storage import FileNotFoundError, FileRecord, FileStorage, UnsupportedTextFileError
 from .schemas import (
@@ -26,6 +26,19 @@ def create_router(file_storage: FileStorage) -> APIRouter:
                 name=request.name,
                 mime=request.mime,
                 kind=request.kind,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+        return _metadata_response(record)
+
+    @router.post("/api/v1/files", response_model=FileMetadataResponse)
+    async def store_uploaded_file(upload: UploadFile = File()) -> FileMetadataResponse:
+        content = await upload.read()
+        try:
+            record = await file_storage.store_bytes(
+                content=content,
+                name=upload.filename or "upload.bin",
+                mime=upload.content_type or "application/octet-stream",
             )
         except ValueError as exc:
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc

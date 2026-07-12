@@ -96,7 +96,7 @@ async def test_memory_get_user_memory_tool_passes_pagination_params(monkeypatch)
 
     class DummySettings:
         class Mcp:
-            qq_base_url = "http://hub"
+            hub_base_url = "http://hub"
             file_base_url = "http://file"
             memory_base_url = "http://memory"
             timeout_seconds = 5.0
@@ -135,7 +135,7 @@ async def test_memory_get_user_memory_tool_passes_pagination_params(monkeypatch)
 async def test_memory_get_user_memory_tool_rejects_invalid_pagination(monkeypatch) -> None:
     class DummySettings:
         class Mcp:
-            qq_base_url = "http://hub"
+            hub_base_url = "http://hub"
             file_base_url = "http://file"
             memory_base_url = "http://memory"
             timeout_seconds = 5.0

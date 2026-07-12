@@ -8,12 +8,12 @@ def create_app() -> FastAPI:
     boot_started_at = start_timer()
     logger = get_logger("app")
     settings = get_settings()
-    log_info(logger, "tool_mcp.boot", mcp_base_url=settings.mcp.qq_base_url)
+    log_info(logger, "tool_mcp.boot", mcp_base_url=settings.mcp.hub_base_url)
 
     app = FastAPI(
         title="tool-mcp-server",
         version="0.1.0",
-        description="AICHAN custom MCP tools for QQ context, files, image understanding, and video understanding.",
+        description="AICHAN adapter, file, media understanding, and memory tools.",
     )
 
     @app.get("/healthz")

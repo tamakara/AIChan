@@ -77,7 +77,7 @@ def test_agent_reports_full_observability_flow() -> None:
     llm = StubLlmClient(
         responses=[
             LlmResponse(content="", tool_calls=[_tool_call("history")], finish_reason="tool_calls"),
-            LlmResponse(content="<reply><text>done</text></reply>", tool_calls=[], finish_reason="stop"),
+            LlmResponse(content="<reply><message><text>done</text></message></reply>", tool_calls=[], finish_reason="stop"),
         ]
     )
     agent = Agent(  # type: ignore[arg-type]
@@ -96,7 +96,7 @@ def test_agent_reports_full_observability_flow() -> None:
         user_message="hello",
     )
 
-    assert reply.output_xml == "<reply><text>done</text></reply>"
+    assert reply.output_xml == "<reply><message><text>done</text></message></reply>"
     assert len(observability.started) == 1
     assert observability.started[0]["message_count"] == 3
     assert len(observability.generations) == 2
@@ -111,7 +111,7 @@ def test_agent_reports_failed_tool_span_but_can_continue() -> None:
     llm = StubLlmClient(
         responses=[
             LlmResponse(content="", tool_calls=[_tool_call("fail_tool")], finish_reason="tool_calls"),
-            LlmResponse(content="<reply><text>fallback</text></reply>", tool_calls=[], finish_reason="stop"),
+            LlmResponse(content="<reply><message><text>fallback</text></message></reply>", tool_calls=[], finish_reason="stop"),
         ]
     )
     agent = Agent(  # type: ignore[arg-type]
@@ -130,7 +130,7 @@ def test_agent_reports_failed_tool_span_but_can_continue() -> None:
         user_message="hello",
     )
 
-    assert reply.output_xml == "<reply><text>fallback</text></reply>"
+    assert reply.output_xml == "<reply><message><text>fallback</text></message></reply>"
     assert len(observability.tools) == 1
     assert observability.tools[0]["status"] == "failed"
     assert len(observability.success) == 1

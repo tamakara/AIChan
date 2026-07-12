@@ -1,4 +1,4 @@
-﻿import re
+import re
 
 from openai.types.chat import ChatCompletionMessageFunctionToolCall
 from openai.types.chat.chat_completion_message_function_tool_call import Function
@@ -8,6 +8,7 @@ from agent_service.services.memory_compression_scheduler import MemoryCompressio
 from agent_service.services.memory_client import MemoryCompressResult
 from agent_service.services.observability import NoopObservability, RunTrace
 from agent_service.services.session import SessionRegistry
+from agent_service.services.skill_client import RuntimeSkill
 from agent_service.services.types.llm import LlmResponse
 
 
@@ -18,7 +19,7 @@ class StubLlmClient:
 
     def generate(self, messages, tools_schema, temperature) -> LlmResponse:
         self.calls.append((messages, tools_schema, temperature))
-        return LlmResponse(content="<reply><text>ok</text></reply>", tool_calls=[], finish_reason="stop")
+        return LlmResponse(content="<reply><message><text>ok</text></message></reply>", tool_calls=[], finish_reason="stop")
 
 
 class SequencedLlmClient:
@@ -288,7 +289,7 @@ def test_agent_run_session() -> None:
         user_message="hello",
     )
 
-    assert reply.output_xml == "<reply><text>ok</text></reply>"
+    assert reply.output_xml == "<reply><message><text>ok</text></message></reply>"
     assert [msg["role"] for msg in session.messages] == [
         "system",
         "system",
@@ -301,8 +302,8 @@ def test_agent_run_session() -> None:
 def test_agent_run_commits_normalized_reply_when_llm_returns_broken_xml() -> None:
     llm_client = SequencedLlmClient(
         [
-            LlmResponse(content="<reply><text>broken", tool_calls=[], finish_reason="stop"),
-            LlmResponse(content="<reply><text>fixed</text></reply>", tool_calls=[], finish_reason="stop"),
+            LlmResponse(content="<reply><message><text>broken", tool_calls=[], finish_reason="stop"),
+            LlmResponse(content="<reply><message><text>fixed</text></message></reply>", tool_calls=[], finish_reason="stop"),
         ]
     )
     agent = Agent(  # type: ignore[arg-type]
@@ -321,7 +322,7 @@ def test_agent_run_commits_normalized_reply_when_llm_returns_broken_xml() -> Non
         user_message="hello",
     )
 
-    assert reply.output_xml == "<reply><text>fixed</text></reply>"
+    assert reply.output_xml == "<reply><message><text>fixed</text></message></reply>"
     assert session.messages[-1]["content"] == reply.output_xml
     assert len(llm_client.calls) == 2
 
@@ -329,8 +330,8 @@ def test_agent_run_commits_normalized_reply_when_llm_returns_broken_xml() -> Non
 def test_agent_run_returns_fallback_when_invalid_xml_retries_exhausted() -> None:
     llm_client = SequencedLlmClient(
         [
-            LlmResponse(content="<reply><text>broken", tool_calls=[], finish_reason="stop"),
-            LlmResponse(content="<reply><text>still broken", tool_calls=[], finish_reason="stop"),
+            LlmResponse(content="<reply><message><text>broken", tool_calls=[], finish_reason="stop"),
+            LlmResponse(content="<reply><message><text>still broken", tool_calls=[], finish_reason="stop"),
         ]
     )
     agent = Agent(  # type: ignore[arg-type]
@@ -350,7 +351,7 @@ def test_agent_run_returns_fallback_when_invalid_xml_retries_exhausted() -> None
     )
 
     assert reply.output_xml == (
-        "<reply><text>笨蛋，刚才脑袋短路了一下，稍后再试试喵。</text></reply>"
+        "<reply><message><text>笨蛋，刚才脑袋短路了一下，稍后再试试喵。</text></message></reply>"
     )
     assert session.messages[-1]["content"] == reply.output_xml
 
@@ -358,13 +359,17 @@ def test_agent_run_returns_fallback_when_invalid_xml_retries_exhausted() -> None
 def test_session_system_message_contains_metadata() -> None:
     registry = _build_registry()
     session = registry.create(
-        session_id="group_20001",
-        metadata={"platform": "qq", "session_type": "group", "group_id": 20001, "self_id": 10001},
+        session_id="qq:main:group:20001",
+        metadata={
+            "adapter_id": "qq", "instance_id": "main", "conversation_type": "group",
+            "conversation_id": "20001", "bot_id": "10001",
+        },
     )
 
     assert session.messages[1]["content"] == (
-        '<session session_id="group_20001" max_turn="3" '
-        'platform="qq" session_type="group" group_id="20001" self_id="10001" />'
+        '<session session_id="qq:main:group:20001" max_turn="3" '
+        'adapter_id="qq" instance_id="main" conversation_type="group" '
+        'conversation_id="20001" bot_id="10001" />'
     )
 
 
@@ -376,7 +381,7 @@ def test_session_record_messages_text_uses_timestamped_log_format() -> None:
         [
             {"role": "system", "content": '<turn index="1" />'},
             {"role": "user", "content": "first line\nsecond line"},
-            {"role": "assistant", "content": "<reply><text>ok</text></reply>"},
+            {"role": "assistant", "content": "<reply><message><text>ok</text></message></reply>"},
             {"role": "tool", "content": '{"ok": true}', "tool_call_id": "call_1"},
         ]
     )
@@ -386,15 +391,25 @@ def test_session_record_messages_text_uses_timestamped_log_format() -> None:
     assert '<turn index="1" />' not in messages_text
     assert re.search(r"^\[[^\]]+\] user: first line$", messages_text, re.MULTILINE)
     assert re.search(r"^\[[^\]]+\] user: second line$", messages_text, re.MULTILINE)
-    assert re.search(r"^\[[^\]]+\] assistant: <reply><text>ok</text></reply>$", messages_text, re.MULTILINE)
+    assert re.search(r"^\[[^\]]+\] assistant: <reply><message><text>ok</text></message></reply>$", messages_text, re.MULTILINE)
     assert re.search(r'^\[[^\]]+\] tool\[call_1\]: \{"ok": true\}$', messages_text, re.MULTILINE)
 
+
+def test_session_injects_runtime_skill_before_session_metadata() -> None:
+    registry = _build_registry()
+    session = registry.create(
+        session_id="qq:main:private:1",
+        metadata={"adapter_id": "qq", "instance_id": "main"},
+        skills=[RuntimeSkill(id="qq-channel", version="1", content="poke rules")],
+    )
+    assert '<skill id="qq-channel" version="1">' in session.messages[1]["content"]
+    assert session.messages[2]["content"].startswith("<session ")
 
 def test_stop_with_queued_message_drops_final_reply_and_continues() -> None:
     llm_client = SequencedLlmClient(
         [
-            LlmResponse(content="<reply><text>old</text></reply>", tool_calls=[], finish_reason="stop"),
-            LlmResponse(content="<reply><text>new</text></reply>", tool_calls=[], finish_reason="stop"),
+            LlmResponse(content="<reply><message><text>old</text></message></reply>", tool_calls=[], finish_reason="stop"),
+            LlmResponse(content="<reply><message><text>new</text></message></reply>", tool_calls=[], finish_reason="stop"),
         ]
     )
     agent = Agent(  # type: ignore[arg-type]
@@ -414,21 +429,21 @@ def test_stop_with_queued_message_drops_final_reply_and_continues() -> None:
         user_message="<messages><message><text>first</text></message></messages>",
     )
 
-    assert reply.output_xml == "<reply><text>new</text></reply>"
+    assert reply.output_xml == "<reply><message><text>new</text></message></reply>"
     assert len(llm_client.calls) == 2
     second_call_contents = [str(msg["content"]) for msg in llm_client.calls[1]]
-    assert "<reply><text>old</text></reply>" not in second_call_contents
+    assert "<reply><message><text>old</text></message></reply>" not in second_call_contents
     assert "<messages><message><text>queued</text></message></messages>" in second_call_contents
     persisted_contents = [str(msg["content"]) for msg in session.messages]
-    assert "<reply><text>old</text></reply>" not in persisted_contents
-    assert "<reply><text>new</text></reply>" in persisted_contents
+    assert "<reply><message><text>old</text></message></reply>" not in persisted_contents
+    assert "<reply><message><text>new</text></message></reply>" in persisted_contents
 
 
 def test_tool_call_turn_inserts_queued_message_after_tool_result() -> None:
     llm_client = SequencedLlmClient(
         [
             LlmResponse(content="", tool_calls=[_tool_call("history")], finish_reason="tool_calls"),
-            LlmResponse(content="<reply><text>done</text></reply>", tool_calls=[], finish_reason="stop"),
+            LlmResponse(content="<reply><message><text>done</text></message></reply>", tool_calls=[], finish_reason="stop"),
         ]
     )
     agent = Agent(  # type: ignore[arg-type]
@@ -448,7 +463,7 @@ def test_tool_call_turn_inserts_queued_message_after_tool_result() -> None:
         user_message="<messages><message><text>first</text></message></messages>",
     )
 
-    assert reply.output_xml == "<reply><text>done</text></reply>"
+    assert reply.output_xml == "<reply><message><text>done</text></message></reply>"
     second_call_roles = [msg["role"] for msg in llm_client.calls[1]]
     second_call_contents = [str(msg["content"]) for msg in llm_client.calls[1]]
     assert second_call_roles == [
@@ -486,7 +501,7 @@ def test_agent_exposes_and_calls_user_memory_tool() -> None:
                 tool_calls=[_tool_call("memory_get_user_memory", '{"user_id": "123"}')],
                 finish_reason="tool_calls",
             ),
-            LlmResponse(content="<reply><text>done</text></reply>", tool_calls=[], finish_reason="stop"),
+            LlmResponse(content="<reply><message><text>done</text></message></reply>", tool_calls=[], finish_reason="stop"),
         ]
     )
     mcp_gateway = StubMcpGateway(
@@ -512,7 +527,7 @@ def test_agent_exposes_and_calls_user_memory_tool() -> None:
         user_message='<messages><message user_id="123"><text>还记得我的偏好吗？</text></message></messages>',
     )
 
-    assert reply.output_xml == "<reply><text>done</text></reply>"
+    assert reply.output_xml == "<reply><message><text>done</text></message></reply>"
     assert llm_client.calls[0][1] == [memory_tool_schema]
     assert mcp_gateway.calls == [("memory_get_user_memory", {"user_id": "123"})]
     second_call_messages = llm_client.calls[1][0]
@@ -540,7 +555,7 @@ def test_agent_run_failure_commits_user_and_fallback_reply() -> None:
     )
 
     assert reply.output_xml == (
-        "<reply><text>笨蛋，刚才脑袋短路了一下，稍后再试试喵。</text></reply>"
+        "<reply><message><text>笨蛋，刚才脑袋短路了一下，稍后再试试喵。</text></message></reply>"
     )
     assert [msg["role"] for msg in session.messages] == [
         "system",
@@ -590,7 +605,7 @@ def test_agent_run_skips_memory_when_read_fails() -> None:
 
     reply = agent.run(session=session, user_message="hello")
 
-    assert reply.output_xml == "<reply><text>ok</text></reply>"
+    assert reply.output_xml == "<reply><message><text>ok</text></message></reply>"
     called_messages = llm_client.calls[0][0]
     assert called_messages[2]["content"] == '<turn index="1" />'
 
@@ -633,7 +648,7 @@ def test_agent_compresses_and_trims_records_after_threshold() -> None:
     _, messages_text = memory_client.compress_calls[0]
     assert re.search(r"^\[[^\]]+\] user: hello$", messages_text, re.MULTILINE)
     assert re.search(
-        r"^\[[^\]]+\] assistant: <reply><text>ok</text></reply>$",
+        r"^\[[^\]]+\] assistant: <reply><message><text>ok</text></message></reply>$",
         messages_text,
         re.MULTILINE,
     )
@@ -706,7 +721,7 @@ def test_next_run_after_compress_only_contains_system_memory_and_new_input() -> 
 
     assert second_call_roles == ["system", "system", "system", "system", "user"]
     assert "hello" not in second_call_contents[-1]
-    assert "<reply><text>ok</text></reply>" not in second_call_contents
+    assert "<reply><message><text>ok</text></message></reply>" not in second_call_contents
     assert "- 新记忆" in str(second_call_messages[2]["content"])
     assert second_call_contents[3] == '<turn index="1" />'
     assert second_call_contents[4] == "again"
@@ -744,7 +759,7 @@ def test_compress_completion_only_trims_old_prefix_and_keeps_new_records() -> No
     remaining_contents = [str(msg["content"]) for msg in session.messages]
     assert "hello" not in remaining_contents
     assert "again" in remaining_contents
-    assert "<reply><text>ok</text></reply>" in remaining_contents
+    assert "<reply><message><text>ok</text></message></reply>" in remaining_contents
 
 
 def test_agent_keeps_records_when_compress_fails_and_waits_next_cycle() -> None:

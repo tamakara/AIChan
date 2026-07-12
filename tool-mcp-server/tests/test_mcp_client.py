@@ -55,6 +55,10 @@ class StubAsyncClient:
             )
         return StubResponse(payload={"ok": True, "data": {"messages": []}})
 
+    async def post(self, path: str, json: dict | None = None):
+        self.requests.append((self.base_url, path, json))
+        return StubResponse(payload={"ok": True, "result": {"value": 1}})
+
 
 @pytest.fixture(autouse=True)
 def patch_async_client(monkeypatch):
@@ -65,7 +69,7 @@ def patch_async_client(monkeypatch):
 @pytest.mark.asyncio
 async def test_file_methods_call_hub_file_api() -> None:
     client = ToolMcpClient(
-        qq_base_url="http://hub",
+        hub_base_url="http://hub",
         file_base_url="http://file",
         memory_base_url="http://memory",
         timeout_seconds=5,
@@ -89,7 +93,7 @@ async def test_file_methods_call_hub_file_api() -> None:
 @pytest.mark.asyncio
 async def test_get_user_memory_calls_memory_service_raw_api() -> None:
     client = ToolMcpClient(
-        qq_base_url="http://hub",
+        hub_base_url="http://hub",
         file_base_url="http://file",
         memory_base_url="http://memory",
         timeout_seconds=5,
@@ -108,3 +112,13 @@ async def test_get_user_memory_calls_memory_service_raw_api() -> None:
     assert StubAsyncClient.requests == [
         ("http://memory", "/api/v1/users/123/memory", {"start_line": 4, "line_count": 20}),
     ]
+
+
+@pytest.mark.asyncio
+async def test_adapter_invoke_calls_generic_hub_api() -> None:
+    client = ToolMcpClient(
+        hub_base_url="http://hub", file_base_url="http://file",
+        memory_base_url="http://memory", timeout_seconds=5,
+    )
+    result = await client.adapter_invoke("qq:main:group:1", "user.get", {"user_id": "2"})
+    assert result == {"value": 1}

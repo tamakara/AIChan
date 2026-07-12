@@ -11,48 +11,31 @@ class ToolMcpClient:
 
     def __init__(
         self,
-        qq_base_url: str,
+        hub_base_url: str,
         file_base_url: str,
         memory_base_url: str,
         timeout_seconds: float,
     ) -> None:
-        self._qq_base_url = qq_base_url.rstrip("/")
+        self._hub_base_url = hub_base_url.rstrip("/")
         self._file_base_url = file_base_url.rstrip("/")
         self._memory_base_url = memory_base_url.rstrip("/")
         self._timeout = timeout_seconds
 
-    async def get_message_history(
-        self,
-        message_type: str,
-        peer_id: int,
-        limit: int,
-        before_message_id: int | None,
-    ) -> dict[str, Any]:
-        params: dict[str, Any] = {
-            "message_type": message_type,
-            "peer_id": peer_id,
-            "limit": limit,
-        }
-        if before_message_id is not None:
-            params["before_message_id"] = before_message_id
-
-        payload = await self._get_json(
-            self._qq_base_url,
-            "/api/v1/message/history",
-            params=params,
-            action="history",
-        )
-        data = payload.get("data")
-        if not isinstance(data, dict):
-            raise RuntimeError("tool-mcp returned invalid history payload")
-        return data
-
-    async def get_user_info(self, user_id: int) -> dict[str, Any]:
-        payload = await self._get_json(self._qq_base_url, f"/api/v1/user/{user_id}/info", action="user info")
-        data = payload.get("data")
-        if not isinstance(data, dict):
-            raise RuntimeError("tool-mcp returned invalid user info payload")
-        return data
+    async def adapter_invoke(
+        self, session_id: str, capability: str, arguments: dict[str, Any],
+    ) -> Any:
+        async with httpx.AsyncClient(base_url=self._hub_base_url, timeout=self._timeout) as client:
+            try:
+                response = await client.post("/api/v1/adapter/invoke", json={
+                    "session_id": session_id, "capability": capability, "arguments": arguments,
+                })
+                response.raise_for_status()
+            except httpx.HTTPError as exc:
+                raise RuntimeError(f"adapter capability request failed: {exc}") from exc
+        payload = response.json()
+        if not isinstance(payload, dict) or not payload.get("ok"):
+            raise RuntimeError("hub returned invalid adapter capability response")
+        return payload.get("result")
 
     async def get_file_metadata(self, object_key: str) -> dict[str, Any]:
         payload = await self._get_json(

@@ -1,18 +1,14 @@
-from fastapi import APIRouter, HTTPException, Query, WebSocket, status
+from __future__ import annotations
 
-from ..services.connection_state import NapcatConnectionState
-from ..services.napcat_ws import NapcatWsGateway
-from .schemas import (
-    HealthResponse,
-    MessageHistoryData,
-    MessageHistoryResponse,
-    UserInfoResponse,
-)
+from fastapi import APIRouter, File, Header, HTTPException, UploadFile, WebSocket, WebSocketDisconnect, status
+from fastapi.responses import Response
+
+from ..services import AdapterRegistry, FileServiceClient, SessionRegistry
+from .schemas import AdapterInvokeRequest, FileFromUrlRequest, HealthResponse
 
 
 def create_router(
-    napcat_ws_gateway: NapcatWsGateway,
-    napcat_connection_state: NapcatConnectionState,
+    adapters: AdapterRegistry, sessions: SessionRegistry, files: FileServiceClient,
 ) -> APIRouter:
     router = APIRouter()
 
@@ -20,93 +16,68 @@ def create_router(
     async def healthz() -> HealthResponse:
         return HealthResponse()
 
-    @router.websocket("/onebot/v11/ws")
-    async def onebot_v11_ws(websocket: WebSocket) -> None:
-        """NapCat 反向 WebSocket — 事件入口 + 动作发送出口。"""
-        await napcat_ws_gateway.handle_connection(websocket)
-
-    @router.get("/api/v1/user/{user_id}/info", response_model=UserInfoResponse)
-    async def get_user_info(user_id: int) -> UserInfoResponse:
-        if napcat_connection_state.get() is None:
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="napcat reverse ws is not connected",
-            )
-
+    @router.websocket("/api/v1/adapters/ws")
+    async def adapter_ws(websocket: WebSocket) -> None:
+        authorization = websocket.headers.get("authorization", "")
+        token = authorization.removeprefix("Bearer ").strip()
+        if not adapters.token_allowed(token):
+            await websocket.close(code=4401, reason="unauthorized")
+            return
         try:
-            result = await napcat_ws_gateway.send_action(
-                action="get_stranger_info",
-                params={"user_id": user_id, "no_cache": True},
-            )
-        except TimeoutError as exc:
-            raise HTTPException(
-                status_code=status.HTTP_504_GATEWAY_TIMEOUT,
-                detail="napcat action timeout",
-            ) from exc
-        return UserInfoResponse(ok=True, data=result)
+            await adapters.handle(websocket, token)
+        except (WebSocketDisconnect, RuntimeError):
+            return
+        except (ValueError, PermissionError) as exc:
+            await websocket.close(code=4400, reason=str(exc))
 
-    @router.get("/api/v1/message/history", response_model=MessageHistoryResponse)
-    async def get_message_history(
-        message_type: str = Query(min_length=1, pattern="^(group|private)$"),
-        peer_id: int = Query(ge=1),
-        limit: int = Query(default=20, ge=1, le=50),
-        before_message_id: int | None = Query(default=None, ge=1),
-    ) -> MessageHistoryResponse:
-        if napcat_connection_state.get() is None:
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="napcat reverse ws is not connected",
-            )
+    @router.get("/api/v1/adapters")
+    async def list_adapters() -> dict[str, object]:
+        return {"adapters": adapters.status()}
 
-        message_seq = before_message_id if before_message_id is not None else 0
-        if message_type == "group":
-            action = "get_group_msg_history"
-            params: dict[str, int] = {"group_id": peer_id, "count": limit, "message_seq": message_seq}
-        else:
-            action = "get_friend_msg_history"
-            params = {"user_id": peer_id, "count": limit, "message_seq": message_seq}
-
+    @router.post("/api/v1/adapter/invoke")
+    async def invoke(request: AdapterInvokeRequest) -> dict[str, object]:
         try:
-            result = await napcat_ws_gateway.send_action(action=action, params=params)
-            data = _normalize_history_result(result)
+            result = await sessions.invoke(request.session_id, request.capability, request.arguments)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
         except ValueError as exc:
-            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
-        except TimeoutError as exc:
-            raise HTTPException(
-                status_code=status.HTTP_504_GATEWAY_TIMEOUT,
-                detail="napcat action timeout",
-            ) from exc
-        return MessageHistoryResponse(ok=True, data=data)
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except RuntimeError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        return {"ok": True, "result": result}
+
+    def require_adapter(authorization: str) -> None:
+        token = authorization.removeprefix("Bearer ").strip()
+        if not adapters.token_allowed(token):
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="unauthorized")
+
+    @router.post("/api/v1/adapter/files/from-url")
+    async def store_from_url(request: FileFromUrlRequest, authorization: str = Header(default="")) -> Response:
+        require_adapter(authorization)
+        upstream = await files.request("POST", "/api/v1/files/from-url", json={
+            "url": request.url, "name": request.name, "mime": request.mime_type, "kind": request.kind,
+        })
+        return Response(upstream.content, status_code=upstream.status_code, media_type=upstream.headers.get("content-type"))
+
+    @router.post("/api/v1/adapter/files")
+    async def upload_file(upload: UploadFile = File(), authorization: str = Header(default="")) -> Response:
+        require_adapter(authorization)
+        content = await upload.read()
+        upstream = await files.request("POST", "/api/v1/files", files={
+            "upload": (upload.filename or "upload.bin", content, upload.content_type or "application/octet-stream")
+        })
+        return Response(upstream.content, status_code=upstream.status_code, media_type=upstream.headers.get("content-type"))
+
+    @router.get("/api/v1/adapter/files/{object_key}/metadata")
+    async def file_metadata(object_key: str, authorization: str = Header(default="")) -> Response:
+        require_adapter(authorization)
+        upstream = await files.request("GET", f"/api/v1/files/{object_key}/metadata")
+        return Response(upstream.content, status_code=upstream.status_code, media_type=upstream.headers.get("content-type"))
+
+    @router.get("/api/v1/adapter/files/{object_key}/content")
+    async def file_content(object_key: str, authorization: str = Header(default="")) -> Response:
+        require_adapter(authorization)
+        upstream = await files.request("GET", f"/api/v1/files/{object_key}/content")
+        return Response(upstream.content, status_code=upstream.status_code, media_type=upstream.headers.get("content-type"))
 
     return router
-
-
-def _normalize_history_result(raw_result: dict) -> MessageHistoryData:
-    if not isinstance(raw_result, dict):
-        raise ValueError("history response must be a dict")
-
-    payload = raw_result.get("data")
-    if not isinstance(payload, dict):
-        raise ValueError("history response data must be a dict")
-
-    raw_messages = payload.get("messages")
-    if not isinstance(raw_messages, list):
-        raise ValueError("history response messages must be a list")
-
-    messages = [message for message in raw_messages if isinstance(message, dict)]
-    return MessageHistoryData(
-        messages=messages,
-        next_before_message_id=_extract_next_before_message_id(messages),
-    )
-
-
-def _extract_next_before_message_id(messages: list[dict]) -> int | None:
-    for message in reversed(messages):
-        message_id = message.get("message_id")
-        if message_id is None:
-            continue
-        try:
-            return int(message_id)
-        except (TypeError, ValueError):
-            continue
-    return None

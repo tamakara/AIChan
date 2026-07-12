@@ -18,6 +18,8 @@ def _base_settings_payload() -> dict:
             "memory_base_url": "http://memory-service:8050",
             "memory_compress_every_n_records": 10,
             "memory_timeout": 10.0,
+            "skill_base_url": "http://skill-service:8060",
+            "skill_timeout": 5.0,
             "llm_timeout": 30.0,
             "llm_max_retries": 0,
             "mcp_sse_url": "http://mcp:9000/sse",
@@ -78,6 +80,8 @@ agent:
   memory_base_url: http://memory-service:8050
   memory_compress_every_n_records: 10
   memory_timeout: 10.0
+  skill_base_url: http://skill-service:8060
+  skill_timeout: 5.0
   llm_timeout: 30.0
   llm_max_retries: 0
   mcp_sse_url: http://mcp:9000/sse

@@ -11,6 +11,7 @@ from .memory_client import MemoryClient
 from .mcp_gateway import McpGateway
 from .observability import Observability, RunTrace
 from .session import Session
+from .skill_client import SkillClient
 from .types.context import Context
 from .types.llm import LlmResponse, Message, ToolCall
 
@@ -37,6 +38,7 @@ class Agent:
         memory_compression_scheduler: MemoryCompressionScheduler | None = None,
         memory_enabled: bool = False,
         memory_compress_every_n_records: int = 10,
+        skill_client: SkillClient | None = None,
     ) -> None:
         self._llm_client = llm_client
         self._mcp_gateway = mcp_gateway
@@ -50,6 +52,7 @@ class Agent:
         )
         self._memory_enabled = memory_enabled
         self._memory_compress_every_n_records = memory_compress_every_n_records
+        self._skill_client = skill_client
 
     def run(self, session: Session, user_message: str) -> AgentReply:
         """在指定 Session 上执行一轮推理循环，返回 AICHAN XML 回复。"""
@@ -58,6 +61,7 @@ class Agent:
         staged_messages: list[Message] = []
         pending_user_messages = [user_message]
 
+        self._refresh_skills(session)
         self._refresh_memory(session)
 
         with session._lock:
@@ -201,6 +205,21 @@ class Agent:
         with session._lock:
             session.set_memory_markdown_locked(memory_markdown)
 
+    def _refresh_skills(self, session: Session) -> None:
+        if self._skill_client is None:
+            return
+        adapter_id = str(session.metadata.get("adapter_id", ""))
+        instance_id = str(session.metadata.get("instance_id", ""))
+        if not adapter_id or not instance_id:
+            return
+        try:
+            skills = self._skill_client.resolve(adapter_id, instance_id)
+        except Exception:
+            # 创建会话时已经取得快照；运行期短暂失败时保留上一次成功内容。
+            return
+        with session._lock:
+            session.set_skills_locked(skills)
+
     def _compress_memory_if_due(self, session: Session) -> None:
         if not self._memory_enabled or self._memory_client is None:
             return
@@ -257,8 +276,8 @@ class Agent:
                         f"{llm_response.finish_reason}"
                     )
 
-                if not _is_well_formed_xml(llm_response.content):
-                    raise ValueError("LLM final reply is not valid XML")
+                if not _is_valid_reply_xml(llm_response.content):
+                    raise ValueError("LLM final reply is not valid AICHAN XML")
 
                 return llm_response
             except Exception as exc:
@@ -271,17 +290,21 @@ class Agent:
         raise RuntimeError("LLM turn retry loop exited unexpectedly")
 
 
-def _is_well_formed_xml(raw: str) -> bool:
+def _is_valid_reply_xml(raw: str) -> bool:
     try:
-        ElementTree.fromstring(raw)
+        root = ElementTree.fromstring(raw)
     except (ElementTree.ParseError, TypeError):
         return False
-    return True
+    if root.tag != "reply":
+        return False
+    allowed = {"text", "image", "file", "audio", "video", "extension"}
+    return all(message.tag == "message" and all(child.tag in allowed for child in list(message)) for message in list(root))
 
 
 def _text_reply_xml(text: str) -> str:
     root = ElementTree.Element("reply")
-    child = ElementTree.SubElement(root, "text")
+    message = ElementTree.SubElement(root, "message")
+    child = ElementTree.SubElement(message, "text")
     child.text = text
     return ElementTree.tostring(root, encoding="unicode", short_empty_elements=True)
 

@@ -11,7 +11,7 @@ from .mcp.vision import VisionClient
 def create_server() -> FastMCP:
     settings = get_settings()
     client = ToolMcpClient(
-        qq_base_url=settings.mcp.qq_base_url,
+        hub_base_url=settings.mcp.hub_base_url,
         file_base_url=settings.mcp.file_base_url,
         memory_base_url=settings.mcp.memory_base_url,
         timeout_seconds=settings.mcp.timeout_seconds,
@@ -20,52 +20,21 @@ def create_server() -> FastMCP:
 
     mcp = FastMCP(
         name="tool-mcp-server",
-        instructions="Expose AICHAN custom tools for QQ context, text files, image understanding, and video understanding.",
+        instructions="Expose AICHAN adapter, file, media understanding, and memory tools.",
         host=settings.server.host,
         port=settings.server.port,
     )
 
     @mcp.tool()
-    async def qq_get_message_history(
-        message_type: str,
-        peer_id: int,
-        limit: int = 20,
-        before_message_id: int | None = None,
-    ) -> str:
-        """获取 QQ 聊天记录。
+    async def adapter_invoke(session_id: str, capability: str, arguments: dict) -> str:
+        """调用当前会话所属渠道适配器声明的能力。
 
         Args:
-            message_type: "group" 表示群聊，"private" 表示私聊。
-            peer_id: 群号（message_type=group 时）或用户 QQ 号（message_type=private 时）。
-            limit: 返回条数，1-50。
-            before_message_id: 从该消息 ID 之前开始拉取，None 表示最新。
+            session_id: 当前 `<session>` 中的完整 session_id。
+            capability: 当前适配器 skill 声明的能力名称。
+            arguments: 该能力要求的参数对象。
         """
-        if limit < 1 or limit > 50:
-            raise ValueError("limit must be between 1 and 50")
-        if before_message_id is not None and before_message_id < 1:
-            raise ValueError("before_message_id must be positive")
-        if message_type not in ("group", "private"):
-            raise ValueError("message_type must be 'group' or 'private'")
-
-        result = await client.get_message_history(
-            message_type=message_type,
-            peer_id=peer_id,
-            limit=limit,
-            before_message_id=before_message_id,
-        )
-        return json.dumps(result, ensure_ascii=False)
-
-    @mcp.tool()
-    async def qq_get_user_info(user_id: int) -> str:
-        """获取 QQ 用户信息。
-
-        Args:
-            user_id: QQ 用户 ID。
-        """
-        if user_id < 1:
-            raise ValueError("user_id must be positive")
-
-        result = await client.get_user_info(user_id=user_id)
+        result = await client.adapter_invoke(session_id, capability, arguments)
         return json.dumps(result, ensure_ascii=False)
 
     @mcp.tool()
@@ -101,7 +70,7 @@ def create_server() -> FastMCP:
         """按用户 ID 读取 memory-service 内化后的长期用户记忆。
 
         Args:
-            user_id: QQ 用户 ID 或其他上游传入的用户标识。
+            user_id: 当前消息中的渠道用户标识。
             start_line: 0-based 起始行号；0 表示第一行。
             line_count: 最多返回多少行原始 markdown。
         """

@@ -9,6 +9,7 @@ from .memory_client import DisabledMemoryClient, HttpMemoryClient, MemoryClient,
 from .mcp_gateway import McpGateway
 from .observability import Observability, create_observability
 from .session import Session, SessionRegistry
+from .skill_client import SkillClient
 
 __all__ = [
     "Agent",
@@ -24,6 +25,7 @@ __all__ = [
     "Observability",
     "Session",
     "SessionRegistry",
+    "SkillClient",
     "ThreadedMemoryCompressionScheduler",
     "create_observability",
 ]

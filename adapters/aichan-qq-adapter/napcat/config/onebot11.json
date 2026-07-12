@@ -1,0 +1,21 @@
+{
+  "network": {
+    "httpServers": [],
+    "httpClients": [],
+    "websocketServers": [],
+    "websocketClients": [
+      {
+        "name": "aichan-qq-adapter",
+        "enable": true,
+        "url": "ws://aichan-qq-adapter:8070/onebot/v11/ws",
+        "reportSelfMessage": false,
+        "reconnectInterval": 5000,
+        "token": "",
+        "messagePostFormat": "array"
+      }
+    ]
+  },
+  "musicSignUrl": "",
+  "enableLocalFile2Url": true,
+  "parseMultMsg": false
+}

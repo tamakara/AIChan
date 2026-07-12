@@ -1,6 +1,8 @@
 # Python / uv
 .venv/
+.venv-*/
 .uv-cache/
+.test-temp-*/
 __pycache__/
 *.py[cod]
 *.pyo
@@ -43,7 +45,3 @@ Thumbs.db
 
 # Docker overrides
 docker-compose.override.yml
-
-# NapCat runtime data (QQ 登录态与缓存)
-napcat/ntqq/**
-!napcat/ntqq/.gitkeep

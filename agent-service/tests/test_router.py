@@ -19,7 +19,7 @@ class StubLlmClient:
         self.calls.append(messages)
         if self.fail:
             raise RuntimeError("stub failure")
-        reply = self.output if self.output is not None else "<reply><text>ok</text></reply>"
+        reply = self.output if self.output is not None else "<reply><message><text>ok</text></message></reply>"
         return LlmResponse(content=reply, tool_calls=[], finish_reason="stop")
 
 
@@ -171,7 +171,7 @@ def test_chat_uses_existing_session_and_injects_context() -> None:
     )
 
     assert response.status_code == 200
-    assert response.json() == {"output_xml": "<reply><text>ok</text></reply>"}
+    assert response.json() == {"output_xml": "<reply><message><text>ok</text></message></reply>"}
     assert len(llm_client.calls) == 1
 
     called_messages = llm_client.calls[0]
@@ -217,7 +217,7 @@ def test_chat_reuses_existing_session() -> None:
 
     assert second_call_roles == ["system", "system", "system", "user", "assistant", "system", "user"]
     assert first_user_xml in second_call_contents
-    assert "<reply><text>ok</text></reply>" in second_call_contents
+    assert "<reply><message><text>ok</text></message></reply>" in second_call_contents
 
 
 def test_chat_returns_fallback_when_agent_fails() -> None:
@@ -233,7 +233,7 @@ def test_chat_returns_fallback_when_agent_fails() -> None:
 
     assert response.status_code == 200
     assert response.json() == {
-        "output_xml": "<reply><text>笨蛋，刚才脑袋短路了一下，稍后再试试喵。</text></reply>"
+        "output_xml": "<reply><message><text>笨蛋，刚才脑袋短路了一下，稍后再试试喵。</text></message></reply>"
     }
 
 
@@ -259,7 +259,7 @@ def test_chat_returns_fallback_when_non_xml_output_retries_exhausted() -> None:
 
     assert response.status_code == 200
     assert response.json() == {
-        "output_xml": "<reply><text>笨蛋，刚才脑袋短路了一下，稍后再试试喵。</text></reply>"
+        "output_xml": "<reply><message><text>笨蛋，刚才脑袋短路了一下，稍后再试试喵。</text></message></reply>"
     }
     assert len(llm_client.calls) == 2
 

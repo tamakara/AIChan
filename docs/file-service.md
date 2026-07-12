@@ -30,6 +30,8 @@ flowchart LR
 
 ## 2. 接口契约
 
+除 URL 入库外，`POST /api/v1/files` 接受 multipart 字段 `upload`，供 hub 的标准适配器文件 API 代理上传。响应与 URL 入库相同，返回 SHA-256 object_key 和元数据。
+
 - `GET /healthz`
   - 响应：`{"status":"ok"}`
 - `POST /api/v1/files/from-url`

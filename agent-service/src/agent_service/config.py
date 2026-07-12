@@ -62,6 +62,8 @@ class AgentSettings(BaseModel):
     memory_base_url: StrictStr
     memory_compress_every_n_records: StrictInt
     memory_timeout: float
+    skill_base_url: StrictStr
+    skill_timeout: float
     llm_timeout: float
     llm_max_retries: StrictInt
     langfuse: LangfuseSettings
@@ -80,7 +82,7 @@ class AgentSettings(BaseModel):
             raise ValueError("必须配置 AGENT__OPENAI_API_KEY")
         return value
 
-    @field_validator("memory_timeout", mode="before")
+    @field_validator("memory_timeout", "skill_timeout", mode="before")
     @classmethod
     def _validate_memory_timeout(cls, value: Any) -> float:
         if isinstance(value, str):

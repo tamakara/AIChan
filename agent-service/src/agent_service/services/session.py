@@ -6,7 +6,8 @@ from threading import Lock
 from typing import Any
 from xml.etree import ElementTree
 
-from .prompts import SYSTEM_PROMPT
+from .prompts import BASE_SYSTEM_PROMPT
+from .skill_client import RuntimeSkill
 from .types.context import Context
 from .types.llm import Message
 
@@ -30,7 +31,13 @@ class MemoryCompressionSnapshot:
 class Session:
     """一次会话的上下文，独立于 Agent 进行管理。"""
 
-    def __init__(self, session_id: str, metadata: dict[str, Any], max_turns: int) -> None:
+    def __init__(
+        self,
+        session_id: str,
+        metadata: dict[str, Any],
+        max_turns: int,
+        skills: list[RuntimeSkill] | None = None,
+    ) -> None:
         self._session_id = session_id
         self._metadata = dict(metadata)
         self._lock = Lock()
@@ -40,17 +47,9 @@ class Session:
         self._compression_snapshot: MemoryCompressionSnapshot | None = None
         self._memory_message: Message | None = None
         # 上下文拆成系统层、记忆层、记录层三部分管理，避免压缩阈值和清理逻辑依赖魔法切片。
-        self._system_messages = Context()
         self._record_context = Context()
-        self._system_messages.add_message(role="system", content=SYSTEM_PROMPT)
-        self._system_messages.add_message(
-            role="system",
-            content=_session_xml(
-                session_id=session_id,
-                metadata=self._metadata,
-                max_turns=max_turns,
-            ),
-        )
+        self._max_turns = max_turns
+        self._skills = list(skills or [])
 
     @property
     def messages(self) -> list[Message]:
@@ -69,6 +68,9 @@ class Session:
 
     def clear_memory_locked(self) -> None:
         self._memory_message = None
+
+    def set_skills_locked(self, skills: list[RuntimeSkill]) -> None:
+        self._skills = list(skills)
 
     def append_record_messages_locked(self, messages: list[Message]) -> None:
         for message in messages:
@@ -159,7 +161,16 @@ class Session:
         return self._compression_snapshot is not None
 
     def _all_messages_locked(self) -> list[Message]:
-        messages = list(self._system_messages.messages)
+        messages: list[Message] = [{"role": "system", "content": BASE_SYSTEM_PROMPT}]
+        for skill in self._skills:
+            messages.append({
+                "role": "system",
+                "content": f'<skill id="{skill.id}" version="{skill.version}">\n{skill.content}\n</skill>',
+            })
+        messages.append({
+            "role": "system",
+            "content": _session_xml(self._session_id, self._metadata, self._max_turns),
+        })
         if self._memory_message is not None:
             messages.append(self._memory_message)
         messages.extend(self._record_context.messages)
@@ -174,13 +185,19 @@ class SessionRegistry:
         self._sessions: dict[str, Session] = {}
         self._lock = Lock()
 
-    def create(self, session_id: str, metadata: dict[str, Any]) -> Session:
+    def create(
+        self,
+        session_id: str,
+        metadata: dict[str, Any],
+        skills: list[RuntimeSkill] | None = None,
+    ) -> Session:
         with self._lock:
             metadata_with_id = {**metadata, "session_id": session_id}
             session = Session(
                 session_id=session_id,
                 metadata=metadata_with_id,
                 max_turns=self._max_turns,
+                skills=skills,
             )
             self._sessions[session_id] = session
             return session
@@ -210,7 +227,7 @@ def _session_xml(session_id: str, metadata: dict[str, Any], max_turns: int) -> s
         "session_id": session_id,
         "max_turn": str(max_turns),
     }
-    for key in ("platform", "session_type", "user_id", "group_id", "self_id"):
+    for key in ("adapter_id", "instance_id", "conversation_type", "conversation_id", "bot_id"):
         value = metadata.get(key)
         if value is not None:
             attributes[key] = str(value)
