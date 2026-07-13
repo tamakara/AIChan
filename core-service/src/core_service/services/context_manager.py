@@ -30,7 +30,7 @@ class ConversationContext:
     records: list[RecordEntry] = field(default_factory=list)
     queued_user_messages: list[str] = field(default_factory=list)
     memory_markdown: str = ""
-    object_keys: set[str] = field(default_factory=set)
+    file_refs: set[str] = field(default_factory=set)
     revision: int = 0
     next_record_seq: int = 0
     compression_in_flight: bool = False
@@ -43,7 +43,7 @@ class ContextSnapshot:
     revision: int
     metadata: dict[str, Any]
     messages: list[Message]
-    allowed_object_keys: frozenset[str]
+    allowed_file_refs: frozenset[str]
 
 
 class ContextManager:
@@ -87,11 +87,11 @@ class ContextManager:
         async with self._lock:
             return self._contexts.pop(session_id, None) is not None
 
-    async def queue(self, session_id: str, messages_xml: str, object_keys: set[str] | frozenset[str]) -> None:
+    async def queue(self, session_id: str, messages_xml: str, file_refs: set[str] | frozenset[str]) -> None:
         context = await self._require(session_id)
         async with context.lock:
             context.queued_user_messages.append(messages_xml)
-            context.object_keys.update(object_keys)
+            context.file_refs.update(file_refs)
             context.revision += 1
 
     async def drain_queued(self, session_id: str) -> list[str]:
@@ -125,13 +125,18 @@ class ContextManager:
                 revision=context.revision,
                 metadata=dict(context.metadata),
                 messages=messages,
-                allowed_object_keys=frozenset(context.object_keys),
+                allowed_file_refs=frozenset(context.file_refs),
             )
 
-    async def add_object_keys(self, session_id: str, keys: set[str]) -> None:
+    async def add_file_refs(self, session_id: str, refs: set[str] | frozenset[str]) -> None:
         context = await self._require(session_id)
         async with context.lock:
-            context.object_keys.update(keys)
+            context.file_refs.update(refs)
+
+    async def file_ref_allowed(self, session_id: str, file_ref: str) -> bool:
+        context = await self._require(session_id)
+        async with context.lock:
+            return file_ref in context.file_refs
 
     async def commit(self, session_id: str, messages: list[Message]) -> None:
         context = await self._require(session_id)

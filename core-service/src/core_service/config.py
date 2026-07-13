@@ -28,6 +28,38 @@ class LangfuseSettings(BaseModel):
         return self
 
 
+class FileCacheSettings(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    root_dir: str = "/tmp/aichan-file-cache"
+    ttl_seconds: int = 3600
+    cleanup_interval_seconds: int = 600
+    max_file_bytes: int = 10 * 1024 * 1024
+
+    @model_validator(mode="after")
+    def validate_positive_values(self) -> "FileCacheSettings":
+        if min(self.ttl_seconds, self.cleanup_interval_seconds, self.max_file_bytes) < 1:
+            raise ValueError("file_cache 数值必须大于 0")
+        return self
+
+
+class PerceptionSettings(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    openai_base_url: str = ""
+    openai_api_key: str = ""
+    visual_model: str = ""
+    audio_model: str = ""
+    timeout_seconds: float = 30.0
+    video_frame_count: int = 6
+
+    @model_validator(mode="after")
+    def validate_values(self) -> "PerceptionSettings":
+        if self.timeout_seconds <= 0:
+            raise ValueError("perception timeout_seconds 必须大于 0")
+        if not 1 <= self.video_frame_count <= 12:
+            raise ValueError("perception video_frame_count 必须在 1 到 12 之间")
+        return self
+
+
 class CoreSettings(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
     host: str = "0.0.0.0"
@@ -40,13 +72,10 @@ class CoreSettings(BaseModel):
     max_turns: int = 20
     llm_timeout: float = 30.0
     llm_max_retries: int = 3
-    mcp_sse_url: str = "http://mcp-gateway:9000/sse"
-    mcp_auth_token: str = ""
     memory_enabled: bool = True
     memory_base_url: str = "http://memory-service:8050"
     memory_timeout: float = 10.0
     memory_compress_every_n_records: int = 10
-    file_service_url: str = "http://file-service:8040"
     debounce_seconds: float = 2.0
     ack_timeout_seconds: float = 10.0
     ack_max_attempts: int = 3
@@ -57,6 +86,8 @@ class CoreSettings(BaseModel):
     max_skill_bytes: int = 65_536
     max_skill_snapshot_bytes: int = 262_144
     max_xml_bytes: int = 262_144
+    file_cache: FileCacheSettings = Field(default_factory=FileCacheSettings)
+    perception: PerceptionSettings = Field(default_factory=PerceptionSettings)
     langfuse: LangfuseSettings = Field(default_factory=LangfuseSettings)
 
     @field_validator("adapter_tokens", mode="before")

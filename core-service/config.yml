@@ -9,13 +9,10 @@ core:
   max_turns: 20
   llm_timeout: 30.0
   llm_max_retries: 3
-  mcp_sse_url: http://mcp-gateway:9000/sse
-  mcp_auth_token: ""
   memory_enabled: true
   memory_base_url: http://memory-service:8050
   memory_timeout: 10.0
   memory_compress_every_n_records: 10
-  file_service_url: http://file-service:8040
   debounce_seconds: 2.0
   ack_timeout_seconds: 10.0
   ack_max_attempts: 3
@@ -26,6 +23,18 @@ core:
   max_skill_bytes: 65536
   max_skill_snapshot_bytes: 262144
   max_xml_bytes: 262144
+  file_cache:
+    root_dir: /tmp/aichan-file-cache
+    ttl_seconds: 3600
+    cleanup_interval_seconds: 600
+    max_file_bytes: 10485760
+  perception:
+    openai_base_url: ""
+    openai_api_key: ""
+    visual_model: ""
+    audio_model: ""
+    timeout_seconds: 30.0
+    video_frame_count: 6
   langfuse:
     enabled: true
     host: ""

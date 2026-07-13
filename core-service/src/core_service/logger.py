@@ -24,8 +24,6 @@ EVENT_LABELS = {
     "agent.observability_flush_failed": "观测 flush 失败",
     "agent.memory_compress_completed": "记忆压缩完成",
     "agent.memory_compress_failed": "记忆压缩失败",
-    "mcp.registered": "MCP 工具注册完成",
-    "mcp.tool_called": "MCP 工具调用完成",
     "llm.request_failed": "模型请求失败",
 }
 FIELD_LABELS = {
@@ -43,7 +41,6 @@ FIELD_LABELS = {
     "message_len": "消息长度",
     "tool_count": "工具数",
     "created_new_session": "新建会话",
-    "mcp_sse_url": "MCP地址",
     "removed_keys": "移除字段",
     "status_code": "状态码",
     "detail": "详情",
@@ -61,7 +58,7 @@ DEFAULT_HIGHLIGHT_KEYS = (
     "status_code",
 )
 EVENT_HIGHLIGHT_KEYS = {
-    "agent_app.boot": ("model", "max_turns", "mcp_sse_url"),
+    "agent_app.boot": ("model", "max_turns"),
     "agent.session_created": ("session_id", "session_id"),
     "agent.session_deleted": ("session_id",),
     "agent.chat_received": ("session_id", "session_id", "message_count"),
@@ -79,8 +76,6 @@ EVENT_HIGHLIGHT_KEYS = {
     "agent.observability_flush_failed": ("detail",),
     "agent.memory_compress_completed": ("session_id", "elapsed_ms"),
     "agent.memory_compress_failed": ("session_id", "elapsed_ms"),
-    "mcp.registered": ("tool_count", "elapsed_ms"),
-    "mcp.tool_called": ("tool_name", "elapsed_ms"),
     "llm.request_failed": ("model", "status_code"),
 }
 

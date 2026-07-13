@@ -44,7 +44,7 @@ async def test_queued_message_increments_revision(tmp_path: Path) -> None:
     after = await manager.snapshot("s", [], [])
     assert after.revision == before.revision + 1
     assert await manager.drain_queued("s") == ["<messages />"]
-    assert "a" * 64 in after.allowed_object_keys
+    assert "a" * 64 in after.allowed_file_refs
 
 
 @pytest.mark.asyncio

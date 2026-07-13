@@ -17,101 +17,29 @@ services:
       - ./memory-service/config.yml:/app/memory-service/config.yml:ro
       - memory-service-data:/data/memories
 
-  minio:
-    image: minio/minio:latest
-    restart: unless-stopped
-    command: [server, /data, --console-address, ":9001"]
-    environment:
-      MINIO_ROOT_USER: "${MINIO_ROOT_USER:-minio_user}"
-      MINIO_ROOT_PASSWORD: "${MINIO_ROOT_PASSWORD:-minio_password}"
-    volumes:
-      - minio-data:/data
-    ports:
-      - "19001:9001"
-
-  file-service:
-    build:
-      context: ./file-service
-    restart: unless-stopped
-    depends_on:
-      minio:
-        condition: service_started
-    environment:
-      STORAGE__ACCESS_KEY: "${MINIO_ROOT_USER:-minio_user}"
-      STORAGE__SECRET_KEY: "${MINIO_ROOT_PASSWORD:-minio_password}"
-    healthcheck:
-      test: [CMD, python, -c, "import socket; s=socket.create_connection(('127.0.0.1',8040),2); s.close()"]
-      interval: 5s
-      timeout: 3s
-      retries: 20
-      start_period: 5s
-    volumes:
-      - ./file-service/config.yml:/app/file-service/config.yml:ro
-      - file-service-data:/data
-
-  core-mcp-server:
-    image: core-mcp-server:latest
-    build:
-      context: ./core-mcp-server
-    restart: unless-stopped
-    depends_on:
-      file-service:
-        condition: service_healthy
-      memory-service:
-        condition: service_healthy
-    command: [core-mcp-server, --transport, streamable-http]
-    environment:
-      VISION__OPENAI_BASE_URL: "${VISION__OPENAI_BASE_URL:-}"
-      VISION__OPENAI_API_KEY: "${VISION__OPENAI_API_KEY:-}"
-      VISION__MODEL: "${VISION__MODEL:-}"
-      VISION__VIDEO_FRAME_COUNT: "${VISION__VIDEO_FRAME_COUNT:-6}"
-    healthcheck:
-      test: [CMD, python, -c, "import socket; s=socket.create_connection(('127.0.0.1',8030),2); s.close()"]
-      interval: 5s
-      timeout: 3s
-      retries: 20
-      start_period: 5s
-    volumes:
-      - ./core-mcp-server/config.yml:/app/core-mcp-server/config.yml:ro
-
-  mcp-gateway:
-    image: docker/mcp-gateway:latest
-    restart: unless-stopped
-    depends_on:
-      core-mcp-server:
-        condition: service_healthy
-    command:
-      - --transport=sse
-      - --port=9000
-      - --additional-catalog=/app/core-mcp-server/docker-mcp-catalog.yml
-      - --servers=tavily,time,core-mcp-server
-      - --secrets=/.env.mcp
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
-      - ./.env.mcp:/.env.mcp:ro
-      - ./core-mcp-server/docker-mcp-catalog.yml:/app/core-mcp-server/docker-mcp-catalog.yml:ro
-
   core-service:
     build:
       context: .
       dockerfile: core-service/Dockerfile
     restart: unless-stopped
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
-      mcp-gateway:
-        condition: service_started
       memory-service:
-        condition: service_healthy
-      file-service:
         condition: service_healthy
     environment:
       CORE__MODEL: "${CORE__MODEL:?CORE__MODEL is required}"
       CORE__OPENAI_API_KEY: "${CORE__OPENAI_API_KEY:?CORE__OPENAI_API_KEY is required}"
       CORE__OPENAI_BASE_URL: "${CORE__OPENAI_BASE_URL:-https://api.xiaomimimo.com/v1}"
-      CORE__MCP_AUTH_TOKEN: "${CORE__MCP_AUTH_TOKEN:-}"
       CORE__ADAPTER_TOKENS: "${CORE__ADAPTER_TOKENS:-{}}"
       CORE__LANGFUSE__HOST: "${CORE__LANGFUSE__HOST:?CORE__LANGFUSE__HOST is required}"
       CORE__LANGFUSE__PUBLIC_KEY: "${CORE__LANGFUSE__PUBLIC_KEY:?CORE__LANGFUSE__PUBLIC_KEY is required}"
       CORE__LANGFUSE__SECRET_KEY: "${CORE__LANGFUSE__SECRET_KEY:?CORE__LANGFUSE__SECRET_KEY is required}"
+      CORE__PERCEPTION__OPENAI_BASE_URL: "${CORE__PERCEPTION__OPENAI_BASE_URL:-}"
+      CORE__PERCEPTION__OPENAI_API_KEY: "${CORE__PERCEPTION__OPENAI_API_KEY:-}"
+      CORE__PERCEPTION__VISUAL_MODEL: "${CORE__PERCEPTION__VISUAL_MODEL:-}"
+      CORE__PERCEPTION__AUDIO_MODEL: "${CORE__PERCEPTION__AUDIO_MODEL:-}"
+      CORE__PERCEPTION__VIDEO_FRAME_COUNT: "${CORE__PERCEPTION__VIDEO_FRAME_COUNT:-6}"
     healthcheck:
       test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8020/healthz',timeout=2)"]
       interval: 5s
@@ -124,15 +52,6 @@ services:
       - ./skills:/app/skills:ro
     ports:
       - "18020:8020"
-    networks:
-      - default
-      - aichan-adapter
 
 volumes:
-  minio-data:
-  file-service-data:
   memory-service-data:
-
-networks:
-  aichan-adapter:
-    name: aichan-adapter-network

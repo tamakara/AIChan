@@ -23,24 +23,24 @@ class SessionRunner:
     codec: XmlMessageCodec
     debounce_seconds: float
     pending: list[str] = field(default_factory=list)
-    pending_keys: set[str] = field(default_factory=set)
+    pending_file_refs: set[str] = field(default_factory=set)
     task: asyncio.Task[None] | None = None
     running: bool = False
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
-    async def submit(self, messages_xml: str, object_keys: frozenset[str]) -> None:
+    async def submit(self, messages_xml: str, file_refs: frozenset[str]) -> None:
         async with self.lock:
             if self.running:
                 queue = True
             else:
                 queue = False
                 self.pending.append(messages_xml)
-                self.pending_keys.update(object_keys)
+                self.pending_file_refs.update(file_refs)
                 if self.task is not None:
                     self.task.cancel()
                 self.task = asyncio.create_task(self._debounce_then_run())
         if queue:
-            await self.contexts.queue(self.session_id, messages_xml, object_keys)
+            await self.contexts.queue(self.session_id, messages_xml, file_refs)
 
     async def _debounce_then_run(self) -> None:
         try:
@@ -49,16 +49,16 @@ class SessionRunner:
             return
         async with self.lock:
             batch = list(self.pending)
-            keys = frozenset(self.pending_keys)
+            file_refs = frozenset(self.pending_file_refs)
             self.pending.clear()
-            self.pending_keys.clear()
+            self.pending_file_refs.clear()
             self.running = True
             self.task = None
         registration = self.adapters.registration(self.adapter_key)
         try:
             merged = self.codec.merge_messages(batch, registration)
-            reply = await self.agent.run(session_id=self.session_id, adapter_key=self.adapter_key, messages_xml=merged.xml, object_keys=keys | merged.object_keys)
-            await self.adapters.deliver_reply(self.adapter_key, self.session_id, reply.reply_xml, reply.allowed_object_keys)
+            reply = await self.agent.run(session_id=self.session_id, adapter_key=self.adapter_key, messages_xml=merged.xml, file_refs=file_refs | merged.file_refs)
+            await self.adapters.deliver_reply(self.adapter_key, self.session_id, reply.reply_xml, reply.allowed_file_refs)
         except Exception:
             LOGGER.exception("session run failed", extra={"session_id": self.session_id})
         finally:
@@ -86,7 +86,7 @@ class SessionManager:
         self._runners: dict[str, SessionRunner] = {}
         self._lock = asyncio.Lock()
 
-    async def submit_event(self, adapter_key: tuple[str, str], event: PublishedEvent, object_keys: frozenset[str]) -> None:
+    async def submit_event(self, adapter_key: tuple[str, str], event: PublishedEvent, file_refs: frozenset[str]) -> None:
         session_id = session_id_for(*adapter_key, event.conversation_type, event.conversation_id)
         async with self._lock:
             runner = self._runners.get(session_id)
@@ -97,7 +97,7 @@ class SessionManager:
                 await self._contexts.create(session_id, metadata)
                 runner = SessionRunner(session_id, adapter_key, self._agent, self._adapters, self._contexts, self._codec, self._debounce)
                 self._runners[session_id] = runner
-        await runner.submit(event.messages_xml, object_keys)
+        await runner.submit(event.messages_xml, file_refs)
 
     async def close(self) -> None:
         async with self._lock:

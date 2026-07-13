@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 from typing import Any, Literal
-from urllib.parse import quote
+from urllib.parse import quote, urlparse
 from uuid import uuid4
 
 from jsonschema import Draft202012Validator
@@ -78,6 +78,7 @@ class AdapterRegistration(BaseModel):
     adapter_id: str = Field(min_length=1)
     instance_id: str = Field(min_length=1)
     display_name: str = Field(min_length=1)
+    file_base_url: str = Field(min_length=1)
     config_schema: dict[str, Any] = Field(default_factory=dict)
     config_summary: dict[str, Any] = Field(default_factory=dict)
     capabilities: list[CapabilityDefinition] = Field(default_factory=list)
@@ -86,6 +87,9 @@ class AdapterRegistration(BaseModel):
 
     @model_validator(mode="after")
     def validate_unique_declarations(self) -> "AdapterRegistration":
+        parsed = urlparse(self.file_base_url)
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc or parsed.query or parsed.fragment:
+            raise ValueError("file_base_url 必须是无 query/fragment 的 HTTP(S) 地址")
         for values, label in (([x.tool_name for x in self.capabilities], "capability tool"), ([x.type for x in self.extensions], "extension"), ([x.id for x in self.skills], "skill")):
             if len(values) != len(set(values)):
                 raise ValueError(f"{label} 声明重复")
@@ -99,6 +103,13 @@ class PublishedEvent(BaseModel):
     conversation_id: str = Field(min_length=1)
     bot_id: str | None = None
     messages_xml: str = Field(min_length=1)
+
+
+class MessageQueryResult(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    messages_xml: str = Field(min_length=1)
+    next_cursor: str | None = None
+    has_more: bool
 
 
 class Envelope(BaseModel):

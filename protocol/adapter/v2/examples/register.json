@@ -7,6 +7,7 @@
     "adapter_id": "qq",
     "instance_id": "main",
     "display_name": "QQ / NapCat",
+    "file_base_url": "http://qq-adapter:8080/api/v2/files",
     "config_schema": {"type": "object"},
     "config_summary": {"session_count": 1},
     "capabilities": [{"name": "user.get", "input_schema": {"type": "object", "properties": {"user_id": {"type": "string"}}, "required": ["user_id"], "additionalProperties": false}, "output_schema": {"type": "object"}}],

@@ -182,7 +182,7 @@ def test_compress_schedules_user_memory_update_from_message_user_id(tmp_path: Pa
 
     result = service.compress_and_append(
         "group_1",
-        '[2026-06-18T10:00:00+08:00] user: <message user_id="123">我喜欢中文注释</message>',
+        '[2026-06-18T10:00:00+08:00] user: <message sender_id="123">我喜欢中文注释</message>',
     )
 
     assert result.added_count == 1
@@ -198,7 +198,7 @@ def test_compress_schedules_user_memory_update_from_message_user_id(tmp_path: Pa
     assert list(tmp_path.glob("123.md")) == []
     current_markdown, new_logs_markdown = synthesizer.calls[0]
     assert current_markdown == USER_MEMORY_EMPTY_TEMPLATE
-    assert '<message user_id="123">我喜欢中文注释</message>' in new_logs_markdown
+    assert '<message sender_id="123">我喜欢中文注释</message>' in new_logs_markdown
     assert "用户 123 说喜欢中文注释" in new_logs_markdown
 
 
@@ -215,7 +215,7 @@ def test_user_memory_filename_uses_readable_user_id_with_path_escape_encoding(tm
 
     service.compress_and_append(
         "group_1",
-        '[2026-06-18T10:00:00+08:00] user: <message user_id="../123">测试</message>',
+        '[2026-06-18T10:00:00+08:00] user: <message sender_id="../123">测试</message>',
     )
     scheduler.run_all()
 
@@ -243,8 +243,8 @@ def test_group_chat_updates_multiple_user_memories_without_crossing_raw_messages
         "group_1",
         "\n".join(
             [
-                '[2026-06-18T10:00:00+08:00] user: <message user_id="123">我喜欢日志</message>',
-                '[2026-06-18T10:01:00+08:00] user: <message user_id="456">我喜欢检索</message>',
+                '[2026-06-18T10:00:00+08:00] user: <message sender_id="123">我喜欢日志</message>',
+                '[2026-06-18T10:01:00+08:00] user: <message sender_id="456">我喜欢检索</message>',
             ]
         ),
     )
@@ -256,10 +256,10 @@ def test_group_chat_updates_multiple_user_memories_without_crossing_raw_messages
     assert service.read_user_memory("456") == "## 用户画像\n- 用户 456 喜欢检索\n\n## 相关记忆\n"
     first_raw_block = synthesizer.calls[0][1].split("【本轮无损压缩日志】", maxsplit=1)[0]
     second_raw_block = synthesizer.calls[1][1].split("【本轮无损压缩日志】", maxsplit=1)[0]
-    assert 'user_id="123"' in first_raw_block
-    assert 'user_id="456"' not in first_raw_block
-    assert 'user_id="456"' in second_raw_block
-    assert 'user_id="123"' not in second_raw_block
+    assert 'sender_id="123"' in first_raw_block
+    assert 'sender_id="456"' not in first_raw_block
+    assert 'sender_id="456"' in second_raw_block
+    assert 'sender_id="123"' not in second_raw_block
 
 
 def test_user_memory_failure_does_not_rollback_session_log(tmp_path: Path) -> None:
@@ -273,7 +273,7 @@ def test_user_memory_failure_does_not_rollback_session_log(tmp_path: Path) -> No
 
     result = service.compress_and_append(
         "private_123",
-        '[2026-06-18T10:00:00+08:00] user: <message user_id="123">继续保留无损日志</message>',
+        '[2026-06-18T10:00:00+08:00] user: <message sender_id="123">继续保留无损日志</message>',
     )
     scheduler.run_all()
 

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass
 from typing import Any, Literal
 from xml.etree import ElementTree
@@ -10,16 +9,14 @@ from jsonschema import validate
 
 from .protocol import AdapterRegistration, ExtensionDefinition
 
-OBJECT_KEY_RE = re.compile(r"^[0-9a-f]{64}$")
-MEDIA_TAGS = {"image", "file", "audio", "video"}
-INPUT_TAGS = {"text", *MEDIA_TAGS, "mention", "quote", "extension"}
-OUTPUT_TAGS = {"text", *MEDIA_TAGS, "extension"}
+INPUT_TAGS = {"text", "file", "mention", "quote", "extension"}
+OUTPUT_TAGS = {"text", "file", "extension"}
 
 
 @dataclass(frozen=True)
 class ParsedXml:
     xml: str
-    object_keys: frozenset[str]
+    file_refs: frozenset[str]
 
 
 class XmlMessageCodec:
@@ -28,23 +25,23 @@ class XmlMessageCodec:
     def __init__(self, max_xml_bytes: int = 262_144) -> None:
         self._max_xml_bytes = max_xml_bytes
 
-    def validate_messages(self, raw: str, registration: AdapterRegistration) -> ParsedXml:
+    def validate_messages(self, raw: str, registration: AdapterRegistration, *, allow_empty: bool = False) -> ParsedXml:
         root = self._parse(raw, "messages")
-        if not list(root):
+        if not list(root) and not allow_empty:
             raise ValueError("<messages> 至少包含一个 <message>")
         keys: set[str] = set()
         for message in list(root):
             self._validate_input_message(message, registration, keys)
         return ParsedXml(self._serialize(root), frozenset(keys))
 
-    def validate_reply(self, raw: str, registration: AdapterRegistration, allowed_object_keys: set[str] | frozenset[str]) -> ParsedXml:
+    def validate_reply(self, raw: str, registration: AdapterRegistration, allowed_file_refs: set[str] | frozenset[str]) -> ParsedXml:
         root = self._parse(raw, "reply")
         keys: set[str] = set()
         for message in list(root):
             self._validate_output_message(message, registration, keys)
-        unknown = keys - set(allowed_object_keys)
+        unknown = keys - set(allowed_file_refs)
         if unknown:
-            raise ValueError(f"reply 引用了未知 object_key: {sorted(unknown)[0]}")
+            raise ValueError(f"reply 引用了未知 file ref: {sorted(unknown)[0]}")
         return ParsedXml(self._serialize(root), frozenset(keys))
 
     def merge_messages(self, items: list[str], registration: AdapterRegistration) -> ParsedXml:
@@ -111,12 +108,12 @@ class XmlMessageCodec:
             if child.tag == "text":
                 if child.attrib or list(child):
                     raise ValueError("text 只能包含文本")
-            elif child.tag in MEDIA_TAGS:
-                self._validate_attributes(child, {"object_key"}, {"object_key", "name", "mime_type"})
-                key = child.get("object_key", "")
-                if not OBJECT_KEY_RE.fullmatch(key):
-                    raise ValueError("媒体 object_key 必须是小写 SHA-256")
-                keys.add(key)
+            elif child.tag == "file":
+                self._validate_attributes(child, {"ref"}, {"ref", "name"})
+                file_ref = child.get("ref", "")
+                if len(file_ref) > 512:
+                    raise ValueError("file ref 长度不能超过 512")
+                keys.add(file_ref)
             elif child.tag == "mention":
                 self._validate_attributes(child, {"target_id"}, {"target_id"})
             elif child.tag == "quote":

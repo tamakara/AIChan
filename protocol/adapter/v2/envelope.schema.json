@@ -17,11 +17,12 @@
     "registration": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["adapter_id", "instance_id", "display_name"],
+      "required": ["adapter_id", "instance_id", "display_name", "file_base_url"],
       "properties": {
         "adapter_id": {"type": "string", "minLength": 1},
         "instance_id": {"type": "string", "minLength": 1},
         "display_name": {"type": "string", "minLength": 1},
+        "file_base_url": {"type": "string", "format": "uri", "pattern": "^https?://"},
         "config_schema": {"type": "object"},
         "config_summary": {"type": "object"},
         "capabilities": {"type": "array", "items": {"type": "object"}},
@@ -40,11 +41,37 @@
         "bot_id": {"type": ["string", "null"]},
         "messages_xml": {"type": "string", "minLength": 1}
       }
+    },
+    "messageQuery": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["session_id", "conversation_type", "conversation_id", "cursor", "limit"],
+      "properties": {
+        "session_id": {"type": "string", "minLength": 1},
+        "conversation_type": {"type": "string", "minLength": 1},
+        "conversation_id": {"type": "string", "minLength": 1},
+        "cursor": {"type": ["string", "null"]},
+        "limit": {"type": "integer", "minimum": 1, "maximum": 100}
+      }
+    },
+    "messageResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ok", "has_more"],
+      "properties": {
+        "ok": {"type": "boolean"},
+        "messages_xml": {"type": "string", "minLength": 1},
+        "next_cursor": {"type": ["string", "null"]},
+        "has_more": {"type": "boolean"},
+        "error": {"type": "string"}
+      }
     }
   },
   "oneOf": [
     {"allOf": [{"$ref": "#/$defs/base"}, {"properties": {"type": {"const": "adapter.register"}, "payload": {"$ref": "#/$defs/registration"}}}]},
     {"allOf": [{"$ref": "#/$defs/base"}, {"properties": {"type": {"const": "event.publish"}, "payload": {"$ref": "#/$defs/event"}}}]},
+    {"allOf": [{"$ref": "#/$defs/base"}, {"properties": {"type": {"const": "message.query"}, "payload": {"$ref": "#/$defs/messageQuery"}}}]},
+    {"allOf": [{"$ref": "#/$defs/base"}, {"properties": {"type": {"const": "message.result"}, "payload": {"$ref": "#/$defs/messageResult"}}}]},
     {"allOf": [{"$ref": "#/$defs/base"}, {"properties": {"type": {"enum": ["adapter.registered", "heartbeat.ping", "heartbeat.pong", "event.ack", "reply.deliver", "reply.ack", "capability.invoke", "capability.result", "protocol.error"]}}}]}
   ]
 }

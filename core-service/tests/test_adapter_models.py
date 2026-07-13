@@ -13,9 +13,14 @@ def test_registration_rejects_tool_collision_and_nested_extension() -> None:
     with pytest.raises(ValidationError):
         ExtensionDefinition(type="qq.bad", directions=["output"], parameters_schema={"type": "object", "properties": {"payload": {"type": "object"}}, "additionalProperties": False})
     with pytest.raises(ValidationError, match="重复"):
-        AdapterRegistration(adapter_id="qq", instance_id="main", display_name="QQ", capabilities=[CapabilityDefinition(name="user.get"), CapabilityDefinition(name="user_get")])
+        AdapterRegistration(adapter_id="qq", instance_id="main", display_name="QQ", file_base_url="http://adapter/files", capabilities=[CapabilityDefinition(name="user.get"), CapabilityDefinition(name="user_get")])
 
 
 def test_envelope_rejects_v1() -> None:
     with pytest.raises(ValidationError):
         Envelope(version="1.0", type="heartbeat.ping")
+
+
+def test_registration_requires_valid_file_base_url() -> None:
+    with pytest.raises(ValidationError, match="file_base_url"):
+        AdapterRegistration(adapter_id="qq", instance_id="main", display_name="QQ", file_base_url="file:///tmp")

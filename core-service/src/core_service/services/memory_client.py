@@ -34,3 +34,14 @@ class MemoryClient:
             added_markdown=str(payload.get("added_markdown", "")),
             added_count=int(payload.get("added_count", 0)),
         )
+
+    async def get_user_memory(self, user_id: str, *, start_line: int, line_count: int) -> dict[str, object]:
+        response = await self._client.get(
+            f"/api/v1/users/{quote(user_id, safe='')}/memory",
+            params={"start_line": start_line, "line_count": line_count},
+        )
+        response.raise_for_status()
+        payload = response.json()
+        if not isinstance(payload, dict):
+            raise RuntimeError("memory-service 返回了非法用户记忆")
+        return payload

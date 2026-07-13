@@ -11,8 +11,8 @@ enabled: true
 ```xml
 <messages>
   <message id="1" timestamp="1710000000" sender_id="u1" sender_name="小明" mentioned="true">
-    <text>你好</text>
-    <image object_key="0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef" name="a.png" mime_type="image/png" />
+    <text>帮我看看这个文件</text>
+    <file ref="msg-1:file-1" name="photo.jpg" />
     <mention target_id="bot" />
     <quote message_id="0" />
   </message>
@@ -25,9 +25,10 @@ enabled: true
 <reply>
   <message target_id="u1" target_name="小明" mention="true">
     <text>收到。</text>
+    <file ref="msg-1:file-1" name="photo.jpg" />
     <extension type="qq.poke" target_id="u1" count="2" />
   </message>
 </reply>
 ```
 
-输入通用节点为 `text/image/file/audio/video/mention/quote/extension`；输出只允许 `text/image/file/audio/video/extension`。渠道扩展只能使用当前 Adapter skill 声明的扁平标量属性。媒体只能引用上下文或工具结果中真实存在的 `object_key`。无需回复时输出 `<reply />`。
+输入通用节点为 `text/file/mention/quote/extension`；输出只允许 `text/file/extension`。文件类型由 `file_perceive` 根据 Adapter 返回的 MIME 判断，协议中不区分图片、音频或视频。只能引用当前上下文或 `message_query` 结果中真实存在的 file ref。无需回复时输出 `<reply />`。

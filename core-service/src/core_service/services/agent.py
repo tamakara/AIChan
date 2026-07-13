@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import re
 from dataclasses import dataclass
 from typing import Any
 
@@ -9,25 +8,24 @@ from ..adapters.registry import AdapterRegistry
 from ..adapters.xml_codec import XmlMessageCodec
 from ..logger import elapsed_ms, start_timer
 from .context_manager import ContextManager
+from .builtin_tools import BuiltinTools
 from .llm_client import LlmClient
-from .mcp_gateway import McpToolClient
 from .observability import Observability, RunTrace
 from .types.llm import LlmResponse, Message, ToolCall
 
 LLM_FALLBACK_REPLY = "笨蛋，刚才脑袋短路了一下，稍后再试试喵。"
-OBJECT_KEY_RE = re.compile(r"^[0-9a-f]{64}$")
 
 
 @dataclass(frozen=True)
 class AgentReply:
     reply_xml: str
-    allowed_object_keys: frozenset[str]
+    allowed_file_refs: frozenset[str]
 
 
 class Agent:
-    def __init__(self, *, llm_client: LlmClient, mcp: McpToolClient, adapters: AdapterRegistry, contexts: ContextManager, codec: XmlMessageCodec, max_turns: int, max_retries: int, temperature: float, observability: Observability) -> None:
+    def __init__(self, *, llm_client: LlmClient, builtin_tools: BuiltinTools, adapters: AdapterRegistry, contexts: ContextManager, codec: XmlMessageCodec, max_turns: int, max_retries: int, temperature: float, observability: Observability) -> None:
         self._llm = llm_client
-        self._mcp = mcp
+        self._builtin_tools = builtin_tools
         self._adapters = adapters
         self._contexts = contexts
         self._codec = codec
@@ -36,9 +34,9 @@ class Agent:
         self._temperature = temperature
         self._observability = observability
 
-    async def run(self, *, session_id: str, adapter_key: tuple[str, str], messages_xml: str, object_keys: frozenset[str]) -> AgentReply:
+    async def run(self, *, session_id: str, adapter_key: tuple[str, str], messages_xml: str, file_refs: frozenset[str]) -> AgentReply:
         started = start_timer()
-        await self._contexts.add_object_keys(session_id, set(object_keys))
+        await self._contexts.add_file_refs(session_id, file_refs)
         staged: list[Message] = []
         pending = [messages_xml]
         registration = self._adapters.registration(adapter_key)
@@ -52,8 +50,8 @@ class Agent:
                 pending = []
                 registration = self._adapters.registration(adapter_key)
                 snapshot = await self._contexts.snapshot(session_id, staged, registration.skills)
-                tools = [*self._mcp.schemas(), *self._adapters.tool_schemas(adapter_key)]
-                response = await self._generate(trace, turn, snapshot.messages, tools, registration, snapshot.allowed_object_keys)
+                tools = [*self._builtin_tools.schemas(), *self._adapters.tool_schemas(adapter_key)]
+                response = await self._generate(trace, turn, snapshot.messages, tools, registration, snapshot.allowed_file_refs)
                 if response.finish_reason == "stop":
                     _stage(staged, "assistant", response.content)
                     queued = await self._contexts.commit_if_no_queue(session_id, staged)
@@ -63,12 +61,11 @@ class Agent:
                         continue
                     final_snapshot = await self._contexts.snapshot(session_id, [], registration.skills)
                     self._observability.finish_run_success(run=trace, output={"reply_xml": response.content}, duration_ms=elapsed_ms(started))
-                    return AgentReply(response.content, final_snapshot.allowed_object_keys)
+                    return AgentReply(response.content, final_snapshot.allowed_file_refs)
 
                 _stage(staged, "assistant", response.content, tool_calls=response.tool_calls)
                 for tool_call in response.tool_calls:
-                    result = await self._call_tool(trace, turn, session_id, adapter_key, tool_call)
-                    await self._contexts.add_object_keys(session_id, _find_object_keys(result))
+                    result = await self._call_tool(trace, turn, session_id, adapter_key, snapshot.metadata, tool_call)
                     _stage(staged, "tool", result, tool_call_id=tool_call.id)
                 pending = await self._contexts.drain_queued(session_id)
             raise RuntimeError(f"Agent 在 {self._max_turns} 轮内未完成")
@@ -78,7 +75,7 @@ class Agent:
             _stage(staged, "assistant", fallback)
             await self._contexts.commit(session_id, staged)
             final_snapshot = await self._contexts.snapshot(session_id, [], registration.skills)
-            return AgentReply(fallback, final_snapshot.allowed_object_keys)
+            return AgentReply(fallback, final_snapshot.allowed_file_refs)
 
     async def _generate(self, trace: RunTrace, turn: int, messages: list[Message], tools: list[dict[str, Any]], registration: Any, allowed_keys: frozenset[str]) -> LlmResponse:
         last_error: Exception | None = None
@@ -99,7 +96,7 @@ class Agent:
                     raise
         raise RuntimeError("LLM retry loop exited") from last_error
 
-    async def _call_tool(self, trace: RunTrace, turn: int, session_id: str, adapter_key: tuple[str, str], tool_call: ToolCall) -> str:
+    async def _call_tool(self, trace: RunTrace, turn: int, session_id: str, adapter_key: tuple[str, str], metadata: dict[str, Any], tool_call: ToolCall) -> str:
         started = start_timer()
         name = tool_call.function.name
         raw_arguments = tool_call.function.arguments
@@ -109,9 +106,9 @@ class Agent:
                 raise TypeError("工具参数必须是对象")
             if name in {item["function"]["name"] for item in self._adapters.tool_schemas(adapter_key)}:
                 value = await self._adapters.invoke(adapter_key, session_id, name, arguments)
-                result = json.dumps(value, ensure_ascii=False)
             else:
-                result = await self._mcp.call_tool(name, arguments)
+                value = await self._builtin_tools.call(name=name, arguments=arguments, session_id=session_id, adapter_key=adapter_key, metadata=metadata)
+            result = json.dumps(value, ensure_ascii=False)
             self._observability.tool_span(run=trace, turn=turn, tool_name=name, tool_args=arguments, status="ok", error=None, duration_ms=elapsed_ms(started), output=result)
             return result
         except Exception as exc:
@@ -127,25 +124,3 @@ def _stage(messages: list[Message], role: str, content: str, *, tool_calls: list
     if role == "tool" and tool_call_id is not None:
         item["tool_call_id"] = tool_call_id
     messages.append(item)  # type: ignore[arg-type]
-
-
-def _find_object_keys(value: str) -> set[str]:
-    try:
-        parsed = json.loads(value)
-    except ValueError:
-        return set()
-    found: set[str] = set()
-
-    def visit(node: Any) -> None:
-        if isinstance(node, dict):
-            candidate = node.get("object_key")
-            if isinstance(candidate, str) and OBJECT_KEY_RE.fullmatch(candidate):
-                found.add(candidate)
-            for child in node.values():
-                visit(child)
-        elif isinstance(node, list):
-            for child in node:
-                visit(child)
-
-    visit(parsed)
-    return found

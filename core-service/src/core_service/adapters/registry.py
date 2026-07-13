@@ -9,7 +9,7 @@ from uuid import uuid4
 from fastapi import WebSocket
 from jsonschema import validate
 
-from .protocol import AdapterRegistration, Envelope, PublishedEvent
+from .protocol import AdapterRegistration, Envelope, MessageQueryResult, PublishedEvent
 from .xml_codec import XmlMessageCodec
 
 EventHandler = Callable[[tuple[str, str], PublishedEvent, frozenset[str]], Awaitable[None]]
@@ -82,7 +82,7 @@ class AdapterRegistry:
         if envelope.type == "heartbeat.ping":
             await connection.websocket.send_json(Envelope(type="heartbeat.pong", correlation_id=envelope.id).model_dump())
             return
-        if envelope.type in {"reply.ack", "capability.result"} and envelope.correlation_id:
+        if envelope.type in {"reply.ack", "capability.result", "message.result"} and envelope.correlation_id:
             future = connection.pending.get(envelope.correlation_id)
             if future is not None and not future.done():
                 future.set_result(envelope)
@@ -97,12 +97,12 @@ class AdapterRegistry:
             if len(connection.seen_events) > 4096:
                 connection.seen_events = {event.event_id}
             if self._event_handler is not None:
-                await self._event_handler(key, event.model_copy(update={"messages_xml": parsed.xml}), parsed.object_keys)
+                await self._event_handler(key, event.model_copy(update={"messages_xml": parsed.xml}), parsed.file_refs)
         await connection.websocket.send_json(Envelope(type="event.ack", correlation_id=envelope.id, payload={"event_id": event.event_id, "duplicate": duplicate}).model_dump())
 
-    async def deliver_reply(self, key: tuple[str, str], session_id: str, reply_xml: str, allowed_object_keys: frozenset[str]) -> None:
+    async def deliver_reply(self, key: tuple[str, str], session_id: str, reply_xml: str, allowed_file_refs: frozenset[str]) -> None:
         connection = self._require_connection(key)
-        parsed = self._codec.validate_reply(reply_xml, connection.registration, allowed_object_keys)
+        parsed = self._codec.validate_reply(reply_xml, connection.registration, allowed_file_refs)
         result = await self._request_with_retry(key, Envelope(type="reply.deliver", payload={"command_id": str(uuid4()), "session_id": session_id, "reply_xml": parsed.xml}), self._ack_timeout, self._ack_attempts)
         if not result.payload.get("ok", False):
             raise RuntimeError(str(result.payload.get("error", "adapter rejected reply")))
@@ -120,6 +120,49 @@ class AdapterRegistry:
         if capability.output_schema:
             validate(value, capability.output_schema)
         return value
+
+    async def query_messages(
+        self,
+        key: tuple[str, str],
+        *,
+        session_id: str,
+        conversation_type: str,
+        conversation_id: str,
+        cursor: str | None,
+        limit: int,
+    ) -> tuple[MessageQueryResult, frozenset[str]]:
+        connection = self._require_connection(key)
+        result = await self._request_with_retry(
+            key,
+            Envelope(
+                type="message.query",
+                payload={
+                    "session_id": session_id,
+                    "conversation_type": conversation_type,
+                    "conversation_id": conversation_id,
+                    "cursor": cursor,
+                    "limit": limit,
+                },
+            ),
+            self._capability_timeout,
+            1,
+        )
+        if not result.payload.get("ok", False):
+            raise RuntimeError(str(result.payload.get("error", "adapter message query failed")))
+        query = MessageQueryResult.model_validate({
+            "messages_xml": result.payload.get("messages_xml"),
+            "next_cursor": result.payload.get("next_cursor"),
+            "has_more": result.payload.get("has_more", False),
+        })
+        parsed = self._codec.validate_messages(query.messages_xml, connection.registration, allow_empty=True)
+        return query.model_copy(update={"messages_xml": parsed.xml}), parsed.file_refs
+
+    def file_source(self, key: tuple[str, str]) -> tuple[str, str]:
+        registration = self.registration(key)
+        token = self._tokens.get(f"{key[0]}:{key[1]}")
+        if not token:
+            raise RuntimeError("adapter token not found")
+        return registration.file_base_url.rstrip("/"), token
 
     def registration(self, key: tuple[str, str]) -> AdapterRegistration:
         return self._require_connection(key).registration

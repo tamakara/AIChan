@@ -9,15 +9,14 @@
 
 前者保留聊天记录的可追溯日志形态，后者是可检索的长期记忆，不要求逐字保真。
 
-`memory-service` 是 HTTP 领域服务，不直接实现 MCP 协议。Core 自动读写 session 记忆；模型按需使用的 `memory_get_user_memory` 由 `core-mcp-server` 包装为 MCP 工具。
+`memory-service` 是 HTTP 领域服务。Core 自动读写 session 记忆，并把 `memory_get_user_memory` 作为内置工具直接暴露给模型。
 
 ```mermaid
 flowchart LR
     agent[core-service] -->|GET session 记忆<br/>POST compress| api[memory-service HTTP API]
     api --> session[(sessions/*.md<br/>无损日志)]
     api -->|压缩成功后异步内化| user[(users/*.md<br/>用户画像与相关记忆)]
-    tools[core-mcp-server] -->|GET user 记忆| api
-    model[Agent 中的模型] -->|MCP: memory_get_user_memory| tools
+    model[Agent 中的模型] -->|Core 内置工具| api
 ```
 
 ## 2. 接口契约
@@ -107,7 +106,7 @@ session 无损压缩 prompt 要求：
 
 异步内化规则：
 
-- `/compress` 成功后，从原始 `messages_text` 解析 `user_id="..."`。
+- `/compress` 成功后，从原始 `messages_text` 解析 XML v2 的 `sender_id="..."`，并按该值更新用户长期记忆。
 - 同一批记录里出现多个 `user_id` 时，分别更新各自用户记忆。
 - 每个用户更新都串行加锁，避免并发写入覆盖。
 - 内化失败只记日志，不影响 `/compress` 响应，也不回滚 session 日志。

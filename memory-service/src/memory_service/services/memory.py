@@ -24,7 +24,7 @@ MEMORY_SYSTEM_PROMPT = """
 - 保留说话人、对象、名字、数字、约束、偏好、承诺、结论、任务进展、工具结果和仍可能复用的上下文。
 - 用户或 assistant 明确说过的话要尽量保留原意和关键原文；可以压缩冗余语气词，但不能丢掉事实、条件、否定、时间和限定。
 - 去掉只用于系统结构的文本，例如空行、<turn ... />、纯包装性的 <messages>/<message> 外壳、无内容的格式标记。
-- 媒体、文件、表情等节点若包含 object_key、name、summary 或用户表达意图，必须保留这些信息。
+- 文件、表情等节点若包含 file ref、name、summary 或用户表达意图，必须保留这些信息。
 - 寒暄、重复确认、无后续价值的客套可以丢弃；但只要含有偏好、需求、情绪、关系或事实，就必须记录。
 - 不要编造输入中没有的信息；不输出标题、章节、解释、代码块或 JSON。
 """.strip()
@@ -252,11 +252,11 @@ def _append_markdown(*, current: str, added: str) -> str:
 
 
 def _extract_user_messages(messages_text: str) -> dict[str, str]:
-    # 日志是行格式，单行里通常保留一个原始 `<message ... user_id="...">` 片段；
+    # 日志是行格式，单行里通常保留一个原始 `<message ... sender_id="...">` 片段；
     # 按行分桶可以保留该用户的上下文，同时避免把群聊里其他人的原话喂给同一个用户画像。
     user_messages: dict[str, list[str]] = {}
     for line in messages_text.splitlines():
-        match = re.search(r'user_id="([^"]+)"', line)
+        match = re.search(r'sender_id="([^"]+)"', line)
         if match is None:
             continue
         user_id = match.group(1).strip()
